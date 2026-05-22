@@ -54,6 +54,7 @@ class LLM:
 
     def execute_tool_calls(self, message):
         tool_calls = message.get("tool_calls", [])
+        tool_calls = tool_calls or []
         messages = []
         registry = ToolsRegistry()
         for tool_call in tool_calls:

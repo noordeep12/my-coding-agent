@@ -31,6 +31,7 @@ class Agent(LLM):
         # 2. Check if there are tool calls in the response, 
         # execute them and add results back to messages
         tool_messages = self.execute_tool_calls(message)
+        tool_messages = tool_messages or []
         for tool_message in tool_messages:
             self.add_message(tool_message)
 
