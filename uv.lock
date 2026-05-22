@@ -82,7 +82,7 @@ wheels = [
 [[package]]
 name = "my-coding-agent"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "colorama" },
     { name = "httpx" },

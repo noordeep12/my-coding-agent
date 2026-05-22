@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "my-coding-agent"
 version = "0.1.0"
@@ -8,3 +12,6 @@ dependencies = [
     "colorama>=0.4.6",
     "httpx>=0.28.1",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/my_coding_agent"]
