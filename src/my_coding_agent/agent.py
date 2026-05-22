@@ -4,7 +4,14 @@ from ._logging import get_logger
 
 class Agent(LLM):
 
-    def __init__(self, api_url=OMLX_API_URL, api_key=OMLX_API_KEY, model=OMLX_MODEL, messages=[], tools=[]):
+    def __init__(
+        self, 
+        api_url=OMLX_API_URL, 
+        api_key=OMLX_API_KEY, 
+        model=OMLX_MODEL, 
+        messages=[], 
+        tools=[]
+    ):
         super().__init__(api_url, api_key, model)
         self.messages = messages or []
         self.tools = tools or []

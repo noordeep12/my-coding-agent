@@ -10,7 +10,12 @@ OMLX_MODEL = "Qwen3.6-35B-A3B-4bit"
 
 
 class LLM:
-    def __init__(self, api_url=OMLX_API_URL, api_key=OMLX_API_KEY, model=OMLX_MODEL):
+    def __init__(
+        self, 
+        api_url=OMLX_API_URL, 
+        api_key=OMLX_API_KEY, 
+        model=OMLX_MODEL
+    ):
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
