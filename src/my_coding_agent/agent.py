@@ -21,13 +21,7 @@ class Agent(LLM):
     def add_message(self, message):
         self.messages.append(message)
         self.logger.debug("Added message (total: %d): %s", len(self.messages), message)
-
-    def _log_usage(self, usage: dict, label: str):
-        prompt = usage.get("prompt_tokens", "?")
-        completion = usage.get("completion_tokens", "?")
-        total = usage.get("total_tokens", "?")
-        self.logger.info("[%s] tokens — prompt: %s, completion: %s, total: %s", label, prompt, completion, total)
-
+    
     def step(self):
         # 1. Send current messages to LLM and get response
         resp = self.chat_completion(self.messages, tools=self.tools)
@@ -43,7 +37,6 @@ class Agent(LLM):
 
         # 3. Send another request to LLM with tool results for final response
         final_resp = self.chat_completion(self.messages)
-        self._log_usage(extract_usage(final_resp), "step")
         return final_resp
 
     def run(self, max_steps=5):
@@ -59,6 +52,10 @@ class Agent(LLM):
             usage = extract_usage(resp)
             for key in total_usage:
                 total_usage[key] += usage.get(key, 0)
+            self.logger.info(
+                "[step %d] tokens — prompt: %d, completion: %d, total: %d",
+                step_num + 1, total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"]
+            )
             message = extract_message(resp)
             self.add_message(message)
             finish_reason = extract_finish_reason(resp)
