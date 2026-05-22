@@ -1,5 +1,5 @@
 from .llm import LLM, OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
-from .utils import extract_message, extract_finish_reason
+from .utils import extract_message, extract_finish_reason, extract_usage
 from ._logging import get_logger
 
 class Agent(LLM):
@@ -22,13 +22,19 @@ class Agent(LLM):
         self.messages.append(message)
         self.logger.debug("Added message (total: %d): %s", len(self.messages), message)
 
+    def _log_usage(self, usage: dict, label: str):
+        prompt = usage.get("prompt_tokens", "?")
+        completion = usage.get("completion_tokens", "?")
+        total = usage.get("total_tokens", "?")
+        self.logger.info("[%s] tokens — prompt: %s, completion: %s, total: %s", label, prompt, completion, total)
+
     def step(self):
         # 1. Send current messages to LLM and get response
         resp = self.chat_completion(self.messages, tools=self.tools)
         message = extract_message(resp)
         self.add_message(message)
 
-        # 2. Check if there are tool calls in the response, 
+        # 2. Check if there are tool calls in the response,
         # execute them and add results back to messages
         tool_messages = self.execute_tool_calls(message)
         tool_messages = tool_messages or []
@@ -37,16 +43,22 @@ class Agent(LLM):
 
         # 3. Send another request to LLM with tool results for final response
         final_resp = self.chat_completion(self.messages)
+        self._log_usage(extract_usage(final_resp), "step")
         return final_resp
 
     def run(self, max_steps=5):
         self.logger.info("Agent run started with max_steps: %d", max_steps)
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         step_num = 0
         while True:
             self.logger.info("----------------------------------------------------------------")
             self.logger.info("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
             self.logger.info("----------------------------------------------------------------")
             resp = self.step()
+            # accumulate usage from the final response of each step
+            usage = extract_usage(resp)
+            for key in total_usage:
+                total_usage[key] += usage.get(key, 0)
             message = extract_message(resp)
             self.add_message(message)
             finish_reason = extract_finish_reason(resp)
@@ -58,4 +70,8 @@ class Agent(LLM):
                 break
             step_num += 1
         self.logger.info("Agent run completed with %d steps", step_num)
+        self.logger.info(
+            "[run total] tokens — prompt: %d, completion: %d, total: %d",
+            total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"]
+        )
         return self.messages
