@@ -37,7 +37,7 @@ class LLM:
     def chat_completion(self, messages, tools=None):
         self.logger.info("Request sent to %s", self.api_url + "/chat/completions")
         body = {"model": self.model, "messages": messages, "tools": tools or []}
-        self.logger.debug("Request body: %s", body)
+        # self.logger.debug("Request body: %s", body)
         resp = self.session.post(
             self.api_url + "/chat/completions",
             json=body,

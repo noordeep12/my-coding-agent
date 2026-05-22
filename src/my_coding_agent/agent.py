@@ -6,8 +6,8 @@ class Agent(LLM):
 
     def __init__(self, api_url=OMLX_API_URL, api_key=OMLX_API_KEY, model=OMLX_MODEL, messages=[], tools=[]):
         super().__init__(api_url, api_key, model)
-        self.messages = messages
-        self.tools = tools
+        self.messages = messages or []
+        self.tools = tools or []
         self.logger = get_logger(self.__class__.__name__)
         self.logger.info("Agent initialized with API URL: %s, Model: %s", api_url, model)
 
