@@ -51,6 +51,7 @@ def tool(func) -> dict:
 
 
 class ToolsRegistry:
+    
     @staticmethod
     def get_weather(location: str) -> str:
         """Get the current weather for a location."""

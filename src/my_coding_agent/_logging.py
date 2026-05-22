@@ -21,7 +21,7 @@ class ColoredFormatter(logging.Formatter):
 def get_logger(name: str) -> logging.Logger:
     """Return a logger with colored output attached."""
     formatter = ColoredFormatter(
-        "{asctime} |{color} {levelname:8} {reset}| {name} | {message}",
+        "{asctime} |{color} {levelname:10} {reset}| {name:10} | {message}",
         style="{",
         datefmt="%Y-%m-%d %H:%M:%S",
         colors={

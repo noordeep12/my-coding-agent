@@ -1,5 +1,6 @@
 from .llm import LLM, OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
 from .utils import extract_message, extract_finish_reason
+from ._logging import get_logger
 
 class Agent(LLM):
 
@@ -7,11 +8,12 @@ class Agent(LLM):
         super().__init__(api_url, api_key, model)
         self.messages = messages
         self.tools = tools
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info("Agent initialized with API URL: %s, Model: %s", api_url, model)
 
     def add_message(self, message):
         self.messages.append(message)
-        self.logger.debug("Added message: %s", message)
+        self.logger.debug("Added message (total: %d): %s", len(self.messages), message)
 
     def step(self):
         # 1. Send current messages to LLM and get response
@@ -21,9 +23,9 @@ class Agent(LLM):
 
         # 2. Check if there are tool calls in the response, 
         # execute them and add results back to messages
-        results = self.execute_tool_calls(message)
-        for result in results:
-            self.add_message(result)
+        tool_messages = self.execute_tool_calls(message)
+        for tool_message in tool_messages:
+            self.add_message(tool_message)
 
         # 3. Send another request to LLM with tool results for final response
         final_resp = self.chat_completion(self.messages)
@@ -33,7 +35,9 @@ class Agent(LLM):
         self.logger.info("Agent run started with max_steps: %d", max_steps)
         step_num = 0
         while True:
-            self.logger.info("Running Agent step %d/%d", step_num+1, max_steps)
+            self.logger.info("----------------------------------------------------------------")
+            self.logger.info("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
+            self.logger.info("----------------------------------------------------------------")
             resp = self.step()
             message = extract_message(resp)
             self.add_message(message)
@@ -45,5 +49,5 @@ class Agent(LLM):
                 self.logger.warning("Agent run stopped after reaching max_steps: %d", max_steps)
                 break
             step_num += 1
-        self.logger.info("Agent run completed with final messages: %s", self.messages)
+        self.logger.info("Agent run completed with %d steps", step_num)
         return self.messages

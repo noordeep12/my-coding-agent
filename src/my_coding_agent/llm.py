@@ -14,7 +14,7 @@ class LLM:
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
-        self.logger = get_logger("LLM")
+        self.logger = get_logger(self.__class__.__name__)
         self.setup_session()
         self.available_models()
 
@@ -35,10 +35,12 @@ class LLM:
         return models
 
     def chat_completion(self, messages, tools=None):
-        self.logger.info("Request sent to %s with model %s", self.api_url + "/chat/completions", self.model)
+        self.logger.info("Request sent to %s", self.api_url + "/chat/completions")
+        body = {"model": self.model, "messages": messages, "tools": tools or []}
+        self.logger.debug("Request body: %s", body)
         resp = self.session.post(
             self.api_url + "/chat/completions",
-            json={"model": self.model, "messages": messages, "tools": tools or []},
+            json=body,
         )
         self.logger.info("Received response: %s (%d bytes)", resp.status_code, len(resp.content))
         self.logger.debug("Response content: %s", resp.json())
@@ -47,7 +49,7 @@ class LLM:
 
     def execute_tool_calls(self, message):
         tool_calls = message.get("tool_calls", [])
-        results = []
+        messages = []
         registry = ToolsRegistry()
         for tool_call in tool_calls:
             if tool_call["type"] != "function":
@@ -61,6 +63,9 @@ class LLM:
                 self.logger.warning("Tool function %s not found in ToolsRegistry", func_name)
                 continue
             result = getattr(registry, func_name)(**args)
-            results.append({"role": "tool", "tool_call_id": tool_call["id"], "content": result})
+            # ensure result is a string for now, could be extended to support more complex types with better formatting
+            if not isinstance(result, str):
+                result = str(result)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": result})
             self.logger.info("Executed tool: %s with args %s", func_name, args)
-        return results
+        return messages
