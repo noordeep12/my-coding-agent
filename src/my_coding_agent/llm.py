@@ -2,8 +2,6 @@ import httpx
 import time
 import json
 
-from colorama import Fore, Style  # used in execute_tool_calls
-
 from .logger import get_logger
 from .tools import ToolsRegistry
 from .utils import parse_tool_args
@@ -42,7 +40,7 @@ class LLM:
         resp = self.session.get(self.api_url + "/models")
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
-        self.logger.info("Models: %s", models)
+        self.logger.api_response("Models: %s", models)
         # capture context window for the active model
         self.context_window = None
         for m in data:
@@ -54,23 +52,22 @@ class LLM:
                 )
                 break
         if self.context_window:
-            self.logger.info("Context window for %s: %d tokens", self.model, self.context_window)
+            self.logger.api_response("Context window for %s: %d tokens", self.model, self.context_window)
         return models
 
     def chat_completion(self, messages, tools=None) -> Response:
-        self.logger.info("Request sent to %s", self.api_url + "/chat/completions")
-        
-        body = {"model": self.model, "messages": messages, "tools": tools or []}
-        self.logger.debug("LLM request body: %s", json.dumps(body, indent=4))
+        self.logger.api_request("Request sent to %s", self.api_url + "/chat/completions")
 
-        # self.logger.debug("Request body: %s", body)
+        body = {"model": self.model, "messages": messages, "tools": tools or []}
+        self.logger.trace("LLM request body: %s", json.dumps(body, indent=4))
+
         resp = self.session.post(
             self.api_url + "/chat/completions",
             json=body,
         )
-        self.logger.debug("LLM received response: %s (%d bytes)", resp.status_code, len(resp.content))
+        self.logger.api_response("LLM received response: %s (%d bytes)", resp.status_code, len(resp.content))
         data = resp.json()
-        self.logger.debug("LLM response content: %s", json.dumps(data, indent=4))
+        self.logger.trace("LLM response content: %s", json.dumps(data, indent=4))
 
         self.logger.llm_parse("parsing choices from response")
         try:
@@ -92,24 +89,20 @@ class LLM:
 
 
     def execute_tool_calls(self, message) -> list:
-        TOOL_COLOR = Fore.MAGENTA
         tool_calls = message.get("tool_calls", [])
         tool_calls = tool_calls or []
         messages = []
         registry = ToolsRegistry()
 
-        self.logger.debug(
-            "%s[Tool dispatch] found %d tool call(s) to execute%s",
-            TOOL_COLOR, len(tool_calls), Style.RESET_ALL,
-        )
+        self.logger.tool_call("[Tool dispatch] found %d tool call(s) to execute", len(tool_calls))
 
         for tool_call in tool_calls:
             tool_call_id = tool_call.get("id", "unknown_id")
 
             if tool_call["type"] != "function":
                 self.logger.warning(
-                    "%s[Tool skip] %s — type '%s' is not supported%s",
-                    TOOL_COLOR, tool_call_id, tool_call["type"], Style.RESET_ALL,
+                    "[Tool skip] %s — type '%s' is not supported",
+                    tool_call_id, tool_call["type"],
                 )
                 messages.append({
                     "role": "tool",
@@ -121,16 +114,13 @@ class LLM:
             func_name = tool_call["function"]["name"]
             args = parse_tool_args(tool_call["function"]["arguments"])
 
-            self.logger.info(
-                "%s[Tool call] %s → %s(%s)%s",
-                TOOL_COLOR, tool_call_id, func_name, args, Style.RESET_ALL,
-            )
+            self.logger.tool_call("[Tool call] %s → %s(%s)", tool_call_id, func_name, args)
 
             if not hasattr(registry, func_name):
                 error_msg = f"Error: tool '{func_name}' not found in ToolsRegistry"
                 self.logger.error(
-                    "%s[Tool not found] %s — '%s' is not registered. Returning error to LLM.%s",
-                    TOOL_COLOR, tool_call_id, func_name, Style.RESET_ALL,
+                    "[Tool not found] %s — '%s' is not registered. Returning error to LLM.",
+                    tool_call_id, func_name,
                 )
                 messages.append({
                     "role": "tool",
@@ -143,16 +133,10 @@ class LLM:
                 result = getattr(registry, func_name)(**args)
                 if not isinstance(result, str):
                     result = str(result)
-                self.logger.info(
-                    "%s[Tool result] %s → %s returned: %s%s",
-                    TOOL_COLOR, tool_call_id, func_name, result, Style.RESET_ALL,
-                )
+                self.logger.tool_call("[Tool result] %s → %s returned: %s", tool_call_id, func_name, result)
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
-                self.logger.error(
-                    "%s[Tool error] %s → %s raised: %s%s",
-                    TOOL_COLOR, tool_call_id, func_name, exc, Style.RESET_ALL,
-                )
+                self.logger.error("[Tool error] %s → %s raised: %s", tool_call_id, func_name, exc)
 
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
 

@@ -15,41 +15,48 @@ MEMORY_READ  = 12
 TOOL_CALL    = 15
 MEMORY_WRITE = 18
 MEMORY_TRIM  = 22
-API_CALL     = 25
-AGENT_STEP   = 35
-RETRY        = 45
+API_REQUEST  = 24
+API_RESPONSE = 26
 LLM_REASONING = 28
 LLM_OUTPUT    = 32
+AGENT_STEP   = 35
 LLM_PARSE     = 38
+RETRY        = 45
 
 _CUSTOM_LEVELS: Dict[str, int] = {
-    "TRACE":         TRACE,
-    "MEMORY_READ":   MEMORY_READ,
-    "TOOL_CALL":     TOOL_CALL,
-    "MEMORY_WRITE":  MEMORY_WRITE,
-    "MEMORY_TRIM":   MEMORY_TRIM,
-    "API_CALL":      API_CALL,
+    "TRACE":        TRACE,
+    "MEMORY_READ":  MEMORY_READ,
+    "TOOL_CALL":    TOOL_CALL,
+    "MEMORY_WRITE": MEMORY_WRITE,
+    "MEMORY_TRIM":  MEMORY_TRIM,
+    "API_REQUEST":  API_REQUEST,
+    "API_RESPONSE": API_RESPONSE,
     "LLM_REASONING": LLM_REASONING,
-    "LLM_OUTPUT":    LLM_OUTPUT,
-    "AGENT_STEP":    AGENT_STEP,
-    "LLM_PARSE":     LLM_PARSE,
-    "RETRY":         RETRY,
+    "LLM_OUTPUT":   LLM_OUTPUT,
+    "AGENT_STEP":   AGENT_STEP,
+    "LLM_PARSE":    LLM_PARSE,
+    "RETRY":        RETRY,
 }
 
-# ── Colors per level ──────────────────────────────────────────────────────────
+# ── Colors per level (full-line coloring) ─────────────────────────────────────
+# LLM_*   → amber/yellow family
+# TOOL_*  → magenta family
+# API_*   → grey family (dim white; request darker, response lighter)
+# MEMORY_* → blue family
 _LEVEL_COLORS: Dict[str, str] = {
-    "TRACE":         Fore.WHITE,
-    "MEMORY_READ":   Fore.BLUE,
-    "TOOL_CALL":     Fore.MAGENTA + Style.BRIGHT,
-    "MEMORY_WRITE":  Fore.BLUE + Style.BRIGHT,
-    "MEMORY_TRIM":   Fore.YELLOW,
-    "API_CALL":      Fore.CYAN + Style.BRIGHT,
+    "TRACE":        Style.DIM + Fore.WHITE,
+    "MEMORY_READ":  Fore.BLUE,
+    "TOOL_CALL":    Fore.MAGENTA + Style.BRIGHT,
+    "MEMORY_WRITE": Fore.BLUE + Style.BRIGHT,
+    "MEMORY_TRIM":  Fore.BLUE + Style.DIM,
+    "API_REQUEST":  Style.DIM + Fore.WHITE,
+    "API_RESPONSE": Fore.WHITE,
     "LLM_REASONING": Fore.YELLOW + Style.BRIGHT,
-    "LLM_OUTPUT":    Fore.CYAN,
-    "AGENT_STEP":    Fore.GREEN + Style.BRIGHT,
-    "LLM_PARSE":     Fore.MAGENTA,
-    "RETRY":         Fore.RED + Style.BRIGHT,
-    "DEBUG":        Fore.CYAN,
+    "LLM_OUTPUT":   Fore.YELLOW + Style.BRIGHT,
+    "AGENT_STEP":   Fore.GREEN + Style.BRIGHT,
+    "LLM_PARSE":    Fore.YELLOW,
+    "RETRY":        Fore.RED + Style.BRIGHT,
+    "DEBUG":        Style.DIM + Fore.WHITE,
     "INFO":         Fore.GREEN,
     "WARNING":      Fore.YELLOW,
     "ERROR":        Fore.RED,
@@ -76,15 +83,16 @@ _register_custom_levels()
 # ── Formatter ─────────────────────────────────────────────────────────────────
 class ColoredFormatter(logging.Formatter):
     def format(self, record) -> str:
-        record.color  = _LEVEL_COLORS.get(record.levelname, "")
-        record.reset  = Style.RESET_ALL
+        color = _LEVEL_COLORS.get(record.levelname, "")
+        record.color = color
+        record.reset = Style.RESET_ALL
         return super().format(record)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
     formatter = ColoredFormatter(
-        "{asctime} {color}| {levelname:<12}{reset} | {name} | {message}",
+        "{color}{asctime} | {levelname:<12} | {name} | {message}{reset}",
         style="{",
         datefmt="%H:%M:%S",
     )

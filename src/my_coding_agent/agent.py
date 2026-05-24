@@ -28,13 +28,13 @@ class Agent(LLM):
         self.logger.info("Message added to the conversation (type: %s)", message_type)
     
     def run(self, max_steps=5):
-        self.logger.info("Agent run started with max_steps: %d", max_steps)
+        self.logger.agent_step("Agent run started with max_steps: %d", max_steps)
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         step_num = 0
         while True:
-            self.logger.info("----------------------------------------------------------------")
-            self.logger.info("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
-            self.logger.info("----------------------------------------------------------------")
+            self.logger.agent_step("----------------------------------------------------------------")
+            self.logger.agent_step("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
+            self.logger.agent_step("----------------------------------------------------------------")
 
             # 1. Send current messages to LLM and get response
             resp = self.chat_completion(self.messages, tools=self.tools)
@@ -76,7 +76,7 @@ class Agent(LLM):
                 break
             step_num += 1
         
-        self.logger.info("Agent run completed with %d steps", step_num)
+        self.logger.agent_step("Agent run completed with %d steps", step_num)
         self.logger.info(
             "Total tokens — prompt: %d, completion: %d, total: %d%s",
             total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"], ctx_str,
