@@ -73,7 +73,7 @@ class Agent(LLM):
             step_num += 1
         self.logger.info("Agent run completed with %d steps", step_num)
         self.logger.info(
-            "[run total] tokens — prompt: %d, completion: %d, total: %d",
+            "[total] tokens — prompt: %d, completion: %d, total: %d",
             total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"]
         )
         return self.messages
