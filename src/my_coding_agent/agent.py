@@ -25,7 +25,7 @@ class Agent(LLM):
     def add_message(self, message) -> None:
         self.messages.append(message)
         message_type = message.get("role", "unknown").upper()
-        self.logger.info("Message added to the conversation (type: %s)", message_type)
+        self.logger.info("%s message added to the conversation", message_type)
     
     def run(self, max_steps=5):
         self.logger.info("Agent run started with max_steps: %d", max_steps)
