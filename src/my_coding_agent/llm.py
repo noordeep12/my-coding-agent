@@ -49,7 +49,17 @@ class LLM:
             json=body,
         )
         self.logger.info("Received response: %s (%d bytes)", resp.status_code, len(resp.content))
-        self.logger.debug("Response content: %s", resp.json())
+        self.logger.info("Response content: %s", resp.json())
+        # debbuging highlight reasoning content in response for better visibility
+        choices = resp.json().get("choices", [])
+        for choice in choices:
+            message = choice.get("message", {})
+            content = message.get("content", "")
+            reasoning_content = message.get("reasoning_content", "")
+            if content:
+                self.logger.info("LLM response content:\n%s", content)
+            if reasoning_content:
+                self.logger.info("LLM response reasoning content:\n%s", reasoning_content)
         return resp
 
 
