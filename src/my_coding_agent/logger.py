@@ -10,57 +10,26 @@ from colorama import Fore, Back, Style
 
 
 # ── Custom level numbers ──────────────────────────────────────────────────────
-TRACE        = 5
-MEMORY_READ  = 12
-TOOL_CALL    = 15
-MEMORY_WRITE = 18
-MEMORY_TRIM  = 22
-API_REQUEST  = 24
-API_RESPONSE = 26
-LLM_REASONING = 28
-LLM_OUTPUT    = 32
-AGENT_STEP   = 35
-LLM_PARSE     = 38
-RETRY        = 45
+TOOL = 15
+API  = 25
+LLM  = 35
 
 _CUSTOM_LEVELS: Dict[str, int] = {
-    "TRACE":        TRACE,
-    "MEMORY_READ":  MEMORY_READ,
-    "TOOL_CALL":    TOOL_CALL,
-    "MEMORY_WRITE": MEMORY_WRITE,
-    "MEMORY_TRIM":  MEMORY_TRIM,
-    "API_REQUEST":  API_REQUEST,
-    "API_RESPONSE": API_RESPONSE,
-    "LLM_REASONING": LLM_REASONING,
-    "LLM_OUTPUT":   LLM_OUTPUT,
-    "AGENT_STEP":   AGENT_STEP,
-    "LLM_PARSE":    LLM_PARSE,
-    "RETRY":        RETRY,
+    "TOOL": TOOL,
+    "API":  API,
+    "LLM":  LLM,
 }
 
 # ── Colors per level (full-line coloring) ─────────────────────────────────────
-# LLM_*   → amber/yellow family
-# TOOL_*  → magenta family
-# API_*   → grey family (dim white; request darker, response lighter)
-# MEMORY_* → blue family
 _LEVEL_COLORS: Dict[str, str] = {
-    "TRACE":        Style.DIM + Fore.WHITE,
-    "MEMORY_READ":  Fore.BLUE,
-    "TOOL_CALL":    Fore.MAGENTA + Style.BRIGHT,
-    "MEMORY_WRITE": Fore.BLUE + Style.BRIGHT,
-    "MEMORY_TRIM":  Fore.BLUE + Style.DIM,
-    "API_REQUEST":  Style.DIM + Fore.WHITE,
-    "API_RESPONSE": Fore.WHITE,
-    "LLM_REASONING": Fore.YELLOW + Style.BRIGHT,
-    "LLM_OUTPUT":   Fore.YELLOW + Style.BRIGHT,
-    "AGENT_STEP":   Fore.GREEN + Style.BRIGHT,
-    "LLM_PARSE":    Fore.YELLOW,
-    "RETRY":        Fore.RED + Style.BRIGHT,
-    "DEBUG":        Style.DIM + Fore.WHITE,
-    "INFO":         Fore.GREEN,
-    "WARNING":      Fore.YELLOW,
-    "ERROR":        Fore.RED,
-    "CRITICAL":     Fore.RED + Back.WHITE + Style.BRIGHT,
+    "TOOL":     Fore.MAGENTA,
+    "API":      Fore.WHITE,
+    "LLM":      Fore.YELLOW,
+    "DEBUG":    Style.DIM,
+    "INFO":     Fore.GREEN,
+    "WARNING":  Fore.YELLOW,
+    "ERROR":    Fore.RED,
+    "CRITICAL": Fore.RED + Back.WHITE,
 }
 
 

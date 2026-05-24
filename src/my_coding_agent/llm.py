@@ -14,9 +14,9 @@ OMLX_MODEL = "Qwen3.6-35B-A3B-4bit"
 
 class LLM:
     def __init__(
-        self, 
-        api_url=OMLX_API_URL, 
-        api_key=OMLX_API_KEY, 
+        self,
+        api_url=OMLX_API_URL,
+        api_key=OMLX_API_KEY,
         model=OMLX_MODEL
     ):
         self.api_url = api_url
@@ -40,8 +40,7 @@ class LLM:
         resp = self.session.get(self.api_url + "/models")
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
-        self.logger.api_response("Models: %s", models)
-        # capture context window for the active model
+        self.logger.api("Models: %s", models)
         self.context_window = None
         for m in data:
             if m["id"] == self.model:
@@ -52,29 +51,25 @@ class LLM:
                 )
                 break
         if self.context_window:
-            self.logger.api_response("Context window for %s: %d tokens", self.model, self.context_window)
+            self.logger.api("Context window for %s: %d tokens", self.model, self.context_window)
         return models
 
     def chat_completion(self, messages, tools=None) -> Response:
-        self.logger.api_request("Request sent to %s", self.api_url + "/chat/completions")
-
-        body = {"model": self.model, "messages": messages, "tools": tools or []}
-        self.logger.trace("LLM request body: %s", json.dumps(body, indent=4))
+        self.logger.api("→ POST %s", self.api_url + "/chat/completions")
+        self.logger.debug("Request body: %s", json.dumps({"model": self.model, "messages": messages, "tools": tools or []}, indent=4))
 
         resp = self.session.post(
             self.api_url + "/chat/completions",
-            json=body,
+            json={"model": self.model, "messages": messages, "tools": tools or []},
         )
-        self.logger.api_response("LLM received response: %s (%d bytes)", resp.status_code, len(resp.content))
+        self.logger.api("← %s (%d bytes)", resp.status_code, len(resp.content))
         data = resp.json()
-        self.logger.trace("LLM response content: %s", json.dumps(data, indent=4))
+        self.logger.debug("Response body: %s", json.dumps(data, indent=4))
 
-        self.logger.llm_parse("parsing choices from response")
         try:
             choices = data.get("choices", [])
-            self.logger.llm_parse("parsed %d choice(s)", len(choices))
         except Exception as exc:
-            self.logger.llm_parse("failed to parse choices: %s", exc)
+            self.logger.error("Failed to parse choices: %s", exc)
             choices = []
 
         for choice in choices:
@@ -82,28 +77,24 @@ class LLM:
             reasoning = message.get("reasoning_content") or ""
             content   = message.get("content") or ""
             if reasoning:
-                self.logger.llm_reasoning("\n%s", reasoning)
+                self.logger.llm("\n%s", reasoning)
             if content:
-                self.logger.llm_output("\n%s", content)
+                self.logger.llm("\n%s", content)
         return resp
 
 
     def execute_tool_calls(self, message) -> list:
-        tool_calls = message.get("tool_calls", [])
-        tool_calls = tool_calls or []
+        tool_calls = message.get("tool_calls", []) or []
         messages = []
         registry = ToolsRegistry()
 
-        self.logger.tool_call("[Tool dispatch] found %d tool call(s) to execute", len(tool_calls))
+        self.logger.tool("dispatch: %d tool call(s)", len(tool_calls))
 
         for tool_call in tool_calls:
             tool_call_id = tool_call.get("id", "unknown_id")
 
             if tool_call["type"] != "function":
-                self.logger.warning(
-                    "[Tool skip] %s — type '%s' is not supported",
-                    tool_call_id, tool_call["type"],
-                )
+                self.logger.warning("skip %s — type '%s' not supported", tool_call_id, tool_call["type"])
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
@@ -114,18 +105,14 @@ class LLM:
             func_name = tool_call["function"]["name"]
             args = parse_tool_args(tool_call["function"]["arguments"])
 
-            self.logger.tool_call("[Tool call] %s → %s(%s)", tool_call_id, func_name, args)
+            self.logger.tool("call %s → %s(%s)", tool_call_id, func_name, args)
 
             if not hasattr(registry, func_name):
-                error_msg = f"Error: tool '{func_name}' not found in ToolsRegistry"
-                self.logger.error(
-                    "[Tool not found] %s — '%s' is not registered. Returning error to LLM.",
-                    tool_call_id, func_name,
-                )
+                self.logger.error("not found: '%s' is not registered", func_name)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
-                    "content": error_msg,
+                    "content": f"Error: tool '{func_name}' not found in ToolsRegistry",
                 })
                 continue
 
@@ -133,10 +120,10 @@ class LLM:
                 result = getattr(registry, func_name)(**args)
                 if not isinstance(result, str):
                     result = str(result)
-                self.logger.tool_call("[Tool result] %s → %s returned: %s", tool_call_id, func_name, result)
+                self.logger.tool("result %s → %s: %s", tool_call_id, func_name, result)
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
-                self.logger.error("[Tool error] %s → %s raised: %s", tool_call_id, func_name, exc)
+                self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
 
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
 
