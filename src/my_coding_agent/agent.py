@@ -25,7 +25,7 @@ class Agent(LLM):
     def add_message(self, message) -> None:
         self.messages.append(message)
         message_type = message.get("role", "unknown").upper()
-        self.logger.debug("Added %s message, total: %d", message_type, len(self.messages))
+        self.logger.info("Added message to conversation (type: %s)", message_type)
     
     def run(self, max_steps=5):
         self.logger.info("Agent run started with max_steps: %d", max_steps)
@@ -62,7 +62,7 @@ class Agent(LLM):
             else:
                 ctx_str = ""
             self.logger.info(
-                "[step %d] tokens — prompt: %d, completion: %d, total: %d%s",
+                "Step %d tokens — prompt: %d, completion: %d, total: %d%s",
                 step_num + 1, prompt, completion, total, ctx_str,
             )
 
@@ -78,7 +78,7 @@ class Agent(LLM):
         
         self.logger.info("Agent run completed with %d steps", step_num)
         self.logger.info(
-            "[total] tokens — prompt: %d, completion: %d, total: %d%s",
+            "Total tokens — prompt: %d, completion: %d, total: %d%s",
             total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"], ctx_str,
         )
         return self.messages

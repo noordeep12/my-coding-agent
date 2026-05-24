@@ -23,6 +23,23 @@ from my_coding_agent import LLM, Agent, tool, ToolsRegistry
 #     }
 # ]
 
+# disabled update readme
+# messages = [
+#     {
+#         "role": "system",
+#         "content": (
+#             "You are a helpful assistant. Use tools when needed. Use absolute paths when working with files. You are running in a Macbook Pro."
+#             "Available tools: bash(command) - executes a bash command and returns its output. "
+#             f"Current path: {os.getcwd()} "
+#             f"Current directory contents: {os.listdir(os.getcwd())} "
+#             f"Current OS: {os.name}, Platform: {os.sys.platform}, User: {os.getlogin()}"
+#         )
+#     },
+#     {
+#         "role": "user", 
+#         "content": "Please update the README.md file in the current directory to include a new section about this agentic shell demo, with instructions on how to run it and what it does. If the README.md file does not exist, create one with the necessary content."
+#     }
+# ]
 
 messages = [
     {
@@ -40,6 +57,9 @@ messages = [
         "content": "Using `git` and `gh` CLI tools, ensure the latest local code changes is committed and pushed to GitHub, with standardized commit messages."
     }
 ]
+
+
+
 tools = [
     tool(ToolsRegistry.bash),
     tool(ToolsRegistry.read_file),

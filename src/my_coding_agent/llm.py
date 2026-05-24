@@ -61,15 +61,15 @@ class LLM:
         self.logger.info("Request sent to %s", self.api_url + "/chat/completions")
         
         body = {"model": self.model, "messages": messages, "tools": tools or []}
-        self.logger.debug("Request body: %s", json.dumps(body, indent=4))
+        self.logger.debug("LLM request body: %s", json.dumps(body, indent=4))
 
         # self.logger.debug("Request body: %s", body)
         resp = self.session.post(
             self.api_url + "/chat/completions",
             json=body,
         )
-        self.logger.info("Received response: %s (%d bytes)", resp.status_code, len(resp.content))
-        self.logger.debug("Response content: %s", json.dumps(resp.json(), indent=4))
+        self.logger.debug("LLM received response: %s (%d bytes)", resp.status_code, len(resp.content))
+        self.logger.debug("LLM response content: %s", json.dumps(resp.json(), indent=4))
         # debbuging highlight reasoning content in response for better visibility
         choices = resp.json().get("choices", [])
         for choice in choices:
