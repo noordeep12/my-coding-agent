@@ -2,7 +2,7 @@ import httpx
 import time
 import json
 
-from colorama import Fore, Style
+from colorama import Fore, Style  # used in execute_tool_calls
 
 from .logger import get_logger
 from .tools import ToolsRegistry
@@ -69,23 +69,25 @@ class LLM:
             json=body,
         )
         self.logger.debug("LLM received response: %s (%d bytes)", resp.status_code, len(resp.content))
-        self.logger.debug("LLM response content: %s", json.dumps(resp.json(), indent=4))
-        # debbuging highlight reasoning content in response for better visibility
-        choices = resp.json().get("choices", [])
+        data = resp.json()
+        self.logger.debug("LLM response content: %s", json.dumps(data, indent=4))
+
+        self.logger.llm_parse("parsing choices from response")
+        try:
+            choices = data.get("choices", [])
+            self.logger.llm_parse("parsed %d choice(s)", len(choices))
+        except Exception as exc:
+            self.logger.llm_parse("failed to parse choices: %s", exc)
+            choices = []
+
         for choice in choices:
             message = choice.get("message", {})
-            content = message.get("content", "")
-            reasoning_content = message.get("reasoning_content", "")
+            reasoning = message.get("reasoning_content") or ""
+            content   = message.get("content") or ""
+            if reasoning:
+                self.logger.llm_reasoning("\n%s", reasoning)
             if content:
-                self.logger.info(
-                    "%s[LLM content]\n%s\n%s%s%s\n",
-                    Fore.CYAN, Style.RESET_ALL, Fore.CYAN, content, Style.RESET_ALL
-                )
-            if reasoning_content:
-                self.logger.info(
-                    "%s[LLM reasoning]\n%s\n%s%s%s\n",
-                    Fore.YELLOW, Style.RESET_ALL, Fore.YELLOW, reasoning_content, Style.RESET_ALL
-                )
+                self.logger.llm_output("\n%s", content)
         return resp
 
 
