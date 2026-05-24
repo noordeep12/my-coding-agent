@@ -55,6 +55,7 @@ class LLM:
 
     def execute_tool_calls(self, message) -> list:
         from colorama import Fore, Style
+        TOOL_COLOR = Fore.MAGENTA
         tool_calls = message.get("tool_calls", [])
         tool_calls = tool_calls or []
         messages = []
@@ -62,7 +63,7 @@ class LLM:
 
         self.logger.debug(
             "%s[tool dispatch]%s found %d tool call(s) to execute",
-            Fore.CYAN, Style.RESET_ALL, len(tool_calls)
+            TOOL_COLOR, Style.RESET_ALL, len(tool_calls)
         )
 
         for tool_call in tool_calls:
@@ -71,7 +72,7 @@ class LLM:
             if tool_call["type"] != "function":
                 self.logger.warning(
                     "%s[tool skip]%s %s — type '%s' is not supported",
-                    Fore.YELLOW, Style.RESET_ALL, tool_call_id, tool_call["type"]
+                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, tool_call["type"]
                 )
                 messages.append({
                     "role": "tool",
@@ -85,14 +86,14 @@ class LLM:
 
             self.logger.info(
                 "%s[tool call]%s %s → %s(%s)",
-                Fore.MAGENTA, Style.RESET_ALL, tool_call_id, func_name, args
+                TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, args
             )
 
             if not hasattr(registry, func_name):
                 error_msg = f"Error: tool '{func_name}' not found in ToolsRegistry"
                 self.logger.error(
                     "%s[tool not found]%s %s — '%s' is not registered. Returning error to LLM.",
-                    Fore.RED, Style.RESET_ALL, tool_call_id, func_name
+                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name
                 )
                 messages.append({
                     "role": "tool",
@@ -107,13 +108,13 @@ class LLM:
                     result = str(result)
                 self.logger.info(
                     "%s[tool result]%s %s → %s returned: %s",
-                    Fore.GREEN, Style.RESET_ALL, tool_call_id, func_name, result
+                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, result
                 )
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 self.logger.error(
                     "%s[tool error]%s %s → %s raised: %s",
-                    Fore.RED, Style.RESET_ALL, tool_call_id, func_name, exc
+                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, exc
                 )
 
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
