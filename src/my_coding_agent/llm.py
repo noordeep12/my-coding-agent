@@ -65,7 +65,8 @@ class LLM:
             func_name = tool_call["function"]["name"]
             args = tool_call["function"]["arguments"]
             args = parse_tool_args(args)
-            self.logger.info("Processing tool call: %s with args %s", func_name, args)
+            # red color for tool calls to make them stand out in logs
+            self.logger.warning(f"\033[91mExecuting tool: {func_name} with args {args}\033[0m")
             if not hasattr(registry, func_name):
                 self.logger.warning("Tool function %s not found in ToolsRegistry", func_name)
                 continue
@@ -74,5 +75,4 @@ class LLM:
             if not isinstance(result, str):
                 result = str(result)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": result})
-            self.logger.info("Executed tool: %s with args %s", func_name, args)
         return messages
