@@ -40,8 +40,21 @@ class LLM:
 
     def available_models(self) -> list:
         resp = self.session.get(self.api_url + "/models")
-        models = [m["id"] for m in resp.json().get("data", [])]
+        data = resp.json().get("data", [])
+        models = [m["id"] for m in data]
         self.logger.info("Models: %s", models)
+        # capture context window for the active model
+        self.context_window = None
+        for m in data:
+            if m["id"] == self.model:
+                self.context_window = (
+                    m.get("context_length")
+                    or m.get("max_context_length")
+                    or m.get("context_window")
+                )
+                break
+        if self.context_window:
+            self.logger.info("Context window for %s: %d tokens", self.model, self.context_window)
         return models
 
     def chat_completion(self, messages, tools=None) -> Response:
@@ -49,11 +62,6 @@ class LLM:
         
         body = {"model": self.model, "messages": messages, "tools": tools or []}
         self.logger.debug("Request body: %s", json.dumps(body, indent=4))
-
-
-        self.logger.debug("Sleeping...")
-        time.sleep(10)
-
 
         # self.logger.debug("Request body: %s", body)
         resp = self.session.post(

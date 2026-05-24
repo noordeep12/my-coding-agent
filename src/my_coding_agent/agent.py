@@ -52,9 +52,18 @@ class Agent(LLM):
             usage = extract_usage(resp)
             for key in total_usage:
                 total_usage[key] += usage.get(key, 0)
+            prompt     = total_usage["prompt_tokens"]
+            completion = total_usage["completion_tokens"]
+            total      = total_usage["total_tokens"]
+            ctx        = self.context_window
+            if ctx:
+                pct = total / ctx * 100
+                ctx_str = f" / {ctx} ({pct:.1f}% used)"
+            else:
+                ctx_str = ""
             self.logger.info(
-                "[step %d] tokens — prompt: %d, completion: %d, total: %d",
-                step_num + 1, total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"]
+                "[step %d] tokens — prompt: %d, completion: %d, total: %d%s",
+                step_num + 1, prompt, completion, total, ctx_str,
             )
 
             # Finish conditions
@@ -69,7 +78,7 @@ class Agent(LLM):
         
         self.logger.info("Agent run completed with %d steps", step_num)
         self.logger.info(
-            "[total] tokens — prompt: %d, completion: %d, total: %d",
-            total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"]
+            "[total] tokens — prompt: %d, completion: %d, total: %d%s",
+            total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"], ctx_str,
         )
         return self.messages
