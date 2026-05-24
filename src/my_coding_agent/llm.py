@@ -1,4 +1,5 @@
 import httpx
+from colorama import Fore, Style
 
 from ._logging import get_logger
 from .tools import ToolsRegistry
@@ -57,14 +58,19 @@ class LLM:
             content = message.get("content", "")
             reasoning_content = message.get("reasoning_content", "")
             if content:
-                self.logger.info("LLM response content:\n%s", content)
+                self.logger.info(
+                    "%s[LLM content]%s\n%s%s%s",
+                    Fore.CYAN, Style.RESET_ALL, Fore.CYAN, content, Style.RESET_ALL
+                )
             if reasoning_content:
-                self.logger.info("LLM response reasoning content:\n%s", reasoning_content)
+                self.logger.info(
+                    "%s[LLM reasoning]%s\n%s%s%s",
+                    Fore.YELLOW, Style.RESET_ALL, Fore.YELLOW, reasoning_content, Style.RESET_ALL
+                )
         return resp
 
 
     def execute_tool_calls(self, message) -> list:
-        from colorama import Fore, Style
         TOOL_COLOR = Fore.MAGENTA
         tool_calls = message.get("tool_calls", [])
         tool_calls = tool_calls or []
