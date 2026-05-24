@@ -27,23 +27,6 @@ class Agent(LLM):
         message_type = message.get("role", "unknown").upper()
         self.logger.debug("Added %s message, total: %d", message_type, len(self.messages))
     
-    def step(self) -> Response:
-        # 1. Send current messages to LLM and get response
-        resp = self.chat_completion(self.messages, tools=self.tools)
-        message = extract_message(resp)
-        self.add_message(message)
-
-        # 2. Check if there are tool calls in the response,
-        # execute them and add results back to messages
-        tool_messages = self.execute_tool_calls(message)
-        tool_messages = tool_messages or []
-        for tool_message in tool_messages:
-            self.add_message(tool_message)
-
-        # 3. Send another request to LLM with tool results for final response
-        final_resp = self.chat_completion(self.messages)
-        return final_resp
-
     def run(self, max_steps=5):
         self.logger.info("Agent run started with max_steps: %d", max_steps)
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -52,9 +35,20 @@ class Agent(LLM):
             self.logger.info("----------------------------------------------------------------")
             self.logger.info("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
             self.logger.info("----------------------------------------------------------------")
+
+            # 1. Send current messages to LLM and get response
+            resp = self.chat_completion(self.messages, tools=self.tools)
+            message = extract_message(resp)
+            self.add_message(message) # assistant message
+
+            # 2. Check if there are tool calls in the response,
+            # execute them and add results back to messages
+            tool_messages = self.execute_tool_calls(message)
+            tool_messages = tool_messages or []
+            for tool_message in tool_messages:
+                self.add_message(tool_message) # tool message
             
-            resp = self.step()
-            # accumulate usage from the final response of each step
+            # Usage
             usage = extract_usage(resp)
             for key in total_usage:
                 total_usage[key] += usage.get(key, 0)
@@ -62,8 +56,8 @@ class Agent(LLM):
                 "[step %d] tokens — prompt: %d, completion: %d, total: %d",
                 step_num + 1, total_usage["prompt_tokens"], total_usage["completion_tokens"], total_usage["total_tokens"]
             )
-            message = extract_message(resp)
-            self.add_message(message)
+
+            # Finish conditions
             finish_reason = extract_finish_reason(resp)
             if finish_reason in ('stop', 'exit', 'quit'):
                 self.logger.warning("Agent run stopped by LLM response: %s", finish_reason)
@@ -72,6 +66,7 @@ class Agent(LLM):
                 self.logger.warning("Agent run stopped after reaching max_steps: %d", max_steps)
                 break
             step_num += 1
+        
         self.logger.info("Agent run completed with %d steps", step_num)
         self.logger.info(
             "[total] tokens — prompt: %d, completion: %d, total: %d",
