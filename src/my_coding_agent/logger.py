@@ -61,7 +61,7 @@ class ColoredFormatter(logging.Formatter):
 # ── Public API ────────────────────────────────────────────────────────────────
 def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
     formatter = ColoredFormatter(
-        "{color}{asctime} | {levelname:<12} | {name} | {message}{reset}",
+        "{color}{asctime} | {levelname:<8} | {message}{reset}",
         style="{",
         datefmt="%H:%M:%S",
     )
