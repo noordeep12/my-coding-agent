@@ -3,6 +3,7 @@ import httpx
 from ._logging import get_logger
 from .tools import ToolsRegistry
 from .utils import parse_tool_args
+from httpx import Response
 
 OMLX_API_URL = "http://127.0.0.1:8321/v1"
 OMLX_API_KEY = "changeme"
@@ -23,7 +24,7 @@ class LLM:
         self.setup_session()
         self.available_models()
 
-    def setup_session(self):
+    def setup_session(self) -> None:
         self.session = httpx.Client()
         self.session.headers.update(
             {
@@ -33,13 +34,13 @@ class LLM:
         )
         self.session.timeout = 30.0
 
-    def available_models(self):
+    def available_models(self) -> list:
         resp = self.session.get(self.api_url + "/models")
         models = [m["id"] for m in resp.json().get("data", [])]
-        self.logger.info("Available models: %s", models)
+        self.logger.info("Models: %s", models)
         return models
 
-    def chat_completion(self, messages, tools=None):
+    def chat_completion(self, messages, tools=None) -> Response:
         self.logger.info("Request sent to %s", self.api_url + "/chat/completions")
         body = {"model": self.model, "messages": messages, "tools": tools or []}
         # self.logger.debug("Request body: %s", body)
@@ -52,7 +53,7 @@ class LLM:
         return resp
 
 
-    def execute_tool_calls(self, message):
+    def execute_tool_calls(self, message) -> list:
         tool_calls = message.get("tool_calls", [])
         tool_calls = tool_calls or []
         messages = []

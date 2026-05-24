@@ -2,6 +2,10 @@ from .llm import LLM, OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
 from .utils import extract_message, extract_finish_reason, extract_usage
 from ._logging import get_logger
 
+from httpx import Response
+
+import time
+
 class Agent(LLM):
 
     def __init__(
@@ -18,11 +22,11 @@ class Agent(LLM):
         self.logger = get_logger(self.__class__.__name__)
         self.logger.info("Agent initialized with API URL: %s, Model: %s", api_url, model)
 
-    def add_message(self, message):
+    def add_message(self, message) -> None:
         self.messages.append(message)
         self.logger.debug("Added message (total: %d): %s", len(self.messages), message)
     
-    def step(self):
+    def step(self) -> Response:
         # 1. Send current messages to LLM and get response
         resp = self.chat_completion(self.messages, tools=self.tools)
         message = extract_message(resp)
@@ -44,6 +48,7 @@ class Agent(LLM):
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         step_num = 0
         while True:
+            time.sleep(5)  # brief pause between steps for readability
             self.logger.info("----------------------------------------------------------------")
             self.logger.info("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
             self.logger.info("----------------------------------------------------------------")
