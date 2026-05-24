@@ -54,25 +54,68 @@ class LLM:
 
 
     def execute_tool_calls(self, message) -> list:
+        from colorama import Fore, Style
         tool_calls = message.get("tool_calls", [])
         tool_calls = tool_calls or []
         messages = []
         registry = ToolsRegistry()
+
+        self.logger.debug(
+            "%s[tool dispatch]%s found %d tool call(s) to execute",
+            Fore.CYAN, Style.RESET_ALL, len(tool_calls)
+        )
+
         for tool_call in tool_calls:
+            tool_call_id = tool_call.get("id", "unknown_id")
+
             if tool_call["type"] != "function":
-                self.logger.warning("Non-function tool calls are not supported")
+                self.logger.warning(
+                    "%s[tool skip]%s %s — type '%s' is not supported",
+                    Fore.YELLOW, Style.RESET_ALL, tool_call_id, tool_call["type"]
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": f"Error: tool type '{tool_call['type']}' is not supported",
+                })
                 continue
+
             func_name = tool_call["function"]["name"]
-            args = tool_call["function"]["arguments"]
-            args = parse_tool_args(args)
-            # red color for tool calls to make them stand out in logs
-            self.logger.warning(f"\033[91mExecuting tool: {func_name} with args {args}\033[0m")
+            args = parse_tool_args(tool_call["function"]["arguments"])
+
+            self.logger.info(
+                "%s[tool call]%s %s → %s(%s)",
+                Fore.MAGENTA, Style.RESET_ALL, tool_call_id, func_name, args
+            )
+
             if not hasattr(registry, func_name):
-                self.logger.warning("Tool function %s not found in ToolsRegistry", func_name)
+                error_msg = f"Error: tool '{func_name}' not found in ToolsRegistry"
+                self.logger.error(
+                    "%s[tool not found]%s %s — '%s' is not registered. Returning error to LLM.",
+                    Fore.RED, Style.RESET_ALL, tool_call_id, func_name
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": error_msg,
+                })
                 continue
-            result = getattr(registry, func_name)(**args)
-            # ensure result is a string for now, could be extended to support more complex types with better formatting
-            if not isinstance(result, str):
-                result = str(result)
-            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": result})
+
+            try:
+                result = getattr(registry, func_name)(**args)
+                if not isinstance(result, str):
+                    result = str(result)
+                self.logger.info(
+                    "%s[tool result]%s %s → %s returned: %s",
+                    Fore.GREEN, Style.RESET_ALL, tool_call_id, func_name, result
+                )
+            except Exception as exc:
+                result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
+                self.logger.error(
+                    "%s[tool error]%s %s → %s raised: %s",
+                    Fore.RED, Style.RESET_ALL, tool_call_id, func_name, exc
+                )
+
+            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
+
         return messages

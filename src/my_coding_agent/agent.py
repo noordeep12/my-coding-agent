@@ -48,7 +48,6 @@ class Agent(LLM):
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         step_num = 0
         while True:
-            time.sleep(5)  # brief pause between steps for readability
             self.logger.info("----------------------------------------------------------------")
             self.logger.info("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
             self.logger.info("----------------------------------------------------------------")
