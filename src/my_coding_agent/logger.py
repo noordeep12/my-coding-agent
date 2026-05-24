@@ -26,7 +26,7 @@ _LEVEL_COLORS: Dict[str, str] = {
     "API":      Fore.WHITE,
     "LLM":      Fore.YELLOW,
     "DEBUG":    Style.DIM,
-    "INFO":     Fore.GREEN,
+    "INFO":     Fore.WHITE,
     "WARNING":  Fore.YELLOW,
     "ERROR":    Fore.RED,
     "CRITICAL": Fore.RED + Back.WHITE,
