@@ -42,6 +42,8 @@ messages = [
 ]
 tools = [
     tool(ToolsRegistry.bash),
+    tool(ToolsRegistry.read_file),
+    tool(ToolsRegistry.write_file),
 ]
 
 print("Initial messages: ", json.dumps(messages, indent=4))
