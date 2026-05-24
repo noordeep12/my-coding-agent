@@ -1,4 +1,7 @@
 import httpx
+import time
+import json
+
 from colorama import Fore, Style
 
 from ._logging import get_logger
@@ -43,14 +46,22 @@ class LLM:
 
     def chat_completion(self, messages, tools=None) -> Response:
         self.logger.info("Request sent to %s", self.api_url + "/chat/completions")
+        
         body = {"model": self.model, "messages": messages, "tools": tools or []}
+        self.logger.debug("Request body: %s", json.dumps(body, indent=4))
+
+
+        self.logger.debug("Sleeping...")
+        time.sleep(10)
+
+
         # self.logger.debug("Request body: %s", body)
         resp = self.session.post(
             self.api_url + "/chat/completions",
             json=body,
         )
         self.logger.info("Received response: %s (%d bytes)", resp.status_code, len(resp.content))
-        self.logger.debug("Response content: %s", resp.json())
+        self.logger.debug("Response content: %s", json.dumps(resp.json(), indent=4))
         # debbuging highlight reasoning content in response for better visibility
         choices = resp.json().get("choices", [])
         for choice in choices:
@@ -59,12 +70,12 @@ class LLM:
             reasoning_content = message.get("reasoning_content", "")
             if content:
                 self.logger.info(
-                    "%s[LLM content]%s\n%s%s%s",
+                    "%s[LLM content]\n%s\n%s%s%s\n",
                     Fore.CYAN, Style.RESET_ALL, Fore.CYAN, content, Style.RESET_ALL
                 )
             if reasoning_content:
                 self.logger.info(
-                    "%s[LLM reasoning]%s\n%s%s%s",
+                    "%s[LLM reasoning]\n%s\n%s%s%s\n",
                     Fore.YELLOW, Style.RESET_ALL, Fore.YELLOW, reasoning_content, Style.RESET_ALL
                 )
         return resp
@@ -78,8 +89,8 @@ class LLM:
         registry = ToolsRegistry()
 
         self.logger.debug(
-            "%s[Tool dispatch]%s found %d tool call(s) to execute",
-            TOOL_COLOR, Style.RESET_ALL, len(tool_calls)
+            "%s[Tool dispatch] found %d tool call(s) to execute%s",
+            TOOL_COLOR, len(tool_calls), Style.RESET_ALL,
         )
 
         for tool_call in tool_calls:
@@ -87,8 +98,8 @@ class LLM:
 
             if tool_call["type"] != "function":
                 self.logger.warning(
-                    "%s[Tool skip]%s %s — type '%s' is not supported",
-                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, tool_call["type"]
+                    "%s[Tool skip] %s — type '%s' is not supported%s",
+                    TOOL_COLOR, tool_call_id, tool_call["type"], Style.RESET_ALL,
                 )
                 messages.append({
                     "role": "tool",
@@ -101,15 +112,15 @@ class LLM:
             args = parse_tool_args(tool_call["function"]["arguments"])
 
             self.logger.info(
-                "%s[Tool call]%s %s → %s(%s)",
-                TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, args
+                "%s[Tool call] %s → %s(%s)%s",
+                TOOL_COLOR, tool_call_id, func_name, args, Style.RESET_ALL,
             )
 
             if not hasattr(registry, func_name):
                 error_msg = f"Error: tool '{func_name}' not found in ToolsRegistry"
                 self.logger.error(
-                    "%s[Tool not found]%s %s — '%s' is not registered. Returning error to LLM.",
-                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name
+                    "%s[Tool not found] %s — '%s' is not registered. Returning error to LLM.%s",
+                    TOOL_COLOR, tool_call_id, func_name, Style.RESET_ALL,
                 )
                 messages.append({
                     "role": "tool",
@@ -123,14 +134,14 @@ class LLM:
                 if not isinstance(result, str):
                     result = str(result)
                 self.logger.info(
-                    "%s[Tool result]%s %s → %s returned: %s",
-                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, result
+                    "%s[Tool result] %s → %s returned: %s%s",
+                    TOOL_COLOR, tool_call_id, func_name, result, Style.RESET_ALL,
                 )
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 self.logger.error(
-                    "%s[Tool error]%s %s → %s raised: %s",
-                    TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, exc
+                    "%s[Tool error] %s → %s raised: %s%s",
+                    TOOL_COLOR, tool_call_id, func_name, exc, Style.RESET_ALL,
                 )
 
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})

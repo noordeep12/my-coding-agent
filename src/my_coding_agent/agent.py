@@ -52,6 +52,7 @@ class Agent(LLM):
             self.logger.info("----------------------------------------------------------------")
             self.logger.info("----------------------------------------------------------------   STEP %d/%d", step_num+1, max_steps)
             self.logger.info("----------------------------------------------------------------")
+            
             resp = self.step()
             # accumulate usage from the final response of each step
             usage = extract_usage(resp)
