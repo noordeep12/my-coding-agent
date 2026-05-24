@@ -59,6 +59,26 @@ def bash(command: str) -> str:
 ToolsRegistry.bash = staticmethod(bash)
 
 # Execution
+
+cisa_kev_demo = [
+    {
+        "role": "system",
+        "content": (
+            "You are a helpful assistant that has terminal bash access. Use absolute paths when working with files. You are running in a Macbook Pro."
+            "Available tools: "
+            "* bash(command) - executes a bash command and returns its output. "
+            f"Current path: {os.getcwd()} "
+            f"Current directory contents: {os.listdir(os.getcwd())} "
+            f"Current OS: {os.name}, Platform: {os.sys.platform}, User: {os.getlogin()}"
+        )
+    },
+    {
+        "role": "user", 
+        "content": "Using `python` command, collect the latest vulnerability CISA KEV data of today and save it to a file named `examples/cisa_kev.json` in the current directory. Then read the file and return the content."
+    }
+]
+
+
 messages = [
     {
         "role": "system",
