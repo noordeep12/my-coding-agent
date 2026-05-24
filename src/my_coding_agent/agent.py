@@ -1,6 +1,6 @@
 from .llm import LLM, OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
 from .utils import extract_message, extract_finish_reason, extract_usage
-from ._logging import get_logger
+from .logger import get_logger
 
 from httpx import Response
 

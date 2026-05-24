@@ -4,7 +4,7 @@ import json
 
 from colorama import Fore, Style
 
-from ._logging import get_logger
+from .logger import get_logger
 from .tools import ToolsRegistry
 from .utils import parse_tool_args
 from httpx import Response
