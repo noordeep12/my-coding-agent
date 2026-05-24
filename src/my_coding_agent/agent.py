@@ -1,6 +1,6 @@
 from .llm import LLM, OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
 from .utils import extract_message, extract_finish_reason, extract_usage
-from .logger import get_logger
+from .logger import get_logger, print_banner
 
 from httpx import Response
 
@@ -20,7 +20,7 @@ class Agent(LLM):
         self.messages = messages or []
         self.tools = tools or []
         self.logger = get_logger(self.__class__.__name__)
-        self.logger.info("Agent initialized with API URL: %s, Model: %s", api_url, model)
+        print_banner(model=self.model, tools=self.tools, context_window=self.context_window)
 
     def add_message(self, message) -> None:
         self.messages.append(message)
