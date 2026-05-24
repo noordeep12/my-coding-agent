@@ -24,6 +24,8 @@ class Agent(LLM):
 
     def add_message(self, message) -> None:
         self.messages.append(message)
+        message_type = message.get("role", "unknown").upper()
+        self.logger.debug("Added %s message, total: %d", message_type, len(self.messages))
     
     def step(self) -> Response:
         # 1. Send current messages to LLM and get response

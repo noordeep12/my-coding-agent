@@ -50,7 +50,7 @@ class LLM:
             json=body,
         )
         self.logger.info("Received response: %s (%d bytes)", resp.status_code, len(resp.content))
-        self.logger.info("Response content: %s", resp.json())
+        self.logger.debug("Response content: %s", resp.json())
         # debbuging highlight reasoning content in response for better visibility
         choices = resp.json().get("choices", [])
         for choice in choices:
@@ -78,7 +78,7 @@ class LLM:
         registry = ToolsRegistry()
 
         self.logger.debug(
-            "%s[tool dispatch]%s found %d tool call(s) to execute",
+            "%s[Tool dispatch]%s found %d tool call(s) to execute",
             TOOL_COLOR, Style.RESET_ALL, len(tool_calls)
         )
 
@@ -87,7 +87,7 @@ class LLM:
 
             if tool_call["type"] != "function":
                 self.logger.warning(
-                    "%s[tool skip]%s %s — type '%s' is not supported",
+                    "%s[Tool skip]%s %s — type '%s' is not supported",
                     TOOL_COLOR, Style.RESET_ALL, tool_call_id, tool_call["type"]
                 )
                 messages.append({
@@ -101,14 +101,14 @@ class LLM:
             args = parse_tool_args(tool_call["function"]["arguments"])
 
             self.logger.info(
-                "%s[tool call]%s %s → %s(%s)",
+                "%s[Tool call]%s %s → %s(%s)",
                 TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, args
             )
 
             if not hasattr(registry, func_name):
                 error_msg = f"Error: tool '{func_name}' not found in ToolsRegistry"
                 self.logger.error(
-                    "%s[tool not found]%s %s — '%s' is not registered. Returning error to LLM.",
+                    "%s[Tool not found]%s %s — '%s' is not registered. Returning error to LLM.",
                     TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name
                 )
                 messages.append({
@@ -123,13 +123,13 @@ class LLM:
                 if not isinstance(result, str):
                     result = str(result)
                 self.logger.info(
-                    "%s[tool result]%s %s → %s returned: %s",
+                    "%s[Tool result]%s %s → %s returned: %s",
                     TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, result
                 )
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 self.logger.error(
-                    "%s[tool error]%s %s → %s raised: %s",
+                    "%s[Tool error]%s %s → %s raised: %s",
                     TOOL_COLOR, Style.RESET_ALL, tool_call_id, func_name, exc
                 )
 
