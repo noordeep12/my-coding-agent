@@ -105,7 +105,7 @@ class LLM:
             func_name = tool_call["function"]["name"]
             args = parse_tool_args(tool_call["function"]["arguments"])
 
-            self.logger.tool("call %s → %s(%s)", tool_call_id, func_name, args)
+            self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
 
             if not hasattr(registry, func_name):
                 self.logger.error("not found: '%s' is not registered", func_name)
@@ -120,7 +120,7 @@ class LLM:
                 result = getattr(registry, func_name)(**args)
                 if not isinstance(result, str):
                     result = str(result)
-                self.logger.tool("result %s → %s: %s", tool_call_id, func_name, result)
+                self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
