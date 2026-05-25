@@ -5,11 +5,11 @@ Explores the workspace and writes a stable context document to
 .my_coding_agent/discovery.md for use as a system-prompt prefix in future runs.
 
 Usage (standalone):
-    uv run python examples/agentic_discovery.py
-    uv run python examples/agentic_discovery.py --force   # overwrite existing
+    uv run python agents/agentic_discovery.py
+    uv run python agents/agentic_discovery.py --force   # overwrite existing
 
 Importable:
-    from examples.agentic_discovery import run_discovery
+    from agents.agentic_discovery import run_discovery
     run_discovery(force=True)
 """
 import os

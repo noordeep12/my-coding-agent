@@ -16,7 +16,7 @@ import click
 
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "examples"))
+sys.path.insert(0, str(_ROOT / "agents"))
 
 from my_coding_agent import Agent, tool, ToolsRegistry  # noqa: E402
 from agentic_discovery import run_discovery             # noqa: E402
@@ -80,7 +80,7 @@ def _system_prompt(tools: list) -> str:
 )
 @click.option(
     "--analyze-log",
-    default="examples/stderr.log",
+    default="agents/stderr.log",
     show_default=True,
     type=click.Path(),
     help="Session log for the Session Analyzer.",
@@ -152,7 +152,7 @@ def main(prompt, interactive, discover, analyze, analyze_log, max_steps):
             click.secho(
                 f"  Log not found: {analyze_log}\n"
                 "  Tip: redirect stderr when running — e.g.\n"
-                "       uv run python workflows/main.py --analyze 2> examples/stderr.log",
+                "       uv run python workflows/main.py --analyze 2> agents/stderr.log",
                 fg="yellow", err=True,
             )
         else:

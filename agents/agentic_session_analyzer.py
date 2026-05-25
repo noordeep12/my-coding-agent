@@ -7,13 +7,13 @@ and writes a structured report to:
     .my_coding_agent/<session-id>/session_analysis.md
 
 Usage (standalone):
-    uv run python examples/agentic_session_analyzer.py
-    uv run python examples/agentic_session_analyzer.py --log examples/stderr.log
-    uv run python examples/agentic_session_analyzer.py --log path/to/stderr.log --max-steps 25
+    uv run python agents/agentic_session_analyzer.py
+    uv run python agents/agentic_session_analyzer.py --log agents/stderr.log
+    uv run python agents/agentic_session_analyzer.py --log path/to/stderr.log --max-steps 25
 
 Importable:
-    from examples.agentic_session_analyzer import run_analysis
-    run_analysis("examples/stderr.log", max_steps=20)
+    from agents.agentic_session_analyzer import run_analysis
+    run_analysis("agents/stderr.log", max_steps=20)
 """
 import os
 import sys
@@ -27,7 +27,7 @@ from my_coding_agent import Agent, tool, ToolsRegistry
 from my_coding_agent.log_parser import parse_session_log
 
 
-def run_analysis(log_path: str | Path = "examples/stderr.log", max_steps: int = 20) -> Path | None:
+def run_analysis(log_path: str | Path = "agents/stderr.log", max_steps: int = 20) -> Path | None:
     """Parse *log_path*, run the Session Analyzer agent, return the report path (or None)."""
     log_path = Path(log_path)
     if not log_path.exists():
@@ -135,7 +135,7 @@ Every finding must be traceable to the session data or source code. No hallucina
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--log", "-l", default="examples/stderr.log", show_default=True,
+@click.option("--log", "-l", default="agents/stderr.log", show_default=True,
               type=click.Path(), help="Path to the stderr session log.")
 @click.option("--max-steps", default=20, show_default=True,
               type=click.IntRange(1, 100), help="Max agent loop steps.")
