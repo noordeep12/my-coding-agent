@@ -1,4 +1,5 @@
 import inspect
+import json
 import subprocess
 import html2text
 import httpx
@@ -58,8 +59,9 @@ class ToolsRegistry:
 
     @staticmethod
     def bash(command: str) -> str:
-        """Run a shell command and return its stdout, stderr, and exit code.
-        Use for running tests, installing packages, git operations, or any shell task."""
+        """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
+        Use for running tests, installing packages, git operations, or any shell task.
+        The 'ok' field is true when exit_code is 0."""
         result = subprocess.run(
             command,
             shell=True,
@@ -67,13 +69,12 @@ class ToolsRegistry:
             text=True,
             timeout=60,
         )
-        parts = []
-        if result.stdout:
-            parts.append(f"stdout:\n{result.stdout.rstrip()}")
-        if result.stderr:
-            parts.append(f"stderr:\n{result.stderr.rstrip()}")
-        parts.append(f"exit_code: {result.returncode}")
-        return "\n".join(parts)
+        return json.dumps({
+            "stdout":    result.stdout.rstrip(),
+            "stderr":    result.stderr.rstrip(),
+            "exit_code": result.returncode,
+            "ok":        result.returncode == 0,
+        })
 
     @staticmethod
     def read_file(path: str) -> str:
