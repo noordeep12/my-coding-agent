@@ -100,8 +100,9 @@ class ToolsRegistry:
 
     @staticmethod
     def read_article(url: str) -> str:
-        """Fetch a web page and return its content as clean markdown.
+        """Fetch a web page and return its content as clean markdown (max ~6 000 tokens).
         Use when the user provides a URL or link to an article, blog post, or documentation page."""
+        MAX_CHARS = 24_000  # ~6 000 tokens; prevents context explosion from large pages
         try:
             resp = httpx.get(
                 url,
@@ -114,7 +115,10 @@ class ToolsRegistry:
             h.ignore_links = False
             h.ignore_images = True
             h.body_width = 0
-            return h.handle(resp.text)
+            text = h.handle(resp.text)
+            if len(text) > MAX_CHARS:
+                text = text[:MAX_CHARS] + f"\n\n[...truncated — article exceeds {MAX_CHARS} chars]"
+            return text
         except httpx.HTTPStatusError as e:
             return f"Error: HTTP {e.response.status_code} fetching {url}"
         except Exception as e:

@@ -43,6 +43,7 @@ class Agent(LLM):
         self.stop_reason = "max_steps"
         self.total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.tool_records = []
+        self.last_prompt_tokens = 0  # actual value from last API response
         t_start = time.monotonic()
 
         self.logger.info("Agent run started with max_steps: %d", max_steps)
@@ -51,38 +52,52 @@ class Agent(LLM):
             self.logger.info("----------------------------------------------------------------   STEP %d/%d", self.step_num + 1, max_steps)
             self.logger.info("----------------------------------------------------------------")
 
-            # 1. Hard stop if context window would be exceeded
-            estimated_tokens = len(json.dumps(self.messages)) // 4
-            if estimated_tokens >= self.context_window:
-                self.stop_reason = "context_limit"
-                self.logger.warning(
-                    "Context limit reached: estimated %d tokens >= %d token limit. Stopping.",
-                    estimated_tokens, self.context_window,
-                )
-                break
+            # Pre-flight context check using actual tokens from the previous step.
+            # On step 1 we fall back to a character estimate (no prior API data yet).
+            if self.context_window:
+                ctx_tokens = self.last_prompt_tokens or len(json.dumps(self.messages)) // 3
+                if ctx_tokens >= self.context_window:
+                    self.stop_reason = "context_limit"
+                    self.logger.warning(
+                        "Context limit reached: %d / %d tokens (%.1f%%). Stopping.",
+                        ctx_tokens, self.context_window,
+                        ctx_tokens / self.context_window * 100,
+                    )
+                    break
+                elif ctx_tokens >= self.context_window * 0.8:
+                    self.logger.warning(
+                        "Context warning: %.1f%% used (%d / %d tokens).",
+                        ctx_tokens / self.context_window * 100,
+                        ctx_tokens, self.context_window,
+                    )
 
             resp = self.chat_completion(self.messages, tools=self.tools)
             message = extract_message(resp)
             self.add_message(message)
 
-            # 2. Execute tool calls and add results back to messages
+            # Execute tool calls and add results back to messages
             tool_messages, records = self.execute_tool_calls(message)
             self.tool_records.extend(records)
             for tool_message in (tool_messages or []):
                 self.add_message(tool_message)
 
-            # Accumulate usage
+            # Track usage — log per-step actuals, not cumulative sums
             usage = extract_usage(resp)
+            step_prompt     = usage.get("prompt_tokens", 0)
+            step_completion = usage.get("completion_tokens", 0)
+            step_total      = usage.get("total_tokens", 0)
+            self.last_prompt_tokens = step_prompt
             for key in self.total_usage:
                 self.total_usage[key] += usage.get(key, 0)
+
             ctx = self.context_window
-            ctx_str = f" / {ctx} ({self.total_usage['total_tokens'] / ctx * 100:.1f}% used)" if ctx else ""
+            ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
             self.logger.info(
                 "Step %d tokens — prompt: %d, completion: %d, total: %d%s",
                 self.step_num + 1,
-                self.total_usage["prompt_tokens"],
-                self.total_usage["completion_tokens"],
-                self.total_usage["total_tokens"],
+                step_prompt,
+                step_completion,
+                step_total,
                 ctx_str,
             )
 
@@ -108,7 +123,7 @@ class Agent(LLM):
             steps=self.step_num + 1,
             max_steps=max_steps,
             stop_reason=self.stop_reason,
-            prompt_tokens=self.total_usage["prompt_tokens"],
+            prompt_tokens=self.last_prompt_tokens,        # last-step context size (actual)
             completion_tokens=self.total_usage["completion_tokens"],
             total_tokens=self.total_usage["total_tokens"],
             context_window=self.context_window,
