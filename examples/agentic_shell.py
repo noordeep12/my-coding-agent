@@ -40,42 +40,58 @@ from my_coding_agent import LLM, Agent, tool, ToolsRegistry
 #     }
 # ]
 
-discovery_messages = [
-    {
-        "role": "system",
-        "content": (
-            "You are a helpful assistant. Use tools when needed. Use absolute paths when working with files. You are running in a Macbook Pro."
-            "Available tools: "
-            "- bash(command) - executes a bash command and returns its output. "
-            "Workspace:"
-            f"- Current path: {os.getcwd()} "
-            f"- Current directory contents: {os.listdir(os.getcwd())} "
-            f"- Current OS: {os.name}, Platform: {os.sys.platform}, User: {os.getlogin()}"
-            f"- Git status: {os.popen('git status').read() if os.path.isdir('.git') else 'Not a git repository'}"
-            f"- Git branch: {os.popen('git rev-parse --abrev-ref HEAD').read().strip() if os.path.isdir('.git') else 'Not a git repository'}"
-            f"- Git recent commits: {os.popen('git log -5 --oneline').read() if os.path.isdir('.git') else 'Not a git repository'}"
-        )
-    },
-    {
-        "role": "user", 
-        "content": "Explore the workspace and discover any relevant information that can help you understand the current state of the codebase, git repository, recent activities, and anything else that might be useful for future tasks. Summarize your findings in a concise way."
-    }
-]
+
+# if discovery file already exists, skip discovery step
+if not os.path.isfile(".my_coding_agent/discovery.md"):
+    print("Discovery file does not exist. Creating it.")
+
+    discovery_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful assistant. Use tools when needed. Use absolute paths when working with files. You are running in a Macbook Pro."
+                "Available tools: "
+                "- bash(command) - executes a bash command and returns its output. "
+                "Workspace:"
+                f"- Current path: {os.getcwd()} "
+                f"- Current directory contents: {os.listdir(os.getcwd())} "
+                f"- Current OS: {os.name}, Platform: {os.sys.platform}, User: {os.getlogin()}"
+                f"- Git status: {os.popen('git status').read() if os.path.isdir('.git') else 'Not a git repository'}"
+                f"- Git branch: {os.popen('git rev-parse --abrev-ref HEAD').read().strip() if os.path.isdir('.git') else 'Not a git repository'}"
+                f"- Git recent commits: {os.popen('git log -5 --oneline').read() if os.path.isdir('.git') else 'Not a git repository'}"
+            )
+        },
+        {
+            "role": "user", 
+            "content": "Explore the workspace and discover any relevant information that can help you understand the current state of the codebase, git repository, recent activities, and anything else that might be useful for future tasks. Summarize your findings in a concise way into a Markdown file saved to `.my_coding_agent/discovery.md` in the current workspace. It should contains: 1. a summary of the current state of the codebase and git repository, 2. any recent activities or changes that might be relevant, 3. any insights or observations that can help you understand the context better. 4. Tool descriptions and how to use them. 5. Latest user requests. 6. Recent transcript of the conversation. The goal is to create a Stable prompt prefix that can be prepended to future conversations to provide context and continuity, even if the conversation history gets truncated due to token limits."
+        }
+    ]
 
 
-# Agent that discover the current workspace
-tools = [
-    tool(ToolsRegistry.bash),
-]
-agent = Agent(
-    messages=discovery_messages,
-    tools=tools,
-    label="Discovery Agent",
-)
-discovery_messages = agent.run(max_steps=20)
+    # Agent that discover the current workspace
+    tools = [
+        tool(ToolsRegistry.bash),
+        tool(ToolsRegistry.read_file),
+        tool(ToolsRegistry.write_file),
+    ]
+    agent = Agent(
+        messages=discovery_messages,
+        tools=tools,
+        label="Discovery Agent",
+    )
+    discovery_messages = agent.run(max_steps=20)
 
 
+# test discovery file content
+print("Discovery file content:")
+try:    
+    with open(".my_coding_agent/discovery.md", "r") as f:
+        print(f.read())
+except Exception as e:    
+    print(f"Error reading discovery file: {e}")   
 
+
+# import ipdb; ipdb.set_trace()
 
 # Main Agent
 messages = [
@@ -92,9 +108,9 @@ messages = [
             f"- Git status: {os.popen('git status').read() if os.path.isdir('.git') else 'Not a git repository'}"
             f"- Git branch: {os.popen('git rev-parse --abrev-ref HEAD').read().strip() if os.path.isdir('.git') else 'Not a git repository'}"
             f"- Git recent commits: {os.popen('git log -5 --oneline').read() if os.path.isdir('.git') else 'Not a git repository'}"
+            f"- Discovery notes: {os.popen('cat .my_coding_agent/discovery.md').read() if os.path.isfile('.my_coding_agent/discovery.md') else 'No discovery notes found'}"
         )
     },
-    discovery_messages[-1], # add the discovery findings to the main agent's initial messages
     {
         "role": "user", 
         "content": "Using `git` and `gh` CLI tools, ensure the latest local code changes is committed and pushed to GitHub, with standardized commit messages."
@@ -116,3 +132,6 @@ agent = Agent(
 )
 messages = agent.run(max_steps=20)
 print("Messages: ", json.dumps(messages, indent=4))
+
+# run python
+# uv run python examples/agentic_shell.py > examples/stdout.log 2> examples/stderr.log

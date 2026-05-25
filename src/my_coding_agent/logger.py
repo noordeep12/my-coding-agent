@@ -65,7 +65,7 @@ def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
         style="{",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(formatter)
 
     logger = logging.getLogger(name)
