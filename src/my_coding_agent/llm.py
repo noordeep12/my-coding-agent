@@ -77,9 +77,9 @@ class LLM:
             reasoning = message.get("reasoning_content") or ""
             content   = message.get("content") or ""
             if reasoning:
-                self.logger.llm("Reasoning: %s", reasoning)
+                self.logger.llm("Reasoning: %s\n\n", reasoning)
             if content:
-                self.logger.llm("Content: %s", content)
+                self.logger.llm("Content: %s\n\n", content)
         return resp
 
 
