@@ -4,6 +4,7 @@ from .logger import get_logger, print_banner, print_run_summary
 
 from httpx import Response
 
+import json
 import time
 
 class Agent(LLM):
@@ -35,7 +36,7 @@ class Agent(LLM):
         self.messages.append(message)
         message_type = message.get("role", "unknown").upper()
         self.logger.info("%s message added to the conversation", message_type)
-    
+
     def run(self, max_steps=5):
         # reset stats for this run
         self.step_num = 0
@@ -50,7 +51,16 @@ class Agent(LLM):
             self.logger.info("----------------------------------------------------------------   STEP %d/%d", self.step_num + 1, max_steps)
             self.logger.info("----------------------------------------------------------------")
 
-            # 1. Send current messages to LLM and get response
+            # 1. Hard stop if context window would be exceeded
+            estimated_tokens = len(json.dumps(self.messages)) // 4
+            if estimated_tokens >= self.context_window:
+                self.stop_reason = "context_limit"
+                self.logger.warning(
+                    "Context limit reached: estimated %d tokens >= %d token limit. Stopping.",
+                    estimated_tokens, self.context_window,
+                )
+                break
+
             resp = self.chat_completion(self.messages, tools=self.tools)
             message = extract_message(resp)
             self.add_message(message)
