@@ -84,6 +84,12 @@ class LLM:
         return resp
 
 
+    # Known parameter aliases: maps wrong arg name → correct arg name per tool.
+    # Handles recurring model hallucinations (e.g. bash(path=) instead of bash(command=)).
+    _ARG_ALIASES: dict[str, dict[str, str]] = {
+        "bash": {"path": "command", "cmd": "command", "script": "command", "shell": "command"},
+    }
+
     def execute_tool_calls(self, message) -> tuple[list, list]:
         """Returns (tool_messages, call_records) where each record is {"name": str, "args": dict, "ok": bool}."""
         tool_calls = message.get("tool_calls", []) or []
@@ -108,14 +114,22 @@ class LLM:
             func_name = tool_call["function"]["name"]
             args = parse_tool_args(tool_call["function"]["arguments"])
 
+            # Remap known wrong parameter names before dispatch.
+            aliases = self._ARG_ALIASES.get(func_name, {})
+            for wrong, correct in aliases.items():
+                if wrong in args and correct not in args:
+                    self.logger.warning("arg alias: %s(%s=) → %s(%s=)", func_name, wrong, func_name, correct)
+                    args[correct] = args.pop(wrong)
+
             self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
 
             if not hasattr(registry, func_name):
                 self.logger.error("not found: '%s' is not registered", func_name)
+                valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
-                    "content": f"Error: tool '{func_name}' not found in ToolsRegistry",
+                    "content": f"Error: tool '{func_name}' not found. Available tools: {valid}",
                 })
                 records.append({"name": func_name, "args": args, "ok": False})
                 continue
@@ -126,6 +140,12 @@ class LLM:
                     result = str(result)
                 self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
                 records.append({"name": func_name, "args": args, "ok": True})
+            except TypeError as exc:
+                import inspect as _inspect
+                sig = _inspect.signature(getattr(ToolsRegistry, func_name))
+                result = f"Error: wrong arguments for '{func_name}': {exc}. Expected signature: {func_name}{sig}"
+                self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
+                records.append({"name": func_name, "args": args, "ok": False})
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
