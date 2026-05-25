@@ -173,6 +173,7 @@ def print_run_summary(
     context_window: Optional[int] = None,
     elapsed_seconds: float = 0.0,
     tool_records: Optional[list] = None,
+    handoff_records: Optional[list] = None,
     agent_name: str = "Agent",
     last_message: str = "",
 ) -> None:
@@ -279,7 +280,7 @@ def print_run_summary(
         return rows or [empty_row()]
 
     # ── computed values ────────────────────────────────────────────────────────
-    ctx_pct     = f" ({total_tokens / context_window * 100:.1f}% of {context_window:,})" if context_window else ""
+    ctx_pct     = f" ({prompt_tokens / context_window * 100:.1f}% of {context_window:,})" if context_window and prompt_tokens else ""
     mins, secs  = divmod(elapsed_seconds, 60)
     elapsed_str = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
     tok_per_sec = f"{completion_tokens / elapsed_seconds:.1f} tok/s" if elapsed_seconds > 0 else "—"
@@ -287,6 +288,51 @@ def print_run_summary(
     n_ok        = sum(1 for r in records if r["ok"])
     n_fail      = len(records) - n_ok
     tool_count  = f"{len(records)} ({n_ok} ok, {n_fail} failed)" if records else "0"
+    handoffs    = handoff_records or []
+
+    WARN = Fore.YELLOW + Style.BRIGHT
+
+    def handoff_rows(index: int, h: dict) -> List[str]:
+        """Render one handoff event as box rows."""
+        rows: List[str] = []
+
+        # Line 1: index, step, context % at trigger
+        line1_vis = f"  {index}. step {h['step']} — {h['ctx_pct']:.1f}% ctx used ({h['ctx_tokens']:,} / {context_window:,} tok)"
+        pad1 = W - len(line1_vis)
+        rows.append(
+            BORDER + "║" +
+            f"  {WARN}{index}.{R} step {VALUE}{h['step']}{R} — "
+            f"{WARN}{h['ctx_pct']:.1f}%{R} ctx used "
+            f"({VALUE}{h['ctx_tokens']:,}{R} / {VALUE}{context_window:,}{R} tok)" +
+            " " * max(pad1, 0) +
+            BORDER + "║" + R
+        )
+
+        # Line 2: threshold that triggered it
+        line2_vis = f"     trigger: prompt_tokens >= {h['threshold']:.0f}% threshold"
+        pad2 = W - len(line2_vis)
+        rows.append(
+            BORDER + "║" +
+            f"     trigger: prompt_tokens >= {WARN}{h['threshold']:.0f}%{R} threshold" +
+            " " * max(pad2, 0) +
+            BORDER + "║" + R
+        )
+
+        # Line 3: saved path (truncated to fit)
+        path_str = h.get("path", "")
+        max_path = W - 12
+        if len(path_str) > max_path:
+            path_str = "…" + path_str[-(max_path - 1):]
+        line3_vis = f"     saved  : {path_str}"
+        pad3 = W - len(line3_vis)
+        rows.append(
+            BORDER + "║" +
+            f"     saved  : {VALUE}{path_str}{R}" +
+            " " * max(pad3, 0) +
+            BORDER + "║" + R
+        )
+
+        return rows
 
     # ── build box ──────────────────────────────────────────────────────────────
     lines: List[str] = [
@@ -296,8 +342,8 @@ def print_run_summary(
         metric_row2("STEPS",    f"{steps} / {max_steps}", "STOP REASON", stop_reason),
         metric_row2("ELAPSED",  elapsed_str,              "THROUGHPUT",  tok_per_sec),
         empty_row(), mid, empty_row(),
-        metric_row2("PROMPT", f"{prompt_tokens:,} tok", "COMPLETION", f"{completion_tokens:,} tok"),
-        metric_row1("TOTAL",  f"{total_tokens:,} tok{ctx_pct}"),
+        metric_row2("PROMPT", f"{prompt_tokens:,} tok{ctx_pct}", "COMPLETION", f"{completion_tokens:,} tok"),
+        metric_row1("TOTAL",  f"{total_tokens:,} tok"),
         empty_row(), mid, empty_row(),
         metric_row1("TOOL CALLS", tool_count),
     ]
@@ -306,6 +352,19 @@ def print_run_summary(
         lines.append(empty_row())
         for i, r in enumerate(records, start=1):
             lines.extend(tool_call_rows(i, r["name"], r["args"], r["ok"]))
+
+    # ── context resets section ─────────────────────────────────────────────────
+    if handoffs:
+        lines += [empty_row(), mid, empty_row()]
+        lines.append(metric_row1("CONTEXT RESETS", str(len(handoffs))))
+        lines.append(empty_row())
+        for i, h in enumerate(handoffs, start=1):
+            lines.extend(handoff_rows(i, h))
+            if i < len(handoffs):
+                lines.append(empty_row())
+    else:
+        lines += [empty_row(), mid, empty_row()]
+        lines.append(metric_row1("CONTEXT RESETS", "0  (no reset triggered)"))
 
     if last_message:
         lines += [empty_row(), mid, empty_row()]

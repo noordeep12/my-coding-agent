@@ -43,6 +43,7 @@ class Agent(LLM):
         self.stop_reason = "max_steps"
         self.total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.tool_records: list = []
+        self.handoff_records: list = []  # one entry per context reset that fired
         self.elapsed_seconds: float = 0.0
         print_banner(model=self.model, tools=self.tools, context_window=self.context_window)
         self.logger.info("%s initialized with %d messages and %d tools", label, len(self.messages), len(self.tools))
@@ -85,6 +86,7 @@ class Agent(LLM):
             context_window=self.context_window,
             elapsed_seconds=self.elapsed_seconds,
             tool_records=self.tool_records,
+            handoff_records=self.handoff_records,
             agent_name=self.label,
             last_message=last_message,
         )
@@ -95,6 +97,7 @@ class Agent(LLM):
         self.stop_reason = "max_steps"
         self.total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.tool_records = []
+        self.handoff_records = []
         self.last_prompt_tokens = 0  # actual value from last API response
         t_start = time.monotonic()
 
@@ -127,6 +130,14 @@ class Agent(LLM):
                         ctx_pct * 100, ctx_tokens, self.context_window,
                     )
                     handoff = self._generate_handoff(self.step_num, ctx_tokens)
+                    self.handoff_records.append({
+                        "step":       self.step_num,
+                        "ctx_tokens": ctx_tokens,
+                        "ctx_pct":    ctx_pct * 100,
+                        "threshold":  self.context_reset_threshold * 100,
+                        "path":       handoff.path,
+                        "reason":     f"prompt_tokens {ctx_tokens:,} >= {self.context_reset_threshold*100:.0f}% of {self.context_window:,}",
+                    })
                     self.stop_reason = "context_reset"
                     self.elapsed_seconds = time.monotonic() - t_start
                     self._print_summary(max_steps)
