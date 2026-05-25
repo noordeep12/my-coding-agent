@@ -45,10 +45,15 @@ messages = [
         "role": "system",
         "content": (
             "You are a helpful assistant. Use tools when needed. Use absolute paths when working with files. You are running in a Macbook Pro."
-            "Available tools: bash(command) - executes a bash command and returns its output. "
-            f"Current path: {os.getcwd()} "
-            f"Current directory contents: {os.listdir(os.getcwd())} "
-            f"Current OS: {os.name}, Platform: {os.sys.platform}, User: {os.getlogin()}"
+            "Available tools: "
+            "- bash(command) - executes a bash command and returns its output. "
+            "Workspace:"
+            f"- Current path: {os.getcwd()} "
+            f"- Current directory contents: {os.listdir(os.getcwd())} "
+            f"- Current OS: {os.name}, Platform: {os.sys.platform}, User: {os.getlogin()}"
+            f"- Git status: {os.popen('git status').read() if os.path.isdir('.git') else 'Not a git repository'}"
+            f"- Git branch: {os.popen('git rev-parse --abrev-ref HEAD').read().strip() if os.path.isdir('.git') else 'Not a git repository'}"
+            f"- Git recent commits: {os.popen('git log -5 --oneline').read() if os.path.isdir('.git') else 'Not a git repository'}"
         )
     },
     {
@@ -56,8 +61,6 @@ messages = [
         "content": "Using `git` and `gh` CLI tools, ensure the latest local code changes is committed and pushed to GitHub, with standardized commit messages."
     }
 ]
-
-
 
 tools = [
     tool(ToolsRegistry.bash),

@@ -69,10 +69,10 @@ class Agent(LLM):
             # Finish conditions
             finish_reason = extract_finish_reason(resp)
             if finish_reason in ('stop', 'exit', 'quit'):
-                self.logger.warning("Agent run stopped by LLM response: %s", finish_reason)
+                self.logger.info("Agent run stopped by LLM response: %s", finish_reason)
                 break
             if step_num >= max_steps:
-                self.logger.warning("Agent run stopped after reaching max_steps: %d", max_steps)
+                self.logger.info("Agent run stopped after reaching max_steps: %d", max_steps)
                 break
             step_num += 1
         
