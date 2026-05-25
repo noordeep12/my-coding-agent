@@ -60,22 +60,26 @@ def _system_prompt(tools: list) -> str:
 @click.option(
     "--prompt", "-p",
     default=None,
+    show_default="default commit-and-push task",
     metavar="TEXT",
-    help="Task for the Main Agent. Omit to use the default commit-and-push task.",
+    help="Task for the Main Agent.",
 )
 @click.option(
     "--interactive", "-i",
     is_flag=True,
+    show_default=True,
     help="Read the task prompt interactively from stdin (paste freely, Ctrl+D to submit).",
 )
 @click.option(
-    "--discover", "-d",
-    is_flag=True,
-    help="Force-refresh .my_coding_agent/discovery.md before running the Main Agent.",
+    "--discover/--no-discover", "-d/-D",
+    default=True,
+    show_default=True,
+    help="Run the Discovery Agent before the Main Agent.",
 )
 @click.option(
-    "--analyze", "-a",
-    is_flag=True,
+    "--analyze/--no-analyze", "-a/-A",
+    default=True,
+    show_default=True,
     help="Run the Session Analyzer after the Main Agent finishes.",
 )
 @click.option(
@@ -98,10 +102,9 @@ def main(prompt, interactive, discover, analyze, analyze_log, max_steps):
 
     \b
     Steps executed:
-      1. Discovery Agent  — maps the workspace (skipped if discovery.md exists,
-                            unless --discover is set)
+      1. Discovery Agent  — maps the workspace (skip with --no-discover)
       2. Main Agent       — executes the requested task
-      3. Session Analyzer — analyses the run log (only with --analyze)
+      3. Session Analyzer — analyses the run log (skip with --no-analyze)
 
     \b
     Examples:
@@ -125,8 +128,11 @@ def main(prompt, interactive, discover, analyze, analyze_log, max_steps):
         user_prompt = _DEFAULT_PROMPT
 
     # ── step 1: discovery ──────────────────────────────────────────────────────
-    click.secho("\n● Discovery Agent", fg="cyan", bold=True, err=True)
-    run_discovery(force=discover)
+    if discover:
+        click.secho("\n● Discovery Agent", fg="cyan", bold=True, err=True)
+        run_discovery(force=True)
+    else:
+        click.secho("\n● Discovery Agent  (skipped via --no-discover)", fg="yellow", err=True)
 
     # ── step 2: main agent ─────────────────────────────────────────────────────
     click.secho("\n● Main Agent", fg="cyan", bold=True, err=True)
