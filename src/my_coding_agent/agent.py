@@ -14,14 +14,16 @@ class Agent(LLM):
         api_key=OMLX_API_KEY, 
         model=OMLX_MODEL, 
         messages=[], 
-        tools=[]
+        tools=[],
+        label="Agent",
     ):
         super().__init__(api_url, api_key, model)
         self.messages = messages or []
         self.tools = tools or []
         self.logger = get_logger(self.__class__.__name__)
         print_banner(model=self.model, tools=self.tools, context_window=self.context_window)
-
+        self.logger.info("%s initialized with %d messages and %d tools", label, len(self.messages), len(self.tools))
+    
     def add_message(self, message) -> None:
         self.messages.append(message)
         message_type = message.get("role", "unknown").upper()
