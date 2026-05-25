@@ -74,7 +74,7 @@ src/my_coding_agent/
 └── utils.py        — Response parsers: extract_message, extract_finish_reason, extract_usage, parse_tool_args
 
 agents/
-└── agentic_discovery.py  — Discovery Agent: explores workspace, writes discovery.md
+└── discovery.py  — Discovery Agent: explores workspace, writes discovery.md
 
 workflows/
 └── main.py              — Full workflow CLI: Discovery → Main Agent

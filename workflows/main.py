@@ -19,7 +19,7 @@ sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT))
 
 from my_coding_agent import Agent, tool, ToolsRegistry  # noqa: E402
-from agents.agentic_discovery import run_discovery       # noqa: E402
+from agents.discovery import run_discovery       # noqa: E402
 
 
 _DEFAULT_PROMPT = (
@@ -52,7 +52,6 @@ def _system_prompt(tools: list) -> str:
             else "\n(no discovery notes — run with --discover to generate)"
         )
     )
-
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
@@ -126,6 +125,7 @@ def main(prompt, interactive, discover, max_steps):
         tool(ToolsRegistry.write_file),
         tool(ToolsRegistry.read_article),
     ]
+
     agent = Agent(
         messages=[
             {"role": "system", "content": _system_prompt(tools)},
