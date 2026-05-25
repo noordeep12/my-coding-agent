@@ -45,7 +45,14 @@ class Agent(LLM):
         self.tool_records: list = []
         self.handoff_records: list = []  # one entry per context reset that fired
         self.elapsed_seconds: float = 0.0
-        print_banner(model=self.model, tools=self.tools, context_window=self.context_window)
+        print_banner(
+            label=self.label,
+            model=self.model,
+            tools=self.tools,
+            context_window=self.context_window,
+            n_messages=len(self.messages),
+            context_reset_threshold=self.context_reset_threshold,
+        )
         self.logger.info("%s initialized with %d messages and %d tools", label, len(self.messages), len(self.tools))
     
     def add_message(self, message) -> None:

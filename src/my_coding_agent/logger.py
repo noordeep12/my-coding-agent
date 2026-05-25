@@ -91,13 +91,21 @@ def _git_branch() -> str:
 
 
 # ── Startup banner ────────────────────────────────────────────────────────────
-def print_banner(model: str, tools: list, context_window: Optional[int] = None) -> None:
+def print_banner(
+    label: str,
+    model: str,
+    tools: list,
+    context_window: Optional[int] = None,
+    n_messages: int = 0,
+    context_reset_threshold: float = 0.75,
+) -> None:
     W = 68  # visible inner width (between the two ║)
     R = Style.RESET_ALL
     BORDER = Fore.CYAN + Style.BRIGHT
     LABEL  = Fore.CYAN + Style.BRIGHT
     VALUE  = Fore.WHITE + Style.BRIGHT
     LOGO_C = Fore.CYAN + Style.BRIGHT
+    TITLE_C = Fore.GREEN + Style.BRIGHT
 
     ascii_logo = [
         r"  ██████╗ ██████╗ ██████╗ ███████╗",
@@ -114,11 +122,11 @@ def print_banner(model: str, tools: list, context_window: Optional[int] = None) 
     workspace  = os.getcwd()
     ctx_str    = f"{context_window:,}" if context_window else "unknown"
     timestamp  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    n_tools    = str(len(tools))
+    reset_str  = f"{context_reset_threshold * 100:.0f}%"
 
-    top   = BORDER + "╔" + "═" * W + "╗" + R
+    top    = BORDER + "╔" + "═" * W + "╗" + R
     bottom = BORDER + "╚" + "═" * W + "╝" + R
-    mid   = BORDER + "╠" + "═" * W + "╣" + R
+    mid    = BORDER + "╠" + "═" * W + "╣" + R
 
     def empty_row() -> str:
         return BORDER + "║" + " " * W + "║" + R
@@ -127,6 +135,11 @@ def print_banner(model: str, tools: list, context_window: Optional[int] = None) 
         pad_l = (W - len(text)) // 2
         pad_r = W - pad_l - len(text)
         return BORDER + "║" + " " * pad_l + LOGO_C + text + R + " " * pad_r + BORDER + "║" + R
+
+    def title_row(text: str) -> str:
+        pad_l = (W - len(text)) // 2
+        pad_r = W - pad_l - len(text)
+        return BORDER + "║" + " " * pad_l + TITLE_C + text + R + " " * pad_r + BORDER + "║" + R
 
     def info_row(lbl1: str, val1: str, lbl2: str = "", val2: str = "") -> str:
         HALF = W // 2
@@ -141,24 +154,50 @@ def print_banner(model: str, tools: list, context_window: Optional[int] = None) 
             right_col = " " * HALF
         return BORDER + "║" + left_col + right_col + BORDER + "║" + R
 
-    def workspace_row(path: str) -> str:
-        truncated = path if len(path) <= W - 16 else "…" + path[-(W - 17):]
-        vis   = f"  WORKSPACE: {truncated}"
+    def full_row(lbl: str, val: str) -> str:
+        vis   = f"  {lbl}: {val}"
         pad   = W - len(vis)
-        inner = f"  {LABEL}WORKSPACE{R}: {VALUE}{truncated}{R}" + " " * max(pad, 0)
+        inner = f"  {LABEL}{lbl}{R}: {VALUE}{val}{R}" + " " * max(pad, 0)
+        return BORDER + "║" + inner + BORDER + "║" + R
+
+    def tool_row(t: dict) -> str:
+        name   = t["function"]["name"]
+        params = ", ".join(t["function"]["parameters"]["properties"].keys())
+        sig    = f"{name}({params})"
+        max_sig = W - 6
+        if len(sig) > max_sig:
+            sig = sig[:max_sig - 1] + "…"
+        vis   = f"    {sig}"
+        pad   = W - len(vis)
+        inner = f"    {VALUE}{sig}{R}" + " " * max(pad, 0)
         return BORDER + "║" + inner + BORDER + "║" + R
 
     lines = ["", top, empty_row()]
     for line in ascii_logo:
         lines.append(logo_row(line))
+    lines += [empty_row(), mid, empty_row()]
+
+    # Agent title
+    agent_title = f"▸  {label.upper()}"
+    lines.append(title_row(agent_title))
+    lines += [empty_row(), mid, empty_row()]
+
+    # Metrics
     lines += [
-        empty_row(), mid, empty_row(),
-        info_row("MODEL",   model[:28],  "BRANCH",  branch),
-        info_row("TOOLS",   n_tools,     "SESSION", session_id),
-        info_row("CONTEXT", ctx_str,     "TIME",    timestamp),
-        workspace_row(workspace),
-        empty_row(), bottom, "",
+        info_row("MODEL",    model[:28],       "BRANCH",   branch),
+        info_row("SESSION",  session_id,        "TIME",     timestamp),
+        info_row("CONTEXT",  ctx_str,           "RESET AT", reset_str),
+        info_row("MESSAGES", str(n_messages),   "TOOLS",    str(len(tools))),
+        full_row("WORKSPACE", workspace if len(workspace) <= W - 16 else "…" + workspace[-(W - 17):]),
     ]
+
+    # Tools section
+    if tools:
+        lines += [empty_row(), mid, empty_row()]
+        for t in tools:
+            lines.append(tool_row(t))
+
+    lines += [empty_row(), bottom, ""]
     print("\n".join(lines), file=sys.stderr)
 
 

@@ -1,8 +1,9 @@
 # Discovery Summary — my-coding-agent
 
 > **Generated:** 2025-05-25  
-> **Branch:** `main` (up to date with `origin/main`)  
-> **Workspace:** `/Users/noordeepsingh/Workspace/my-coding-agent`
+> **Branch:** `main` (6 commits ahead of `origin/main`)  
+> **Workspace:** `/Users/noordeepsingh/Workspace/my-coding-agent`  
+> **Python:** 3.12+ (via `uv`)
 
 ---
 
@@ -22,6 +23,13 @@ src/my_coding_agent/
 ├── logger.py       — Colored logging (TOOL/API/LLM levels), startup banner, run summary
 ├── utils.py        — Response parsers: extract_message, extract_finish_reason, extract_usage, parse_tool_args
 └── log_parser.py   — Session log parser: parses ANSI-colored stderr logs into SessionLog dataclass
+
+agents/
+├── agentic_discovery.py  — Discovery Agent: explores workspace, writes discovery.md
+└── agentic_session_analyzer.py — Session Analyzer: parses logs, writes analysis reports
+
+workflows/
+└── main.py              — Full workflow: Discovery → Main Agent → (optional) Session Analyzer
 ```
 
 ### Key Components
@@ -33,16 +41,20 @@ src/my_coding_agent/
 | `ToolsRegistry` | Static method registry for tools (`bash`, `read_file`, `write_file`, `read_article`). |
 | `ContextHandoff` | Dataclass that serializes agent state (step, tokens, content) to `.my_coding_agent/handoffs/` for context reset. |
 | `log_parser` | Parses ANSI-colored session logs into structured `SessionLog` with per-step metrics and tool call records. |
+| `agentic_discovery` | Agent that explores the workspace and writes a stable `discovery.md` context document. |
+| `agentic_session_analyzer` | Agent that parses session logs, researches best practices, and writes structured analysis reports. |
+| `workflows/main.py` | Click-based CLI orchestrating the full pipeline: Discovery → Main Agent → Session Analyzer. |
 
 ### Dependencies
 
 - Python 3.12+
-- `colorama` — Colored terminal output
-- `html2text` — Web-to-markdown conversion (read_article tool)
-- `httpx` — HTTP client for LLM API calls
-- `ipdb` — Interactive debugger
-- `pydantic` — Data validation
-- `rich` — Rich markdown rendering in run summaries
+- `click>=8.1` — CLI framework for workflow orchestration
+- `colorama>=0.4.6` — Colored terminal output
+- `html2text>=2025.4.15` — Web-to-markdown conversion (read_article tool)
+- `httpx>=0.28.1` — HTTP client for LLM API calls
+- `ipdb>=0.13.13` — Interactive debugger
+- `pydantic>=2.13.4` — Data validation
+- `rich>=15.0.0` — Rich markdown rendering in run summaries
 - `uv` — Dependency/project management
 
 ### Configuration (environment variables)
@@ -61,28 +73,31 @@ src/my_coding_agent/
 
 | File | Status |
 |---|---|
-| `.my_coding_agent/discovery.md` | **Deleted** (was previously generated) |
-| `examples/agentic_shell.py` | **Modified** — Removed commented-out demo code, added `breakpoint()` for debugging, fixed tool name dynamic injection |
+| `.archive/agent.ipynb` | **Deleted** — archived notebook no longer needed |
+| `.gitignore` | **Modified** — added `.my_coding_agent/handoffs/` and `.my_coding_agent/` to exclusions |
+| `src/my_coding_agent/agent.py` | **Modified** — `print_banner()` now passes `label`, `n_messages`, and `context_reset_threshold` |
+| `src/my_coding_agent/logger.py` | **Modified** — `print_banner()` enhanced with agent title, message count, reset threshold, and tool listing; `print_run_summary()` enhanced with handoff rendering and markdown support |
 
-### Recent Commit History (last 15)
+### Branch Info
+
+- **On branch:** `main`
+- **Ahead of `origin/main` by:** 6 commits (not yet pushed)
+- **Unstaged changes:** 4 files changed, 62 insertions(+), 661 deletions(-)
+
+### Recent Commit History (last 10)
 
 | Hash | Subject |
 |---|---|
-| `4867d94` | . |
+| `78d36e9` | feat(workflows): enable discover/analyze by default, show all defaults in --help |
+| `faf2859` | fix(workflows): fix ModuleNotFoundError for agents package |
+| `62290d5` | refactor: rename examples/ to agents/ |
+| `33a4cc5` | refactor(workflows): introduce workflows/ with Click-based CLI |
+| `2c9d71f` | refactor(examples): extract Discovery Agent into agentic_discovery.py |
+| `1fbcb47` | feat(shell): add --discover and --analyze flags to agentic_shell |
+| `d3f2dec` | fix(shell): clean up demo code and improve discovery agent output |
+| `5f04dfe` | feat(logger): show context reset events in run summary |
 | `321dbff` | feat(agent): implement context reset with structured handoff (issue #8) |
 | `dc26c80` | fix(harness): apply session analysis recommendations |
-| `2509354` | feat(examples): add agentic_session_analyzer agent for automated session analysis |
-| `8b7fc25` | feat(tools): add read_article tool for fetching web content as markdown |
-| `049351a` | feat(shell): add CLI argument parsing for custom prompts |
-| `dda0051` | feat(agent): add context window protection to prevent exceeding limits |
-| `8c846b1` | fix(llm): add fallback context window when model metadata unavailable |
-| `bd1e4a4` | feat: add project README for GitHub |
-| `0754574` | style: simplify run summary layout and align width with startup banner |
-| `f33e7bb` | feat: enhance run summary with rich markdown rendering and wider display |
-| `62ac339` | feat: add agent label and enhance run summary with tool call tracking and formatted output |
-| `504c703` | feat: add run summary with tool call tracking and formatted output |
-| `191bc06` | fix: route logging output to stderr instead of stdout |
-| `628b71e` | feat: add discovery agent workflow for workspace exploration in agentic shell |
 
 ### Notable Features in Recent History
 
@@ -90,6 +105,7 @@ src/my_coding_agent/
 - **Session Analyzer:** An agent that parses stderr session logs into structured summaries for post-hoc analysis.
 - **read_article Tool:** Fetches web pages and converts them to clean markdown (truncated at ~6000 tokens to prevent context explosion).
 - **CLI Argument Parsing:** Supports `--prompt` / `-p` for custom user messages and `--interactive` / `-i` for paste-mode input.
+- **Workflow Pipeline:** Full pipeline with Discovery → Main Agent → Session Analyzer, all configurable via Click CLI.
 
 ---
 
@@ -105,19 +121,24 @@ src/my_coding_agent/
 
 4. **Session Log Parsing:** The `log_parser` module can parse ANSI-colored stderr logs into structured `SessionLog` objects, enabling automated analysis of agent sessions (token usage, tool calls, errors, timing).
 
+5. **Pipeline Architecture:** The workflow system chains agents together — Discovery Agent maps the workspace, Main Agent executes tasks, and Session Analyzer provides post-hoc analysis.
+
 ### Architecture Decisions
 
 - **No framework dependencies:** The agent is intentionally minimal (~500 lines) with no heavy framework dependencies beyond httpx, pydantic, and rich.
 - **Local-first:** Designed for local LLM servers (MLX Server, Ollama) with sensible defaults.
 - **Extensible tool registry:** New tools can be added as static methods on `ToolsRegistry` and registered via the `@tool` decorator.
+- **Click-based CLI:** Workflow orchestration uses Click for robust argument parsing, help text, and discoverability.
 
-### Uncommitted Changes
+### Uncommitted Changes (Pending Commit)
 
-The current working tree has:
-- **Deleted** `.my_coding_agent/discovery.md` — This is the file we're creating now.
-- **Modified** `examples/agentic_shell.py` — Cleaned up commented-out demo code, added a `breakpoint()` for debugging, and fixed dynamic tool name injection in the system prompt.
+The current working tree has 4 modified/deleted files:
+1. **`.archive/agent.ipynb`** — Deleted (archived notebook removed)
+2. **`.gitignore`** — Updated to exclude `.my_coding_agent/handoffs/` and `.my_coding_agent/`
+3. **`src/my_coding_agent/agent.py`** — `print_banner()` now passes `label`, `n_messages`, and `context_reset_threshold` parameters
+4. **`src/my_coding_agent/logger.py`** — `print_banner()` enhanced with agent title row, message count, reset threshold, tool listing; `print_run_summary()` enhanced with handoff rendering and markdown support
 
-These changes should be reviewed and committed before proceeding with other work.
+These changes should be reviewed and committed before pushing to `origin/main`.
 
 ---
 
@@ -151,6 +172,22 @@ agent = Agent(tools=tools)
 
 The `@tool` decorator (actually `function_to_json`) automatically converts Python functions into OpenAI-compatible tool definition dicts based on the function's signature and docstring.
 
+### How to Use the Workflow CLI
+
+```bash
+# Full pipeline (Discovery + Main + Analysis)
+uv run python workflows/main.py
+
+# Custom prompt
+uv run python workflows/main.py --prompt "Your task here"
+
+# Interactive paste mode (Ctrl+D to end)
+uv run python workflows/main.py --interactive
+
+# Skip discovery or analysis
+uv run python workflows/main.py --no-discover --no-analyze
+```
+
 ---
 
 ## 5. Latest User Requests
@@ -167,23 +204,36 @@ Based on the git history and current workspace, the most recent user-facing requ
 
 5. **Discovery Agent Workflow:** Implement an automated discovery step that explores the workspace and creates a `discovery.md` file to provide context continuity across sessions.
 
+6. **Workflow Pipeline:** Introduce a Click-based CLI that chains Discovery → Main Agent → Session Analyzer, with configurable options for each stage.
+
+7. **Enhanced Logging:** Improve the startup banner and run summary with agent labels, message counts, context reset thresholds, tool listings, and handoff event rendering.
+
 ---
 
 ## 6. Recent Conversation Transcript
 
-### Session: Discovery Agent Creation
+### Session: Discovery Agent (Current)
 
 **User Request:**
-> Explore the workspace and discover any relevant information that can help you understand the current state of the codebase, git repository, recent activities, and anything else that might be useful for future tasks. Summarize your findings in a concise way into a Markdown file saved to `.my_coding_agent/discovery.md` in the current workspace. It should contains: 1. a summary of the current state of the codebase and git repository, 2. any recent activities or changes that might be relevant, 3. any insights or observations that can help you understand the context better. 4. Tool descriptions and how to use them. 5. Latest user requests. 6. Recent transcript of the conversation. The goal is to create a Stable prompt prefix that can be prepended to future conversations to provide context and continuity, even if the conversation history gets truncated due to token limits.
+> Explore the workspace and discover any relevant information that can help you understand the current state of the codebase, git repository, recent activities, and anything else that might be useful for future tasks. Summarise your findings into a Markdown file saved to `.my_coding_agent/discovery.md` in the current workspace. It should contain:
+> 1. A summary of the current state of the codebase and git repository
+> 2. Any recent activities or changes that might be relevant
+> 3. Insights or observations that help understand the context better
+> 4. Tool descriptions and how to use them
+> 5. Latest user requests
+> 6. A recent transcript of the conversation
+>
+> The goal is to create a stable prompt prefix that can be prepended to future conversations to provide context and continuity, even if the conversation history gets truncated due to token limits.
 
 **Tools Used:**
 - `bash(command)` — Explored workspace structure (`find`, `git log`, `git status`, `git diff --stat`, `ls -la`)
-- `read_file(path)` — Read source files (`pyproject.toml`, `README.md`, `agent.py`, `tools.py`, `llm.py`, `handoff.py`, `logger.py`, `utils.py`, `log_parser.py`, `agentic_shell.py`)
+- `read_file(path)` — Read source files (`pyproject.toml`, `README.md`, `agent.py`, `tools.py`, `llm.py`, `handoff.py`, `logger.py`, `utils.py`, `log_parser.py`, `agentic_discovery.py`, `agentic_session_analyzer.py`, `workflows/main.py`)
 
 **Key Findings:**
 - The workspace contains a minimal Python agent library (~500 lines) connecting to local OpenAI-compatible LLM servers.
-- The git repository has 15+ commits with features including context reset with handoff, session analysis, web content fetching, CLI argument parsing, and discovery agent workflow.
-- The current working tree has uncommitted changes: deletion of `discovery.md` and modifications to `examples/agentic_shell.py`.
+- The git repository has 20+ commits with features including context reset with handoff, session analysis, web content fetching, CLI argument parsing, and discovery agent workflow.
+- There are 6 uncommitted changes: deletion of `.archive/agent.ipynb`, modifications to `.gitignore`, `agent.py`, and `logger.py`.
+- The branch is 6 commits ahead of `origin/main` and has not been pushed yet.
 - The agent supports automatic context window management with structured state transfer between context windows.
 
 ---
@@ -200,17 +250,26 @@ ollama serve
 
 # Run the agent
 uv sync
-uv run python examples/agentic_shell.py
+uv run python workflows/main.py
 ```
 
 ### CLI Options
 
 ```bash
+# Full pipeline (default)
+uv run python workflows/main.py
+
 # Custom prompt
-uv run python examples/agentic_shell.py --prompt "Your task here"
+uv run python workflows/main.py --prompt "Your task here"
 
 # Interactive paste mode (Ctrl+D to end)
-uv run python examples/agentic_shell.py --interactive
+uv run python workflows/main.py --interactive
+
+# Skip discovery or analysis stages
+uv run python workflows/main.py --no-discover --no-analyze
+
+# Help
+uv run python workflows/main.py --help
 ```
 
 ### Key File Paths
@@ -222,6 +281,22 @@ uv run python examples/agentic_shell.py --interactive
 | `src/my_coding_agent/handoff.py` | ContextHandoff for structured state transfer |
 | `src/my_coding_agent/logger.py` | Colored logging, startup banner, run summary |
 | `src/my_coding_agent/log_parser.py` | Session log parser for post-hoc analysis |
-| `examples/agentic_shell.py` | Example runner with discovery agent workflow |
+| `agents/agentic_discovery.py` | Discovery Agent: explores workspace, writes discovery.md |
+| `agents/agentic_session_analyzer.py` | Session Analyzer: parses logs, writes reports |
+| `workflows/main.py` | Full pipeline CLI: Discovery → Main → Analysis |
 | `.my_coding_agent/discovery.md` | This file — workspace context for future sessions |
 | `.my_coding_agent/handoffs/` | Directory for context handoff files (created during context resets) |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `OMLX_API_URL` | `http://127.0.0.1:8321/v1` | Local LLM API base URL |
+| `OMLX_API_KEY` | `changeme` | API key (usually ignored by local servers) |
+| `OMLX_MODEL` | `Qwen3.6-35B-A3B-4bit` | Model ID to use |
+
+### Git Status
+
+- **Branch:** `main`
+- **Ahead of origin:** 6 commits (not yet pushed)
+- **Unstaged changes:** 4 files (agent.py, logger.py, .gitignore, .archive/agent.ipynb)
