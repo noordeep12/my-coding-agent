@@ -83,9 +83,11 @@ class LLM:
         return resp
 
 
-    def execute_tool_calls(self, message) -> list:
+    def execute_tool_calls(self, message) -> tuple[list, list]:
+        """Returns (tool_messages, call_records) where each record is {"name": str, "args": dict, "ok": bool}."""
         tool_calls = message.get("tool_calls", []) or []
         messages = []
+        records = []
         registry = ToolsRegistry()
 
         self.logger.tool("dispatch: %d tool call(s)", len(tool_calls))
@@ -114,6 +116,7 @@ class LLM:
                     "tool_call_id": tool_call_id,
                     "content": f"Error: tool '{func_name}' not found in ToolsRegistry",
                 })
+                records.append({"name": func_name, "args": args, "ok": False})
                 continue
 
             try:
@@ -121,10 +124,12 @@ class LLM:
                 if not isinstance(result, str):
                     result = str(result)
                 self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
+                records.append({"name": func_name, "args": args, "ok": True})
             except Exception as exc:
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
+                records.append({"name": func_name, "args": args, "ok": False})
 
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
 
-        return messages
+        return messages, records

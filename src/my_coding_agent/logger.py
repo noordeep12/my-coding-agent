@@ -155,4 +155,103 @@ def print_banner(model: str, tools: list, context_window: Optional[int] = None) 
         workspace_row(workspace),
         empty_row(), bottom, "",
     ]
-    print("\n".join(lines))
+    print("\n".join(lines), file=sys.stderr)
+
+
+# ── Run summary ───────────────────────────────────────────────────────────────
+def print_run_summary(
+    steps: int,
+    max_steps: int,
+    stop_reason: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    context_window: Optional[int] = None,
+    elapsed_seconds: float = 0.0,
+    tool_records: Optional[list] = None,
+) -> None:
+    W = 68
+    R = Style.RESET_ALL
+    BORDER = Fore.GREEN
+    LABEL  = Fore.WHITE + Style.DIM
+    VALUE  = Fore.WHITE
+    OK     = Fore.GREEN
+    FAIL   = Fore.RED
+
+    top    = BORDER + "╔" + "═" * W + "╗" + R
+    bottom = BORDER + "╚" + "═" * W + "╝" + R
+    mid    = BORDER + "╠" + "═" * W + "╣" + R
+
+    def empty_row() -> str:
+        return BORDER + "║" + " " * W + "║" + R
+
+    def title_row(text: str) -> str:
+        pad_l = (W - len(text)) // 2
+        pad_r = W - pad_l - len(text)
+        return BORDER + "║" + " " * pad_l + VALUE + text + R + " " * pad_r + BORDER + "║" + R
+
+    def metric_row(lbl: str, val: str, lbl2: str = "", val2: str = "") -> str:
+        HALF = W // 2
+        left_vis  = f"  {lbl}: {val}"
+        left_pad  = HALF - len(left_vis)
+        left_col  = f"  {LABEL}{lbl}{R}: {VALUE}{val}{R}" + " " * max(left_pad, 1)
+        if lbl2:
+            right_vis = f"{lbl2}: {val2}  "
+            right_pad = HALF - len(right_vis)
+            right_col = " " * max(right_pad, 1) + f"{LABEL}{lbl2}{R}: {VALUE}{val2}{R}  "
+        else:
+            right_col = " " * HALF
+        return BORDER + "║" + left_col + right_col + BORDER + "║" + R
+
+    def tool_row(index: int, name: str, args: dict, ok: bool) -> str:
+        status     = OK + "✓" + R if ok else FAIL + "✗" + R
+        args_str   = ", ".join(f"{k}={repr(v)[:20]}" for k, v in args.items()) if args else ""
+        call_vis   = f"  {index}. {name}({args_str})"
+        max_call   = W - 6  # leave room for status + padding
+        if len(call_vis) > max_call:
+            call_vis = call_vis[:max_call - 1] + "…"
+        pad = W - len(call_vis) - 3
+        inner = f"  {VALUE}{index}. {name}{R}({LABEL}{args_str}{R})" + " " * max(pad, 1) + status + "  "
+        return BORDER + "║" + inner + BORDER + "║" + R
+
+    ctx_pct = f" ({total_tokens / context_window * 100:.1f}% of {context_window:,})" if context_window else ""
+    mins, secs = divmod(elapsed_seconds, 60)
+    elapsed_str = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
+    tok_per_sec = f"{completion_tokens / elapsed_seconds:.1f} tok/s" if elapsed_seconds > 0 else "—"
+
+    records = tool_records or []
+    n_ok   = sum(1 for r in records if r["ok"])
+    n_fail = len(records) - n_ok
+    tool_count_str = f"{len(records)}  ({n_ok} ok, {n_fail} failed)" if records else "0"
+
+    lines = [
+        "", top, empty_row(),
+        title_row("▸  AGENT RUN COMPLETE"),
+        empty_row(), mid, empty_row(),
+        metric_row("STEPS",      f"{steps} / {max_steps}",  "STOP REASON", stop_reason),
+        metric_row("ELAPSED",    elapsed_str,                "THROUGHPUT",  tok_per_sec),
+        empty_row(), mid, empty_row(),
+        metric_row("PROMPT",     f"{prompt_tokens:,} tok",   "COMPLETION",  f"{completion_tokens:,} tok"),
+        metric_row("TOTAL",      f"{total_tokens:,} tok{ctx_pct}"),
+        empty_row(), mid, empty_row(),
+        metric_row("TOOL CALLS", tool_count_str),
+    ]
+
+    if records:
+        lines.append(empty_row())
+        # group by name and count calls, preserving first-seen order
+        seen: Dict[str, Dict] = {}
+        for r in records:
+            if r["name"] not in seen:
+                seen[r["name"]] = {"count": 0, "ok": 0, "last_args": r["args"]}
+            seen[r["name"]]["count"] += 1
+            if r["ok"]:
+                seen[r["name"]]["ok"] += 1
+        for i, (name, info) in enumerate(seen.items(), start=1):
+            count = info["count"]
+            ok    = info["ok"]
+            fail  = count - ok
+            lines.append(tool_row(i, name, info["last_args"], fail == 0))
+
+    lines += [empty_row(), bottom, ""]
+    print("\n".join(lines), file=sys.stderr)
