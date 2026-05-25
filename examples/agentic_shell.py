@@ -4,7 +4,7 @@ import json
 import argparse
 from pathlib import Path
 
-from my_coding_agent import LLM, Agent, tool, ToolsRegistry
+from my_coding_agent import Agent, tool, ToolsRegistry
 
 parser = argparse.ArgumentParser(description="Agentic shell runner")
 parser.add_argument("--prompt", "-p", type=str, default=None,
@@ -43,46 +43,10 @@ else:
 
 
 # ------------ DISCOVERY AGENT ----------------------------------------------------
-# Runs when: discovery.md is missing, OR --discover flag is set
-if args.discover or not os.path.isfile(".my_coding_agent/discovery.md"):
-    reason = "forced via --discover" if args.discover else "file does not exist"
-    print(f"Running Discovery Agent ({reason}).")
+sys.path.insert(0, str(Path(__file__).parent))
+from agentic_discovery import run_discovery  # noqa: E402
 
-    tools = [
-        tool(ToolsRegistry.bash),
-        tool(ToolsRegistry.read_file),
-        tool(ToolsRegistry.write_file),
-        tool(ToolsRegistry.read_article),
-    ]
-
-    discovery_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a helpful assistant. Use tools when needed. Use absolute paths when working with files. You are running in a Macbook Pro."
-                "Available tools: "
-                f"{'- ' + '\n- '.join([t['function']['name'] + ' function' + ' with function parameters ' + str(t['function']['parameters']['properties']) + ' that ' + t['function']['description'] for t in tools])}"
-                "Workspace:"
-                f"- Current path: {os.getcwd()} "
-                f"- Current directory contents: {os.listdir(os.getcwd())} "
-                f"- Current OS: {os.name}, Platform: {os.sys.platform}, User: {os.getlogin()}"
-                f"- Git status: {os.popen('git status').read() if os.path.isdir('.git') else 'Not a git repository'}"
-                f"- Git branch: {os.popen('git rev-parse --abrev-ref HEAD').read().strip() if os.path.isdir('.git') else 'Not a git repository'}"
-                f"- Git recent commits: {os.popen('git log -5 --oneline').read() if os.path.isdir('.git') else 'Not a git repository'}"
-            )
-        },
-        {
-            "role": "user", 
-            "content": "Explore the workspace and discover any relevant information that can help you understand the current state of the codebase, git repository, recent activities, and anything else that might be useful for future tasks. Summarize your findings in a concise way into a Markdown file saved to `.my_coding_agent/discovery.md` in the current workspace. It should contains: 1. a summary of the current state of the codebase and git repository, 2. any recent activities or changes that might be relevant, 3. any insights or observations that can help you understand the context better. 4. Tool descriptions and how to use them. 5. Latest user requests. 6. Recent transcript of the conversation. The goal is to create a Stable prompt prefix that can be prepended to future conversations to provide context and continuity, even if the conversation history gets truncated due to token limits."
-        }
-    ]
-
-    agent = Agent(
-        messages=discovery_messages,
-        tools=tools,
-        label="Discovery Agent",
-    )
-    discovery_messages = agent.run(max_steps=20)
+run_discovery(force=args.discover)
 
 tools = [
     tool(ToolsRegistry.bash),
@@ -129,7 +93,7 @@ messages = agent.run(max_steps=20)
 # Runs when: --analyze flag is set
 if args.analyze:
     sys.path.insert(0, str(Path(__file__).parent))
-    from session_analyzer import run_analysis  # noqa: E402
+    from agentic_session_analyzer import run_analysis  # noqa: E402
     run_analysis(log_path=args.analyze_log, max_steps=20)
 
 # run python
