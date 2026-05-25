@@ -71,7 +71,7 @@ src/my_coding_agent/
 | `4867d94` | . |
 | `321dbff` | feat(agent): implement context reset with structured handoff (issue #8) |
 | `dc26c80` | fix(harness): apply session analysis recommendations |
-| `2509354` | feat(examples): add session_analyzer agent for automated session analysis |
+| `2509354` | feat(examples): add agentic_session_analyzer agent for automated session analysis |
 | `8b7fc25` | feat(tools): add read_article tool for fetching web content as markdown |
 | `049351a` | feat(shell): add CLI argument parsing for custom prompts |
 | `dda0051` | feat(agent): add context window protection to prevent exceeding limits |

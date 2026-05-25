@@ -17,8 +17,9 @@ Importable:
 """
 import os
 import sys
-import argparse
 from pathlib import Path
+
+import click
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -133,13 +134,19 @@ Every finding must be traceable to the session data or source code. No hallucina
     return None
 
 
-# ── Standalone entry-point ────────────────────────────────────────────────────
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option("--log", "-l", default="examples/stderr.log", show_default=True,
+              type=click.Path(), help="Path to the stderr session log.")
+@click.option("--max-steps", default=20, show_default=True,
+              type=click.IntRange(1, 100), help="Max agent loop steps.")
+def cli(log, max_steps):
+    """Run the Session Analyzer Agent.
+
+    Parses a session log, researches harness engineering best-practices,
+    and writes a report to .my_coding_agent/<session-id>/session_analysis.md.
+    """
+    run_analysis(log_path=log, max_steps=max_steps)
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Analyze a my-coding-agent session log")
-    parser.add_argument("--log", "-l", default="examples/stderr.log",
-                        help="Path to the stderr session log (default: examples/stderr.log)")
-    parser.add_argument("--max-steps", type=int, default=20,
-                        help="Max agent steps (default: 20)")
-    cli = parser.parse_args()
-    run_analysis(cli.log, max_steps=cli.max_steps)
+    cli()

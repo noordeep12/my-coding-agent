@@ -14,8 +14,9 @@ Importable:
 """
 import os
 import sys
-import argparse
 from pathlib import Path
+
+import click
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -97,13 +98,18 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     return None
 
 
-# ── Standalone entry-point ────────────────────────────────────────────────────
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option("--force", "-f", is_flag=True, help="Overwrite existing discovery.md.")
+@click.option("--max-steps", default=20, show_default=True,
+              type=click.IntRange(1, 100), help="Max agent loop steps.")
+def cli(force, max_steps):
+    """Run the Discovery Agent.
+
+    Explores the workspace and writes a stable context document to
+    .my_coding_agent/discovery.md for use as a system-prompt prefix.
+    """
+    run_discovery(force=force, max_steps=max_steps)
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the Discovery Agent")
-    parser.add_argument("--force", "-f", action="store_true",
-                        help="Overwrite existing discovery.md")
-    parser.add_argument("--max-steps", type=int, default=20,
-                        help="Max agent steps (default: 20)")
-    cli = parser.parse_args()
-    run_discovery(force=cli.force, max_steps=cli.max_steps)
+    cli()
