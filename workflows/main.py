@@ -47,8 +47,8 @@ def _system_prompt(tools: list) -> str:
         f"  branch   : {os.popen('git rev-parse --abbrev-ref HEAD').read().strip()}\n"
         f"  commits  :\n{os.popen('git log -5 --oneline').read().strip()}\n"
         + (
-            f"\nDiscovery notes:\n"
-            + Path(".my_coding_agent/discovery.md").read_text()
+            "\nDiscovery notes are available at `.my_coding_agent/discovery.md` — "
+            "use the read_file tool to consult them when you need codebase context."
             if Path(".my_coding_agent/discovery.md").exists()
             else "\n(no discovery notes — run with --discover to generate)"
         )
