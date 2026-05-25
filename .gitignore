@@ -16,3 +16,5 @@ wheels/
 .DS_Store
 
 *.log
+
+.my_coding_agent/
