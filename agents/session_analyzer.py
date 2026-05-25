@@ -39,17 +39,29 @@ def _most_recent_session() -> str | None:
     return candidates[0].parent.name
 
 
-_SYSTEM_PROMPT = (
-    "You are a harness improvement specialist. Your job is to analyze completed LLM agent "
-    "sessions and produce actionable improvement reports.\n\n"
-    "You have access to tools:\n"
-    "  - bash(command) — run shell commands\n"
-    "  - read_file(path) — read file contents\n"
-    "  - write_file(path, content) — write files\n"
-    "  - read_article(url) — fetch web pages as markdown\n\n"
-    "Use absolute paths when working with files. Running on macOS.\n"
-    f"Workspace: {os.getcwd()}\n"
-)
+def _build_system_prompt(tools: list) -> str:
+    tool_docs = "\n".join(
+        f"  - {t['function']['name']}({', '.join(t['function']['parameters']['properties'].keys())})"
+        f" — {t['function']['description']}"
+        for t in tools
+    )
+    is_git = os.path.isdir(".git")
+    return (
+        "You are a harness improvement specialist. Your job is to analyze completed LLM agent "
+        "sessions and produce actionable improvement reports.\n\n"
+        f"Available tools:\n{tool_docs}\n\n"
+        "Workspace:\n"
+        f"  path     : {os.getcwd()}\n"
+        f"  contents : {os.listdir(os.getcwd())}\n"
+        f"  os       : {os.name}, platform: {sys.platform}, user: {os.getlogin()}\n"
+        + (
+            f"  git      : {os.popen('git status --short').read().strip() or 'clean'}\n"
+            f"  branch   : {os.popen('git rev-parse --abbrev-ref HEAD').read().strip()}\n"
+            f"  commits  :\n{os.popen('git log -5 --oneline').read().strip()}\n"
+            if is_git else "  git      : not a git repository\n"
+        )
+        + "\nUse absolute paths when working with files."
+    )
 
 _USER_PROMPT_TEMPLATE = """\
 Analyze this agent session and produce a structured improvement report.
@@ -173,7 +185,7 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
 
     agent = Agent(
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": _build_system_prompt(tools)},
             {"role": "user",   "content": user_prompt},
         ],
         tools=tools,
