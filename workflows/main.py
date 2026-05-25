@@ -16,11 +16,11 @@ import click
 
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT / "agents"))
+sys.path.insert(0, str(_ROOT))
 
 from my_coding_agent import Agent, tool, ToolsRegistry  # noqa: E402
-from agentic_discovery import run_discovery             # noqa: E402
-from agentic_session_analyzer import run_analysis       # noqa: E402
+from agents.agentic_discovery import run_discovery             # noqa: E402
+from agents.agentic_session_analyzer import run_analysis       # noqa: E402
 
 
 _DEFAULT_PROMPT = (
