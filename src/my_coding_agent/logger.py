@@ -62,6 +62,57 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
+# ── Plain formatter (no ANSI — for log files) ─────────────────────────────────
+class PlainFormatter(logging.Formatter):
+    _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+    def format(self, record) -> str:
+        text = super().format(record)
+        return self._ANSI_RE.sub("", text)
+
+
+# ── Session file log helpers ───────────────────────────────────────────────────
+def attach_session_log(path) -> tuple[logging.FileHandler, logging.FileHandler]:
+    """Attach plain + colored FileHandlers to the root logger; returns both handlers."""
+    import pathlib
+    pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+    plain_fmt = PlainFormatter(
+        "{asctime} | {levelname} | {message}",
+        style="{",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    colored_fmt = ColoredFormatter(
+        "{color}{asctime} | {levelname} | {message}{reset}",
+        style="{",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    plain_path = pathlib.Path(path)
+    colored_path = plain_path.with_name("stderr_colored.log")
+
+    plain_handler = logging.FileHandler(plain_path, mode="a", encoding="utf-8")
+    plain_handler.setFormatter(plain_fmt)
+    plain_handler.setLevel(logging.DEBUG)
+
+    colored_handler = logging.FileHandler(colored_path, mode="a", encoding="utf-8")
+    colored_handler.setFormatter(colored_fmt)
+    colored_handler.setLevel(logging.DEBUG)
+
+    root = logging.getLogger()
+    root.addHandler(plain_handler)
+    root.addHandler(colored_handler)
+    return plain_handler, colored_handler
+
+
+def detach_session_log(handlers: tuple[logging.FileHandler, logging.FileHandler]) -> None:
+    """Remove both session file handlers from the root logger and close them."""
+    root = logging.getLogger()
+    for h in handlers:
+        root.removeHandler(h)
+        h.close()
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
     formatter = ColoredFormatter(
@@ -98,6 +149,7 @@ def print_banner(
     context_window: Optional[int] = None,
     n_messages: int = 0,
     context_reset_threshold: float = 0.75,
+    session_id: Optional[str] = None,
 ) -> None:
     W = 68  # visible inner width (between the two ║)
     R = Style.RESET_ALL
@@ -118,7 +170,7 @@ def print_banner(
     ]
 
     branch     = _git_branch()
-    session_id = uuid.uuid4().hex[:12]
+    session_id = session_id or uuid.uuid4().hex[:12]
     workspace  = os.getcwd()
     ctx_str    = f"{context_window:,}" if context_window else "unknown"
     timestamp  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

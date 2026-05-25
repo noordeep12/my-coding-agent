@@ -1,10 +1,13 @@
 from .llm import LLM, OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
 from .utils import extract_message, extract_finish_reason, extract_usage
-from .logger import get_logger, print_banner, print_run_summary
+from .logger import get_logger, print_banner, print_run_summary, attach_session_log, detach_session_log
 from .handoff import ContextHandoff
 
 import json
 import time
+import uuid
+from datetime import datetime
+from pathlib import Path
 
 _HANDOFF_PROMPT = (
     "CONTEXT RESET REQUIRED: your context window is nearly full. "
@@ -38,6 +41,10 @@ class Agent(LLM):
         self.tools = tools or []
         self.context_reset_threshold = context_reset_threshold
         self.logger = get_logger(self.__class__.__name__)
+        self.session_id = uuid.uuid4().hex[:12]
+        self.started_at = datetime.now().isoformat(timespec="seconds")
+        _log_path = Path(".my_coding_agent") / self.session_id / "stderr.log"
+        self._session_log_handler = attach_session_log(_log_path)
         # run stats — reset at the start of each run()
         self.step_num = 0
         self.stop_reason = "max_steps"
@@ -52,6 +59,7 @@ class Agent(LLM):
             context_window=self.context_window,
             n_messages=len(self.messages),
             context_reset_threshold=self.context_reset_threshold,
+            session_id=self.session_id,
         )
         self.logger.info("%s initialized with %d messages and %d tools", label, len(self.messages), len(self.tools))
     
@@ -97,6 +105,33 @@ class Agent(LLM):
             agent_name=self.label,
             last_message=last_message,
         )
+
+    def _save_session_data(self, max_steps: int) -> None:
+        last_message = ""
+        for msg in reversed(self.messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                last_message = msg["content"]
+                break
+        data = {
+            "session_id": self.session_id,
+            "agent_label": self.label,
+            "model": self.model,
+            "started_at": self.started_at,
+            "elapsed_seconds": round(self.elapsed_seconds, 3),
+            "steps": self.step_num + 1,
+            "max_steps": max_steps,
+            "stop_reason": self.stop_reason,
+            "total_usage": self.total_usage,
+            "context_window": self.context_window,
+            "context_reset_threshold": self.context_reset_threshold,
+            "tool_records": self.tool_records,
+            "handoff_records": self.handoff_records,
+            "last_message": last_message,
+        }
+        out = Path(".my_coding_agent") / self.session_id / "session_data.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(data, indent=2))
+        self.logger.info("Session data saved → %s", out)
 
     def run(self, max_steps=5):
         # reset stats for this run
@@ -147,7 +182,9 @@ class Agent(LLM):
                     })
                     self.stop_reason = "context_reset"
                     self.elapsed_seconds = time.monotonic() - t_start
+                    self._save_session_data(max_steps)
                     self._print_summary(max_steps)
+                    detach_session_log(self._session_log_handler)
 
                     # Spawn continuation: system prompt + handoff as the only context.
                     system_messages = [m for m in self.messages if m.get("role") == "system"]
@@ -211,5 +248,7 @@ class Agent(LLM):
             self.step_num += 1
 
         self.elapsed_seconds = time.monotonic() - t_start
+        self._save_session_data(max_steps)
         self._print_summary(max_steps)
+        detach_session_log(self._session_log_handler)
         return self.messages

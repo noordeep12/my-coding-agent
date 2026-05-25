@@ -19,7 +19,8 @@ sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT))
 
 from my_coding_agent import Agent, tool, ToolsRegistry  # noqa: E402
-from agents.discovery import run_discovery       # noqa: E402
+from agents.discovery import run_discovery              # noqa: E402
+from agents.session_analyzer import run_analysis        # noqa: E402
 
 
 _DEFAULT_PROMPT = (
@@ -80,14 +81,21 @@ def _system_prompt(tools: list) -> str:
     type=click.IntRange(1, 100),
     help="Maximum agent loop steps for the Main Agent.",
 )
+@click.option(
+    "--analyze/--no-analyze", "-a/-A",
+    default=False,
+    show_default=True,
+    help="Run the Session Analyzer Agent after the Main Agent completes.",
+)
 @click.version_option(version="0.1.0", prog_name="my-coding-agent")
-def main(prompt, interactive, discover, max_steps):
+def main(prompt, interactive, discover, max_steps, analyze):
     """Run the full coding-agent workflow.
 
     \b
     Steps executed:
       1. Discovery Agent  — maps the workspace (skip with --no-discover)
       2. Main Agent       — executes the requested task
+      3. Session Analyzer — reviews the session and writes a report (opt-in with --analyze)
 
     \b
     Examples:
@@ -95,6 +103,7 @@ def main(prompt, interactive, discover, max_steps):
       uv run python workflows/main.py -p "write tests for llm.py"
       uv run python workflows/main.py --no-discover
       uv run python workflows/main.py -i          # paste a multi-line prompt
+      uv run python workflows/main.py --analyze   # also run session analysis
     """
     # ── resolve prompt ─────────────────────────────────────────────────────────
     if interactive:
@@ -135,6 +144,11 @@ def main(prompt, interactive, discover, max_steps):
         label="Main Agent",
     )
     agent.run(max_steps=max_steps)
+
+    # ── step 3: session analysis (optional) ───────────────────────────────────
+    if analyze:
+        click.secho("\n● Session Analyzer", fg="cyan", bold=True, err=True)
+        run_analysis(session_id=agent.session_id)
 
 
 if __name__ == "__main__":
