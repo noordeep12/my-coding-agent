@@ -134,6 +134,8 @@ def attach_session_log(path) -> "_SessionLogHandle":
 
     original  = sys.stderr
     sys.stderr = _TeeStream(original, plain_file, colored_file)
+    # Root logger defaults to WARNING — lower it so all levels reach the TeeStream.
+    logging.getLogger().setLevel(logging.DEBUG)
     return (original, plain_file, colored_file)
 
 
