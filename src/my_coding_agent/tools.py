@@ -61,7 +61,8 @@ class ToolsRegistry:
     def bash(command: str) -> str:
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
         Use for running tests, installing packages, git operations, or any shell task.
-        The 'ok' field is true when exit_code is 0."""
+        The 'ok' field is true when exit_code is 0.
+        Example: bash(command='ls -la') or bash(command='git status')"""
         result = subprocess.run(
             command,
             shell=True,
@@ -77,27 +78,29 @@ class ToolsRegistry:
         })
 
     @staticmethod
-    def read_file(path: str) -> str:
-        """Read and return the full contents of a file at the given path.
-        Use to inspect source code, configs, or any text file before editing."""
+    def read_file(file_path: str) -> str:
+        """Read and return the full contents of a file at the given file_path.
+        Use to inspect source code, configs, or any text file before editing.
+        Example: read_file(file_path='/path/to/file.py')"""
         try:
-            return Path(path).read_text()
+            return Path(file_path).read_text()
         except FileNotFoundError:
-            return f"Error: file not found: {path}"
+            return f"Error: file not found: {file_path}"
         except Exception as e:
-            return f"Error reading {path}: {e}"
-    
+            return f"Error reading {file_path}: {e}"
+
     @staticmethod
-    def write_file(path: str, content: str) -> str:
-        """Write content to a file, creating parent directories if needed.
-        Use to create new files or overwrite existing ones."""
+    def write_file(file_path: str, content: str) -> str:
+        """Write content to a file at file_path, creating parent directories if needed.
+        Use to create new files or overwrite existing ones.
+        Example: write_file(file_path='/path/to/file.py', content='print(\"hello\")')"""
         try:
-            p = Path(path)
+            p = Path(file_path)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
-            return f"Written {len(content)} bytes to {path}"
+            return f"Written {len(content)} bytes to {file_path}"
         except Exception as e:
-            return f"Error writing {path}: {e}"
+            return f"Error writing {file_path}: {e}"
 
     @staticmethod
     def read_article(url: str) -> str:
