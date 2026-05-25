@@ -1,7 +1,34 @@
 import os
 import json
+import argparse
 
 from my_coding_agent import LLM, Agent, tool, ToolsRegistry
+
+parser = argparse.ArgumentParser(description="Agentic shell runner")
+parser.add_argument("--prompt", "-p", type=str, default=None, help="User message for the Main Agent (replaces the default task)")
+parser.add_argument("--interactive", "-i", action="store_true", help="Prompt interactively for the user message (paste mode, end with Ctrl+D)")
+args = parser.parse_args()
+
+DEFAULT_PROMPT = "Using `git` and `gh` CLI tools, ensure the latest local code changes is committed and pushed to GitHub, with standardized commit messages."
+
+if args.interactive:
+    print("Enter your prompt (paste content freely, press Ctrl+D when done):")
+    print("─" * 60)
+    lines = []
+    try:
+        while True:
+            lines.append(input())
+    except EOFError:
+        pass
+    user_prompt = "\n".join(lines).strip()
+    if not user_prompt:
+        user_prompt = DEFAULT_PROMPT
+    print("─" * 60)
+    print()
+elif args.prompt is not None:
+    user_prompt = args.prompt
+else:
+    user_prompt = DEFAULT_PROMPT
 
 # disabled
 # cisa_kev_demo = [
@@ -113,7 +140,7 @@ messages = [
     },
     {
         "role": "user", 
-        "content": "Using `git` and `gh` CLI tools, ensure the latest local code changes is committed and pushed to GitHub, with standardized commit messages."
+        "content": user_prompt
     }
 ]
 tools = [
