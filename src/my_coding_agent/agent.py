@@ -18,6 +18,7 @@ class Agent(LLM):
         label="Agent",
     ):
         super().__init__(api_url, api_key, model)
+        self.label = label
         self.messages = messages or []
         self.tools = tools or []
         self.logger = get_logger(self.__class__.__name__)
@@ -86,6 +87,13 @@ class Agent(LLM):
             self.step_num += 1
 
         self.elapsed_seconds = time.monotonic() - t_start
+
+        last_message = ""
+        for msg in reversed(self.messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                last_message = msg["content"]
+                break
+
         print_run_summary(
             steps=self.step_num + 1,
             max_steps=max_steps,
@@ -96,5 +104,7 @@ class Agent(LLM):
             context_window=self.context_window,
             elapsed_seconds=self.elapsed_seconds,
             tool_records=self.tool_records,
+            agent_name=self.label,
+            last_message=last_message,
         )
         return self.messages
