@@ -1,5 +1,7 @@
 import inspect
 import subprocess
+import html2text
+import httpx
 from pathlib import Path
 
 
@@ -95,3 +97,25 @@ class ToolsRegistry:
             return f"Written {len(content)} bytes to {path}"
         except Exception as e:
             return f"Error writing {path}: {e}"
+
+    @staticmethod
+    def read_article(url: str) -> str:
+        """Fetch a web page and return its content as clean markdown.
+        Use when the user provides a URL or link to an article, blog post, or documentation page."""
+        try:
+            resp = httpx.get(
+                url,
+                follow_redirects=True,
+                timeout=15.0,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            resp.raise_for_status()
+            h = html2text.HTML2Text()
+            h.ignore_links = False
+            h.ignore_images = True
+            h.body_width = 0
+            return h.handle(resp.text)
+        except httpx.HTTPStatusError as e:
+            return f"Error: HTTP {e.response.status_code} fetching {url}"
+        except Exception as e:
+            return f"Error fetching {url}: {e}"

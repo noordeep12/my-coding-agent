@@ -100,6 +100,7 @@ if not os.path.isfile(".my_coding_agent/discovery.md"):
         tool(ToolsRegistry.bash),
         tool(ToolsRegistry.read_file),
         tool(ToolsRegistry.write_file),
+        tool(ToolsRegistry.read_article),
     ]
     agent = Agent(
         messages=discovery_messages,
