@@ -1,12 +1,22 @@
 import os
+import sys
 import json
 import argparse
+from pathlib import Path
 
 from my_coding_agent import LLM, Agent, tool, ToolsRegistry
 
 parser = argparse.ArgumentParser(description="Agentic shell runner")
-parser.add_argument("--prompt", "-p", type=str, default=None, help="User message for the Main Agent (replaces the default task)")
-parser.add_argument("--interactive", "-i", action="store_true", help="Prompt interactively for the user message (paste mode, end with Ctrl+D)")
+parser.add_argument("--prompt", "-p", type=str, default=None,
+                    help="User message for the Main Agent (replaces the default task)")
+parser.add_argument("--interactive", "-i", action="store_true",
+                    help="Prompt interactively for the user message (paste mode, end with Ctrl+D)")
+parser.add_argument("--discover", "-d", action="store_true",
+                    help="Force-run the Discovery Agent even if .my_coding_agent/discovery.md already exists")
+parser.add_argument("--analyze", "-a", action="store_true",
+                    help="Run the Session Analyzer Agent after the main run (reads examples/stderr.log)")
+parser.add_argument("--analyze-log", type=str, default="examples/stderr.log",
+                    help="Log file for the Session Analyzer (default: examples/stderr.log)")
 args = parser.parse_args()
 
 DEFAULT_PROMPT = "Using `git` and `gh` CLI tools, ensure the latest local code changes is committed and pushed to GitHub, with standardized commit messages."
@@ -32,10 +42,11 @@ else:
 
 
 
-# ------------ DISCOVERY AGENT (runs once to create a discovery file for context) ------------
-# if discovery file already exists, skip discovery step
-if not os.path.isfile(".my_coding_agent/discovery.md"):
-    print("Discovery file does not exist. Creating it.")
+# ------------ DISCOVERY AGENT ----------------------------------------------------
+# Runs when: discovery.md is missing, OR --discover flag is set
+if args.discover or not os.path.isfile(".my_coding_agent/discovery.md"):
+    reason = "forced via --discover" if args.discover else "file does not exist"
+    print(f"Running Discovery Agent ({reason}).")
 
     tools = [
         tool(ToolsRegistry.bash),
@@ -113,7 +124,16 @@ agent = Agent(
     label="Main Agent",
 )
 messages = agent.run(max_steps=20)
-print("Messages: ", json.dumps(messages, indent=4))
+
+# ------------ SESSION ANALYZER AGENT -----------------------------------------
+# Runs when: --analyze flag is set
+if args.analyze:
+    sys.path.insert(0, str(Path(__file__).parent))
+    from session_analyzer import run_analysis  # noqa: E402
+    run_analysis(log_path=args.analyze_log, max_steps=20)
 
 # run python
 # uv run python examples/agentic_shell.py > examples/stdout.log 2> examples/stderr.log
+# run with discovery:  uv run python examples/agentic_shell.py --discover
+# run with analysis:   uv run python examples/agentic_shell.py --analyze
+# run both:            uv run python examples/agentic_shell.py --discover --analyze
