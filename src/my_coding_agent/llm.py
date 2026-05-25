@@ -87,7 +87,9 @@ class LLM:
     # Known parameter aliases: maps wrong arg name → correct arg name per tool.
     # Handles recurring model hallucinations (e.g. bash(path=) instead of bash(command=)).
     _ARG_ALIASES: dict[str, dict[str, str]] = {
-        "bash": {"path": "command", "cmd": "command", "script": "command", "shell": "command"},
+        "bash":       {"path": "command", "cmd": "command", "script": "command", "shell": "command"},
+        "read_file":  {"path": "file_path", "filename": "file_path", "filepath": "file_path"},
+        "write_file": {"path": "file_path", "filename": "file_path", "filepath": "file_path"},
     }
 
     def execute_tool_calls(self, message) -> tuple[list, list]:
