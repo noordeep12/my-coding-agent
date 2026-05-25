@@ -62,55 +62,88 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
-# ── Plain formatter (no ANSI — for log files) ─────────────────────────────────
-class PlainFormatter(logging.Formatter):
-    _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+# ── Dynamic stderr handler (follows sys.stderr after it is replaced) ───────────
+class DynamicStderrHandler(logging.StreamHandler):
+    """StreamHandler that always writes to the current sys.stderr, not a captured reference."""
 
-    def format(self, record) -> str:
-        text = super().format(record)
-        return self._ANSI_RE.sub("", text)
+    def __init__(self):
+        logging.Handler.__init__(self)
+
+    @property
+    def stream(self):
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, value):
+        pass  # ignore — always use live sys.stderr
+
+
+# ── TeeStream — fans out one write to stderr + two log files ──────────────────
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class _TeeStream:
+    """Wraps the original stderr and tees every write to two extra files."""
+
+    def __init__(self, original, plain_file, colored_file):
+        self._orig    = original
+        self._plain   = plain_file
+        self._colored = colored_file
+
+    # ── core file protocol ───────────────────────────────────────────────────
+    def write(self, data: str) -> int:
+        self._orig.write(data)
+        self._colored.write(data)
+        self._plain.write(_ANSI_RE.sub("", data))
+        return len(data)
+
+    def flush(self) -> None:
+        self._orig.flush()
+        self._colored.flush()
+        self._plain.flush()
+
+    def fileno(self):
+        return self._orig.fileno()
+
+    # ── attributes that print() / logging / colorama check ──────────────────
+    def isatty(self) -> bool:
+        return self._orig.isatty()
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._orig, "encoding", "utf-8")
+
+    @property
+    def errors(self) -> str:
+        return getattr(self._orig, "errors", "replace")
+
+    def __getattr__(self, name):
+        return getattr(self._orig, name)
 
 
 # ── Session file log helpers ───────────────────────────────────────────────────
-def attach_session_log(path) -> tuple[logging.FileHandler, logging.FileHandler]:
-    """Attach plain + colored FileHandlers to the root logger; returns both handlers."""
+def attach_session_log(path) -> "_SessionLogHandle":
+    """Replace sys.stderr with a TeeStream that also writes to plain + colored log files."""
     import pathlib
-    pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-    plain_fmt = PlainFormatter(
-        "{asctime} | {levelname} | {message}",
-        style="{",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    colored_fmt = ColoredFormatter(
-        "{color}{asctime} | {levelname} | {message}{reset}",
-        style="{",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    plain_path = pathlib.Path(path)
+    plain_path   = pathlib.Path(path)
     colored_path = plain_path.with_name("stderr_colored.log")
+    plain_path.parent.mkdir(parents=True, exist_ok=True)
 
-    plain_handler = logging.FileHandler(plain_path, mode="a", encoding="utf-8")
-    plain_handler.setFormatter(plain_fmt)
-    plain_handler.setLevel(logging.DEBUG)
+    plain_file   = open(plain_path,   "a", encoding="utf-8")
+    colored_file = open(colored_path, "a", encoding="utf-8")
 
-    colored_handler = logging.FileHandler(colored_path, mode="a", encoding="utf-8")
-    colored_handler.setFormatter(colored_fmt)
-    colored_handler.setLevel(logging.DEBUG)
-
-    root = logging.getLogger()
-    root.addHandler(plain_handler)
-    root.addHandler(colored_handler)
-    return plain_handler, colored_handler
+    original  = sys.stderr
+    sys.stderr = _TeeStream(original, plain_file, colored_file)
+    return (original, plain_file, colored_file)
 
 
-def detach_session_log(handlers: tuple[logging.FileHandler, logging.FileHandler]) -> None:
-    """Remove both session file handlers from the root logger and close them."""
-    root = logging.getLogger()
-    for h in handlers:
-        root.removeHandler(h)
-        h.close()
+def detach_session_log(handle) -> None:
+    """Restore sys.stderr and close the log files."""
+    original, plain_file, colored_file = handle
+    sys.stderr.flush()
+    sys.stderr = original
+    plain_file.close()
+    colored_file.close()
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -120,7 +153,7 @@ def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
         style="{",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    handler = logging.StreamHandler(sys.stderr)
+    handler = DynamicStderrHandler()
     handler.setFormatter(formatter)
 
     logger = logging.getLogger(name)
