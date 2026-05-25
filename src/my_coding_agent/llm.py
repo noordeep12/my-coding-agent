@@ -41,17 +41,18 @@ class LLM:
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
         self.logger.api("Models: %s", models)
-        self.context_window = None
+        DEFAULT_CONTEXT_WINDOW = 131_072  # 128k fallback
+        self.context_window = DEFAULT_CONTEXT_WINDOW
         for m in data:
             if m["id"] == self.model:
                 self.context_window = (
                     m.get("context_length")
                     or m.get("max_context_length")
                     or m.get("context_window")
+                    or DEFAULT_CONTEXT_WINDOW
                 )
                 break
-        if self.context_window:
-            self.logger.api("Context window for %s: %d tokens", self.model, self.context_window)
+        self.logger.api("Context window for %s: %d tokens", self.model, self.context_window)
         return models
 
     def chat_completion(self, messages, tools=None) -> Response:
