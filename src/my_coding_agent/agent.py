@@ -117,7 +117,7 @@ class Agent(LLM):
             # Pre-flight context check using actual tokens reported by the API in the
             # previous step. Step 1 falls back to a character estimate (no prior data).
             if self.context_window:
-                ctx_tokens = self.last_prompt_tokens or len(json.dumps(self.messages)) // 3
+                ctx_tokens = self.last_prompt_tokens or len(json.dumps(self.messages)) // 2
                 ctx_pct = ctx_tokens / self.context_window
 
                 if ctx_pct >= 1.0:

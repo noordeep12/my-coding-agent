@@ -2,7 +2,7 @@
 """
 Main workflow
 =============
-Discovery Agent → Main Agent → (optional) Session Analyzer
+Discovery Agent → Main Agent
 
 Run:
     uv run python workflows/main.py [OPTIONS]
@@ -19,8 +19,7 @@ sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT))
 
 from my_coding_agent import Agent, tool, ToolsRegistry  # noqa: E402
-from agents.agentic_discovery import run_discovery             # noqa: E402
-from agents.agentic_session_analyzer import run_analysis       # noqa: E402
+from agents.agentic_discovery import run_discovery       # noqa: E402
 
 
 _DEFAULT_PROMPT = (
@@ -36,7 +35,6 @@ def _system_prompt(tools: list) -> str:
         + f") — {t['function']['description']}"
         for t in tools
     )
-    git_root = _ROOT
     return (
         "You are a helpful coding assistant. Use tools when needed. "
         "Use absolute paths when working with files. Running on macOS.\n\n"
@@ -77,19 +75,6 @@ def _system_prompt(tools: list) -> str:
     help="Run the Discovery Agent before the Main Agent.",
 )
 @click.option(
-    "--analyze/--no-analyze", "-a/-A",
-    default=True,
-    show_default=True,
-    help="Run the Session Analyzer after the Main Agent finishes.",
-)
-@click.option(
-    "--analyze-log",
-    default="agents/stderr.log",
-    show_default=True,
-    type=click.Path(),
-    help="Session log for the Session Analyzer.",
-)
-@click.option(
     "--max-steps",
     default=20,
     show_default=True,
@@ -97,20 +82,19 @@ def _system_prompt(tools: list) -> str:
     help="Maximum agent loop steps for the Main Agent.",
 )
 @click.version_option(version="0.1.0", prog_name="my-coding-agent")
-def main(prompt, interactive, discover, analyze, analyze_log, max_steps):
+def main(prompt, interactive, discover, max_steps):
     """Run the full coding-agent workflow.
 
     \b
     Steps executed:
       1. Discovery Agent  — maps the workspace (skip with --no-discover)
       2. Main Agent       — executes the requested task
-      3. Session Analyzer — analyses the run log (skip with --no-analyze)
 
     \b
     Examples:
       uv run python workflows/main.py
       uv run python workflows/main.py -p "write tests for llm.py"
-      uv run python workflows/main.py --discover --analyze
+      uv run python workflows/main.py --no-discover
       uv run python workflows/main.py -i          # paste a multi-line prompt
     """
     # ── resolve prompt ─────────────────────────────────────────────────────────
@@ -140,6 +124,7 @@ def main(prompt, interactive, discover, analyze, analyze_log, max_steps):
         tool(ToolsRegistry.bash),
         tool(ToolsRegistry.read_file),
         tool(ToolsRegistry.write_file),
+        tool(ToolsRegistry.read_article),
     ]
     agent = Agent(
         messages=[
@@ -150,19 +135,6 @@ def main(prompt, interactive, discover, analyze, analyze_log, max_steps):
         label="Main Agent",
     )
     agent.run(max_steps=max_steps)
-
-    # ── step 3: session analyzer (optional) ───────────────────────────────────
-    if analyze:
-        click.secho("\n● Session Analyzer", fg="cyan", bold=True, err=True)
-        if not Path(analyze_log).exists():
-            click.secho(
-                f"  Log not found: {analyze_log}\n"
-                "  Tip: redirect stderr when running — e.g.\n"
-                "       uv run python workflows/main.py --analyze 2> agents/stderr.log",
-                fg="yellow", err=True,
-            )
-        else:
-            run_analysis(log_path=analyze_log, max_steps=20)
 
 
 if __name__ == "__main__":
