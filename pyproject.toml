@@ -13,6 +13,7 @@ dependencies = [
     "httpx>=0.28.1",
     "ipdb>=0.13.13",
     "pydantic>=2.13.4",
+    "rich>=15.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
