@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import sys
 import uuid
 import logging
@@ -175,7 +176,7 @@ def print_run_summary(
     agent_name: str = "Agent",
     last_message: str = "",
 ) -> None:
-    W = 160   # inner visible width — fits a full-screen MBP 14" terminal
+    W = 68  # same inner width as the startup banner
     R      = Style.RESET_ALL
     BORDER = Fore.CYAN + Style.BRIGHT
     LABEL  = Fore.CYAN + Style.BRIGHT
@@ -215,16 +216,6 @@ def print_run_summary(
         _, left  = _col(lbl1, val1, H, "left")
         _, right = _col(lbl2, val2, H, "right")
         return BORDER + "║" + left + right + BORDER + "║" + R
-
-    def metric_row3(lbl1: str, val1: str, lbl2: str, val2: str, lbl3: str, val3: str) -> str:
-        """Three-column metric row — each column gets a third of the width."""
-        T = W // 3
-        # left and centre are left-aligned; right is right-aligned
-        _, c1 = _col(lbl1, val1, T, "left")
-        _, c2 = _col(lbl2, val2, T, "left")
-        remainder = W - 2 * T
-        _, c3 = _col(lbl3, val3, remainder, "right")
-        return BORDER + "║" + c1 + c2 + c3 + BORDER + "║" + R
 
     def metric_row1(lbl: str, val: str) -> str:
         """Full-width single metric row."""
@@ -280,11 +271,8 @@ def print_run_summary(
         console.print(Markdown(md_text))
         rendered = buf.getvalue()
         rows: List[str] = []
+        ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
         for line in rendered.splitlines():
-            # strip trailing spaces; pad to W-4 then box
-            # ansi-aware: use len of stripped ansi for padding
-            import re
-            ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
             visible_len = len(ansi_escape.sub("", line))
             pad = (W - 4) - visible_len
             rows.append(BORDER + "║  " + line + " " * max(pad, 0) + "  " + BORDER + "║" + R)
@@ -308,9 +296,8 @@ def print_run_summary(
         metric_row2("STEPS",    f"{steps} / {max_steps}", "STOP REASON", stop_reason),
         metric_row2("ELAPSED",  elapsed_str,              "THROUGHPUT",  tok_per_sec),
         empty_row(), mid, empty_row(),
-        metric_row3("PROMPT",   f"{prompt_tokens:,} tok",
-                    "COMPLETION", f"{completion_tokens:,} tok",
-                    "TOTAL",    f"{total_tokens:,} tok{ctx_pct}"),
+        metric_row2("PROMPT", f"{prompt_tokens:,} tok", "COMPLETION", f"{completion_tokens:,} tok"),
+        metric_row1("TOTAL",  f"{total_tokens:,} tok{ctx_pct}"),
         empty_row(), mid, empty_row(),
         metric_row1("TOOL CALLS", tool_count),
     ]
