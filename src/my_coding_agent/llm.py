@@ -1,6 +1,7 @@
 import httpx
-import time
 import json
+import subprocess
+import time
 
 from .logger import get_logger
 from .tools import ToolsRegistry
@@ -84,6 +85,16 @@ class LLM:
         return resp
 
 
+    # Exceptions the LLM can recover from — returned as error content, not re-raised.
+    # Anything not in this tuple hard-stops the agent loop via re-raise.
+    _RECOVERABLE_EXCEPTIONS = (
+        TypeError,                    # wrong arg names / types — LLM can fix
+        ValueError,                   # bad arg values — LLM can fix
+        FileNotFoundError,            # wrong path — LLM can fix
+        json.JSONDecodeError,         # malformed tool arguments — LLM can fix
+        subprocess.TimeoutExpired,    # belt-and-suspenders (bash catches this itself)
+    )
+
     # Known parameter aliases: maps wrong arg name → correct arg name per tool.
     # Handles recurring model hallucinations (e.g. bash(path=) instead of bash(command=)).
     _ARG_ALIASES: dict[str, dict[str, str]] = {
@@ -93,7 +104,15 @@ class LLM:
     }
 
     def execute_tool_calls(self, message) -> tuple[list, list]:
-        """Returns (tool_messages, call_records) where each record is {"name": str, "args": dict, "ok": bool}."""
+        """Returns (tool_messages, call_records).
+
+        Success record: {"name": str, "args": dict, "ok": True}
+        Failure record: {"name": str, "args": dict, "ok": False, "error": str}
+
+        Recoverable errors (TypeError, ValueError, FileNotFoundError, json.JSONDecodeError,
+        subprocess.TimeoutExpired) are returned to the LLM as error content so it can self-correct.
+        All other exceptions are re-raised to hard-stop the agent loop.
+        """
         tool_calls = message.get("tool_calls", []) or []
         messages = []
         records = []
@@ -110,11 +129,24 @@ class LLM:
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "content": f"Error: tool type '{tool_call['type']}' is not supported",
+                    "status": "error",
                 })
                 continue
 
             func_name = tool_call["function"]["name"]
-            args = parse_tool_args(tool_call["function"]["arguments"])
+            try:
+                args = parse_tool_args(tool_call["function"]["arguments"])
+            except json.JSONDecodeError as exc:
+                err = f"Error: could not parse tool arguments as JSON: {exc}"
+                self.logger.error("malformed args %s → %s: %s", tool_call_id, func_name, exc)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": err,
+                    "status": "error",
+                })
+                records.append({"name": func_name, "args": {}, "ok": False, "error": str(exc)})
+                continue
 
             # Remap known wrong parameter names before dispatch.
             aliases = self._ARG_ALIASES.get(func_name, {})
@@ -128,14 +160,17 @@ class LLM:
             if not hasattr(registry, func_name):
                 self.logger.error("not found: '%s' is not registered", func_name)
                 valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
+                err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
-                    "content": f"Error: tool '{func_name}' not found. Available tools: {valid}",
+                    "content": err,
+                    "status": "error",
                 })
-                records.append({"name": func_name, "args": args, "ok": False})
+                records.append({"name": func_name, "args": args, "ok": False, "error": f"tool '{func_name}' not found"})
                 continue
 
+            status = "success"
             try:
                 result = getattr(registry, func_name)(**args)
                 if not isinstance(result, str):
@@ -147,12 +182,17 @@ class LLM:
                 sig = _inspect.signature(getattr(ToolsRegistry, func_name))
                 result = f"Error: wrong arguments for '{func_name}': {exc}. Expected signature: {func_name}{sig}"
                 self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
-                records.append({"name": func_name, "args": args, "ok": False})
+                records.append({"name": func_name, "args": args, "ok": False, "error": str(exc)})
+                status = "error"
             except Exception as exc:
+                if not isinstance(exc, self._RECOVERABLE_EXCEPTIONS):
+                    self.logger.error("non-recoverable tool error %s → %s: %s", tool_call_id, func_name, exc)
+                    raise
                 result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
-                records.append({"name": func_name, "args": args, "ok": False})
+                records.append({"name": func_name, "args": args, "ok": False, "error": str(exc)})
+                status = "error"
 
-            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
+            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result, "status": status})
 
         return messages, records

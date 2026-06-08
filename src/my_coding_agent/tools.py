@@ -63,13 +63,21 @@ class ToolsRegistry:
         Use for running tests, installing packages, git operations, or any shell task.
         The 'ok' field is true when exit_code is 0.
         Example: bash(command='ls -la') or bash(command='git status')"""
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            return json.dumps({
+                "stdout":    "",
+                "stderr":    "Error: command timed out after 60s",
+                "exit_code": -1,
+                "ok":        False,
+            })
         return json.dumps({
             "stdout":    result.stdout.rstrip(),
             "stderr":    result.stderr.rstrip(),
