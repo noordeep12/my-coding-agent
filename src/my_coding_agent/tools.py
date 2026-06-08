@@ -1,9 +1,52 @@
 import inspect
 import json
+import re
 import subprocess
 import html2text
 import httpx
 from pathlib import Path
+
+
+def _parse_args_section(docstring: str) -> dict[str, str]:
+    """Extract {param: description} from a Google-style Args: section."""
+    if not docstring:
+        return {}
+    m = re.search(r"\bArgs:\s*\n(.*?)(?:\n\s*\n\S|\Z)", docstring, re.DOTALL)
+    if not m:
+        return {}
+    block = m.group(1)
+    # Detect indent of first param line to handle any indentation level.
+    first_param = re.search(r"^(\s+)\w+:", block, re.MULTILINE)
+    if not first_param:
+        return {}
+    param_indent = len(first_param.group(1))
+    continuation_indent = param_indent + 1  # any deeper line continues the description
+    result: dict[str, str] = {}
+    current_param: str | None = None
+    current_lines: list[str] = []
+    for line in block.splitlines():
+        if not line.strip():
+            continue
+        stripped = line.lstrip()
+        line_indent = len(line) - len(stripped)
+        if line_indent == param_indent:
+            param_match = re.match(r"(\w+):\s*(.*)", stripped)
+            if param_match:
+                if current_param:
+                    result[current_param] = " ".join(current_lines).strip()
+                current_param = param_match.group(1)
+                current_lines = [param_match.group(2)]
+                continue
+        if current_param and line_indent >= continuation_indent:
+            current_lines.append(stripped)
+    if current_param:
+        result[current_param] = " ".join(current_lines).strip()
+    return result
+
+
+def _strip_args_section(docstring: str) -> str:
+    """Return the docstring with the Args: section removed (used as top-level description)."""
+    return re.sub(r"\s*\bArgs:\s*\n.*", "", docstring, flags=re.DOTALL).strip()
 
 
 def function_to_json(func) -> dict:
@@ -23,13 +66,20 @@ def function_to_json(func) -> dict:
     except ValueError as e:
         raise ValueError(f"Failed to get signature for function {func.__name__}: {e}")
 
+    docstring = inspect.cleandoc(func.__doc__ or "")
+    param_descriptions = _parse_args_section(docstring)
+    top_description = _strip_args_section(docstring)
+
     parameters = {}
     required = []
     for param in signature.parameters.values():
         if param.name in ("self", "cls"):
             continue
         param_type = type_map.get(param.annotation, "string")
-        parameters[param.name] = {"type": param_type}
+        entry: dict = {"type": param_type}
+        if param.name in param_descriptions:
+            entry["description"] = param_descriptions[param.name]
+        parameters[param.name] = entry
         if (
             param.default is inspect.Parameter.empty
             and param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
@@ -40,7 +90,7 @@ def function_to_json(func) -> dict:
         "type": "function",
         "function": {
             "name": func.__name__,
-            "description": func.__doc__ or "",
+            "description": top_description,
             "parameters": {
                 "type": "object",
                 "properties": parameters,
@@ -67,7 +117,11 @@ class ToolsRegistry:
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
         Use for running tests, installing packages, git operations, or any shell task.
         The 'ok' field is true when exit_code is 0.
-        Example: bash(command='ls -la') or bash(command='git status')"""
+
+        Args:
+            command: Shell command to run. Use absolute paths where possible.
+                Example: 'ls -la' or 'git status'
+        """
         try:
             result = subprocess.run(
                 command,
@@ -96,7 +150,11 @@ class ToolsRegistry:
     def read_tool_artifact(self, tool_call_id: str) -> str:
         """Return the full stored output for a previous tool call identified by tool_call_id.
         Use this when a bash result was summarized and you need the complete stdout/stderr.
-        Example: read_tool_artifact(tool_call_id='call_abc123')"""
+
+        Args:
+            tool_call_id: The tool_call_id from a previous bash call whose output was summarized.
+                Example: 'call_abc123'
+        """
         artifact = self._artifacts.get(tool_call_id)
         if artifact is None:
             return f"Error: no artifact found for tool_call_id '{tool_call_id}'"
@@ -106,7 +164,10 @@ class ToolsRegistry:
     def read_file(file_path: str) -> str:
         """Read and return the full contents of a file at the given file_path.
         Use to inspect source code, configs, or any text file before editing.
-        Example: read_file(file_path='/path/to/file.py')"""
+
+        Args:
+            file_path: Absolute path to the file to read. Example: '/path/to/file.py'
+        """
         try:
             return Path(file_path).read_text()
         except FileNotFoundError:
@@ -118,7 +179,12 @@ class ToolsRegistry:
     def write_file(file_path: str, content: str) -> str:
         """Write content to a file at file_path, creating parent directories if needed.
         Use to create new files or overwrite existing ones.
-        Example: write_file(file_path='/path/to/file.py', content='print(\"hello\")')"""
+
+        Args:
+            file_path: Absolute path where the file should be written.
+                Example: '/path/to/file.py'
+            content: Full text content to write. Overwrites any existing file.
+        """
         try:
             p = Path(file_path)
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -130,7 +196,11 @@ class ToolsRegistry:
     @staticmethod
     def read_article(url: str) -> str:
         """Fetch a web page and return its content as clean markdown (max ~6 000 tokens).
-        Use when the user provides a URL or link to an article, blog post, or documentation page."""
+        Use when the user provides a URL or link to an article, blog post, or documentation page.
+
+        Args:
+            url: Full URL of the web page to fetch. Example: 'https://example.com/article'
+        """
         MAX_CHARS = 24_000  # ~6 000 tokens; prevents context explosion from large pages
         try:
             resp = httpx.get(
