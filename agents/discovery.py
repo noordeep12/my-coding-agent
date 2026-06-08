@@ -59,6 +59,7 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
         tool(ToolsRegistry.read_file),
         tool(ToolsRegistry.write_file),
         tool(ToolsRegistry.read_article),
+        tool(ToolsRegistry.read_tool_artifact),
     ]
 
     tool_docs = "\n".join(

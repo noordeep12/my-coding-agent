@@ -133,6 +133,10 @@ class Agent(LLM):
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, indent=2))
         self.logger.info("Session data saved → %s", out)
+        if self.tool_artifacts:
+            artifacts_out = out.parent / "tool_artifacts.json"
+            artifacts_out.write_text(json.dumps(self.tool_artifacts, indent=2))
+            self.logger.info("Tool artifacts saved → %s", artifacts_out)
 
     def run(self, max_steps=5):
         # reset stats for this run

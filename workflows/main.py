@@ -133,6 +133,7 @@ def main(prompt, interactive, discover, max_steps, analyze):
         tool(ToolsRegistry.read_file),
         tool(ToolsRegistry.write_file),
         tool(ToolsRegistry.read_article),
+        tool(ToolsRegistry.read_tool_artifact),
     ]
 
     agent = Agent(

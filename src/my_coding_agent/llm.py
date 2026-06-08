@@ -30,6 +30,7 @@ class LLM:
         self.setup_session()
         self.available_models()
         self._session_log_path: str | None = None  # set by Agent after session dir is created
+        self.tool_artifacts: dict = {}
 
     def setup_session(self) -> None:
         self.session = httpx.Client()
@@ -116,10 +117,10 @@ class LLM:
         "write_file": {"path": "file_path", "filename": "file_path", "filepath": "file_path"},
     }
 
-    def _validate_tool_output(self, result: str, func_name: str) -> str:
+    def _validate_tool_output(self, result: str, func_name: str, is_summary: bool = False) -> str:
         if not result.strip():
             return "(tool returned empty output)"
-        if len(result) > MAX_TOOL_OUTPUT_CHARS:
+        if not is_summary and len(result) > MAX_TOOL_OUTPUT_CHARS:
             log_hint = (
                 f" Use read_file(file_path='{self._session_log_path}') to inspect the full output."
                 if self._session_log_path
@@ -134,12 +135,35 @@ class LLM:
                 + f"\n[output truncated at {MAX_TOOL_OUTPUT_CHARS} chars —"
                 + f" full output is in the session log.{log_hint}]"
             )
-        if func_name == "bash":
+        if func_name == "bash" and not is_summary:
             try:
                 json.loads(result.split("\n[output truncated")[0])
             except json.JSONDecodeError:
                 self.logger.warning("bash tool returned non-JSON output")
         return result
+
+    def _summarize_artifact(self, artifact: dict, func_name: str, tool_call_id: str) -> str:
+        prompt = (
+            f"Summarize the following `{func_name}` tool output concisely for an AI coding agent. "
+            "Include: exit status, key findings, any errors, and what the agent needs to know to continue its task. "
+            "Be factual and brief — 3 to 8 sentences max.\n\n"
+            f"Output:\n{json.dumps(artifact, indent=2)[:12_000]}"
+        )
+        try:
+            resp = self.chat_completion([{"role": "user", "content": prompt}], tools=[])
+            summary = extract_message(resp).get("content") or ""
+        except Exception as exc:
+            self.logger.warning("artifact summarization failed: %s", exc)
+            summary = json.dumps({
+                "exit_code": artifact.get("exit_code"),
+                "ok": artifact.get("ok"),
+                "stdout_chars": len(artifact.get("stdout", "")),
+                "stderr_chars": len(artifact.get("stderr", "")),
+            })
+        return (
+            summary.strip()
+            + f'\n[Full output stored — call read_tool_artifact(tool_call_id="{tool_call_id}") to retrieve it.]'
+        )
 
     def execute_tool_calls(self, message) -> tuple[list, list]:
         """Returns (tool_messages, call_records).
@@ -154,7 +178,7 @@ class LLM:
         tool_calls = message.get("tool_calls", []) or []
         messages = []
         records = []
-        registry = ToolsRegistry()
+        registry = ToolsRegistry(artifacts=self.tool_artifacts)
 
         self.logger.tool("dispatch: %d tool call(s)", len(tool_calls))
 
@@ -238,9 +262,14 @@ class LLM:
             for attempt in range(self._MAX_ARG_RETRIES + 1):
                 try:
                     result = getattr(registry, func_name)(**args)
+                    artifact = None
+                    if isinstance(result, tuple) and len(result) == 2:
+                        _, artifact = result
+                        self.tool_artifacts[tool_call_id] = artifact
+                        result = self._summarize_artifact(artifact, func_name, tool_call_id)
                     if not isinstance(result, str):
                         result = str(result)
-                    result = self._validate_tool_output(result, func_name)
+                    result = self._validate_tool_output(result, func_name, is_summary=(artifact is not None))
                     self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
                     records.append({"name": func_name, "args": args, "ok": True})
                     last_exc = None

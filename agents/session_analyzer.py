@@ -176,6 +176,7 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
         tool(ToolsRegistry.read_file),
         tool(ToolsRegistry.write_file),
         tool(ToolsRegistry.read_article),
+        tool(ToolsRegistry.read_tool_artifact),
     ]
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(

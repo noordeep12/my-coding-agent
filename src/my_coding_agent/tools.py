@@ -55,10 +55,15 @@ def tool(func) -> dict:
     return function_to_json(func)
 
 
+ARTIFACT_THRESHOLD = 2_000  # chars; bash output above this triggers artifact separation
+
+
 class ToolsRegistry:
 
-    @staticmethod
-    def bash(command: str) -> str:
+    def __init__(self, artifacts: dict | None = None):
+        self._artifacts = artifacts if artifacts is not None else {}
+
+    def bash(self, command: str) -> "str | tuple[None, dict]":
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
         Use for running tests, installing packages, git operations, or any shell task.
         The 'ok' field is true when exit_code is 0.
@@ -78,12 +83,24 @@ class ToolsRegistry:
                 "exit_code": -1,
                 "ok":        False,
             })
-        return json.dumps({
+        full = {
             "stdout":    result.stdout.rstrip(),
             "stderr":    result.stderr.rstrip(),
             "exit_code": result.returncode,
             "ok":        result.returncode == 0,
-        })
+        }
+        if len(full["stdout"]) + len(full["stderr"]) > ARTIFACT_THRESHOLD:
+            return None, full  # dispatcher will generate an LLM summary
+        return json.dumps(full)
+
+    def read_tool_artifact(self, tool_call_id: str) -> str:
+        """Return the full stored output for a previous tool call identified by tool_call_id.
+        Use this when a bash result was summarized and you need the complete stdout/stderr.
+        Example: read_tool_artifact(tool_call_id='call_abc123')"""
+        artifact = self._artifacts.get(tool_call_id)
+        if artifact is None:
+            return f"Error: no artifact found for tool_call_id '{tool_call_id}'"
+        return json.dumps(artifact) if not isinstance(artifact, str) else artifact
 
     @staticmethod
     def read_file(file_path: str) -> str:
