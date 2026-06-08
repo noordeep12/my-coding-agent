@@ -10,7 +10,7 @@ A minimal Python agent library (~500 lines) that connects to local OpenAI-compat
 - **Context Window Handoff**: Automatic context reset when tokens approach the limit, with structured state transfer to a continuation agent
 - **Discovery Agent**: Explores the workspace and writes a stable `discovery.md` for context continuity across sessions
 - **Workflow CLI**: Click-based CLI orchestrating the full pipeline: Discovery → Main Agent
-- **Colored Logging**: Custom log levels (TOOL, API, LLM) with ASCII startup banner and run summary
+- **Colored Logging**: Custom log levels (TOOL, API, LLM) with ASCII startup banner and run summary for traceability
 
 ## Quick Start
 

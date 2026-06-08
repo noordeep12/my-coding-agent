@@ -19,3 +19,5 @@ wheels/
 
 .my_coding_agent/handoffs/
 .my_coding_agent/
+.claude/
+.codex/
