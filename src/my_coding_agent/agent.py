@@ -209,6 +209,10 @@ class Agent(LLM):
 
             resp = self.chat_completion(self.messages, tools=self.tools)
             message = extract_message(resp)
+            if not message:
+                self.logger.error("Step %d: API returned empty message — skipping step", self.step_num + 1)
+                self.step_num += 1
+                continue
             self.add_message(message)
 
             # Execute tool calls and add results back to messages

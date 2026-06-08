@@ -65,7 +65,13 @@ class LLM:
             json={"model": self.model, "messages": messages, "tools": tools or []},
         )
         self.logger.api("← %s (%d bytes)", resp.status_code, len(resp.content))
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception as exc:
+            raise ValueError(
+                f"API returned non-JSON response (HTTP {resp.status_code}): {exc}. "
+                f"Body prefix: {resp.text[:200]!r}"
+            ) from exc
         self.logger.debug("Response body: %s", json.dumps(data, indent=4))
 
         try:
@@ -123,19 +129,41 @@ class LLM:
         for tool_call in tool_calls:
             tool_call_id = tool_call.get("id", "unknown_id")
 
-            if tool_call["type"] != "function":
-                self.logger.warning("skip %s — type '%s' not supported", tool_call_id, tool_call["type"])
+            tool_type = tool_call.get("type")
+            if tool_type is None:
+                self.logger.warning("skip %s — malformed tool call: missing 'type' field", tool_call_id)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
-                    "content": f"Error: tool type '{tool_call['type']}' is not supported",
+                    "content": "Error: malformed tool call — missing 'type' field",
                     "status": "error",
                 })
                 continue
 
-            func_name = tool_call["function"]["name"]
+            if tool_type != "function":
+                self.logger.warning("skip %s — type '%s' not supported", tool_call_id, tool_type)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": f"Error: tool type '{tool_type}' is not supported",
+                    "status": "error",
+                })
+                continue
+
+            func_block = tool_call.get("function")
+            func_name = func_block.get("name") if func_block else None
+            if not func_name:
+                self.logger.warning("skip %s — malformed tool call: missing 'function.name'", tool_call_id)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": "Error: malformed tool call — missing 'function.name'",
+                    "status": "error",
+                })
+                continue
+
             try:
-                args = parse_tool_args(tool_call["function"]["arguments"])
+                args = parse_tool_args(func_block.get("arguments", {}))
             except json.JSONDecodeError as exc:
                 err = f"Error: could not parse tool arguments as JSON: {exc}"
                 self.logger.error("malformed args %s → %s: %s", tool_call_id, func_name, exc)
