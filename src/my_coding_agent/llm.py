@@ -12,6 +12,8 @@ OMLX_API_URL = "http://127.0.0.1:8321/v1"
 OMLX_API_KEY = "changeme"
 OMLX_MODEL = "Qwen3.6-35B-A3B-4bit"
 
+MAX_TOOL_OUTPUT_CHARS = 8_000
+
 
 class LLM:
     def __init__(
@@ -26,6 +28,7 @@ class LLM:
         self.logger = get_logger(self.__class__.__name__)
         self.setup_session()
         self.available_models()
+        self._session_log_path: str | None = None  # set by Agent after session dir is created
 
     def setup_session(self) -> None:
         self.session = httpx.Client()
@@ -108,6 +111,31 @@ class LLM:
         "read_file":  {"path": "file_path", "filename": "file_path", "filepath": "file_path"},
         "write_file": {"path": "file_path", "filename": "file_path", "filepath": "file_path"},
     }
+
+    def _validate_tool_output(self, result: str, func_name: str) -> str:
+        if not result.strip():
+            return "(tool returned empty output)"
+        if len(result) > MAX_TOOL_OUTPUT_CHARS:
+            log_hint = (
+                f" Use read_file(file_path='{self._session_log_path}') to inspect the full output."
+                if self._session_log_path
+                else ""
+            )
+            self.logger.warning(
+                "tool output truncated: %s returned %d chars (limit %d)",
+                func_name, len(result), MAX_TOOL_OUTPUT_CHARS,
+            )
+            result = (
+                result[:MAX_TOOL_OUTPUT_CHARS]
+                + f"\n[output truncated at {MAX_TOOL_OUTPUT_CHARS} chars —"
+                + f" full output is in the session log.{log_hint}]"
+            )
+        if func_name == "bash":
+            try:
+                json.loads(result.split("\n[output truncated")[0])
+            except json.JSONDecodeError:
+                self.logger.warning("bash tool returned non-JSON output")
+        return result
 
     def execute_tool_calls(self, message) -> tuple[list, list]:
         """Returns (tool_messages, call_records).
@@ -203,6 +231,7 @@ class LLM:
                 result = getattr(registry, func_name)(**args)
                 if not isinstance(result, str):
                     result = str(result)
+                result = self._validate_tool_output(result, func_name)
                 self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
                 records.append({"name": func_name, "args": args, "ok": True})
             except TypeError as exc:

@@ -44,6 +44,7 @@ class Agent(LLM):
         self.session_id = uuid.uuid4().hex[:12]
         self.started_at = datetime.now().isoformat(timespec="seconds")
         _log_path = Path(".my_coding_agent") / self.session_id / "stderr.log"
+        self._session_log_path = str(_log_path)
         self._session_log_handler = attach_session_log(_log_path)
         # run stats — reset at the start of each run()
         self.step_num = 0
