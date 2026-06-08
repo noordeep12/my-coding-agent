@@ -1,11 +1,12 @@
 import httpx
+import inspect
 import json
 import subprocess
 import time
 
 from .logger import get_logger
 from .tools import ToolsRegistry
-from .utils import parse_tool_args
+from .utils import extract_message, parse_tool_args
 from httpx import Response
 
 OMLX_API_URL = "http://127.0.0.1:8321/v1"
@@ -103,6 +104,9 @@ class LLM:
         json.JSONDecodeError,         # malformed tool arguments — LLM can fix
         subprocess.TimeoutExpired,    # belt-and-suspenders (bash catches this itself)
     )
+
+    # Max retries for the inner arg-correction loop before falling back to error result.
+    _MAX_ARG_RETRIES: int = 3
 
     # Known parameter aliases: maps wrong arg name → correct arg name per tool.
     # Handles recurring model hallucinations (e.g. bash(path=) instead of bash(command=)).
@@ -227,27 +231,82 @@ class LLM:
                 continue
 
             status = "success"
-            try:
-                result = getattr(registry, func_name)(**args)
-                if not isinstance(result, str):
-                    result = str(result)
-                result = self._validate_tool_output(result, func_name)
-                self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
-                records.append({"name": func_name, "args": args, "ok": True})
-            except TypeError as exc:
-                import inspect as _inspect
-                sig = _inspect.signature(getattr(ToolsRegistry, func_name))
-                result = f"Error: wrong arguments for '{func_name}': {exc}. Expected signature: {func_name}{sig}"
-                self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
-                records.append({"name": func_name, "args": args, "ok": False, "error": str(exc)})
-                status = "error"
-            except Exception as exc:
-                if not isinstance(exc, self._RECOVERABLE_EXCEPTIONS):
-                    self.logger.error("non-recoverable tool error %s → %s: %s", tool_call_id, func_name, exc)
-                    raise
-                result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
-                self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
-                records.append({"name": func_name, "args": args, "ok": False, "error": str(exc)})
+            result = None
+            sig = inspect.signature(getattr(ToolsRegistry, func_name))
+            last_exc: Exception | None = None
+
+            for attempt in range(self._MAX_ARG_RETRIES + 1):
+                try:
+                    result = getattr(registry, func_name)(**args)
+                    if not isinstance(result, str):
+                        result = str(result)
+                    result = self._validate_tool_output(result, func_name)
+                    self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
+                    records.append({"name": func_name, "args": args, "ok": True})
+                    last_exc = None
+                    break
+                except TypeError as exc:
+                    last_exc = exc
+                    self.logger.error(
+                        "arg error %s → %s (attempt %d/%d): %s",
+                        tool_call_id, func_name, attempt + 1, self._MAX_ARG_RETRIES, exc,
+                    )
+                    if attempt == self._MAX_ARG_RETRIES:
+                        break
+                    # Inner correction loop: ask the model to fix args without advancing step counter.
+                    correction_prompt = (
+                        f"Tool '{func_name}' was called with wrong arguments: {exc}. "
+                        f"Expected signature: {func_name}{sig}. "
+                        f"Please call '{func_name}' again with the correct arguments."
+                    )
+                    correction_messages = list(getattr(self, "messages", [])) + [
+                        {"role": "assistant", "content": None, "tool_calls": [tool_call]},
+                        {"role": "tool", "tool_call_id": tool_call_id, "content": f"Error: {exc}"},
+                        {"role": "user", "content": correction_prompt},
+                    ]
+                    correction_resp = self.chat_completion(
+                        correction_messages,
+                        tools=getattr(self, "tools", None),
+                    )
+                    correction_msg = extract_message(correction_resp)
+                    new_calls = correction_msg.get("tool_calls") or []
+                    # Find the corrected call for this tool; fall back to original on mismatch.
+                    corrected = next(
+                        (c for c in new_calls if c.get("function", {}).get("name") == func_name),
+                        None,
+                    )
+                    if not corrected:
+                        self.logger.warning("correction attempt %d: model did not return a %s call", attempt + 1, func_name)
+                        break
+                    try:
+                        args = parse_tool_args(corrected.get("function", {}).get("arguments", {}))
+                    except json.JSONDecodeError:
+                        self.logger.warning("correction attempt %d: could not parse corrected args", attempt + 1)
+                        break
+                    # Apply aliases to the corrected args too.
+                    aliases = self._ARG_ALIASES.get(func_name, {})
+                    for wrong, correct in aliases.items():
+                        if wrong in args and correct not in args:
+                            args[correct] = args.pop(wrong)
+                    self.logger.tool("corrected args (attempt %d): %s(%s)", attempt + 1, func_name, args)
+                except Exception as exc:
+                    if not isinstance(exc, self._RECOVERABLE_EXCEPTIONS):
+                        self.logger.error("non-recoverable tool error %s → %s: %s", tool_call_id, func_name, exc)
+                        raise
+                    last_exc = exc
+                    result = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
+                    self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
+                    records.append({"name": func_name, "args": args, "ok": False, "error": str(exc)})
+                    status = "error"
+                    break
+
+            if last_exc is not None and status != "error":
+                # TypeError exhausted all retries.
+                result = (
+                    f"Error: wrong arguments for '{func_name}' after {self._MAX_ARG_RETRIES} correction "
+                    f"attempt(s): {last_exc}. Expected signature: {func_name}{sig}"
+                )
+                records.append({"name": func_name, "args": args, "ok": False, "error": str(last_exc)})
                 status = "error"
 
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result, "status": status})
