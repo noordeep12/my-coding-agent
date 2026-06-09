@@ -7,6 +7,21 @@ import httpx
 from pathlib import Path
 
 
+def _parse_tags_section(docstring: str) -> list[str]:
+    """Extract tags from a Google-style Tags: section (comma-separated on one line)."""
+    if not docstring:
+        return []
+    m = re.search(r"\bTags:\s*\n\s*(.+)", docstring)
+    if not m:
+        return []
+    return [t.strip().lower() for t in m.group(1).split(",") if t.strip()]
+
+
+def _strip_tags_section(docstring: str) -> str:
+    """Return the docstring with the Tags: section removed."""
+    return re.sub(r"\s*\bTags:\s*\n\s*.+", "", docstring, flags=re.DOTALL).strip()
+
+
 def _parse_args_section(docstring: str) -> dict[str, str]:
     """Extract {param: description} from a Google-style Args: section."""
     if not docstring:
@@ -45,8 +60,10 @@ def _parse_args_section(docstring: str) -> dict[str, str]:
 
 
 def _strip_args_section(docstring: str) -> str:
-    """Return the docstring with the Args: section removed (used as top-level description)."""
-    return re.sub(r"\s*\bArgs:\s*\n.*", "", docstring, flags=re.DOTALL).strip()
+    """Return the docstring with the Args: and Tags: sections removed (used as top-level description)."""
+    cleaned = re.sub(r"\s*\bArgs:\s*\n.*", "", docstring, flags=re.DOTALL)
+    cleaned = re.sub(r"\s*\bTags:\s*\n\s*.+", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
 
 
 def function_to_json(func) -> dict:
@@ -68,6 +85,7 @@ def function_to_json(func) -> dict:
 
     docstring = inspect.cleandoc(func.__doc__ or "")
     param_descriptions = _parse_args_section(docstring)
+    tags = _parse_tags_section(docstring)
     top_description = _strip_args_section(docstring)
 
     parameters = {}
@@ -97,6 +115,7 @@ def function_to_json(func) -> dict:
                 "required": required,
             },
         },
+        "tags": tags,
     }
 
 
@@ -117,6 +136,9 @@ class ToolsRegistry:
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
         Use for running tests, installing packages, git operations, or any shell task.
         The 'ok' field is true when exit_code is 0.
+
+        Tags:
+            shell, bash, execute, run, command, git, test, install, terminal
 
         Args:
             command: Shell command to run. Use absolute paths where possible.
@@ -151,6 +173,9 @@ class ToolsRegistry:
         """Return the full stored output for a previous tool call identified by tool_call_id.
         Use this when a bash result was summarized and you need the complete stdout/stderr.
 
+        Tags:
+            artifact, output, result, retrieve
+
         Args:
             tool_call_id: The tool_call_id from a previous bash call whose output was summarized.
                 Example: 'call_abc123'
@@ -164,6 +189,9 @@ class ToolsRegistry:
     def read_file(file_path: str) -> str:
         """Read and return the full contents of a file at the given file_path.
         Use to inspect source code, configs, or any text file before editing.
+
+        Tags:
+            file, filesystem, read, inspect, source, code, config
 
         Args:
             file_path: Absolute path to the file to read. Example: '/path/to/file.py'
@@ -179,6 +207,9 @@ class ToolsRegistry:
     def write_file(file_path: str, content: str) -> str:
         """Write content to a file at file_path, creating parent directories if needed.
         Use to create new files or overwrite existing ones.
+
+        Tags:
+            file, filesystem, write, create, edit, save
 
         Args:
             file_path: Absolute path where the file should be written.
@@ -197,6 +228,9 @@ class ToolsRegistry:
     def read_article(url: str) -> str:
         """Fetch a web page and return its content as clean markdown (max ~6 000 tokens).
         Use when the user provides a URL or link to an article, blog post, or documentation page.
+
+        Tags:
+            web, url, article, fetch, http, browse, documentation, link
 
         Args:
             url: Full URL of the web page to fetch. Example: 'https://example.com/article'

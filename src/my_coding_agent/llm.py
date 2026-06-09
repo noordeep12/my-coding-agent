@@ -18,6 +18,9 @@ OMLX_MODEL   = os.environ.get("OMLX_MODEL",   "Qwen3.6-35B-A3B-4bit")
 
 MAX_TOOL_OUTPUT_CHARS = 8_000
 
+# Tools always included regardless of routing decision.
+_BASELINE_TOOLS = {"bash", "read_file", "read_tool_artifact"}
+
 
 class LLM:
     def __init__(
@@ -102,6 +105,60 @@ class LLM:
                 self.logger.llm(f"Content: \n\n{content}\n")
         return resp
     
+    def route_tools(self, message: str, all_tools: list) -> list:
+        """Return the subset of all_tools relevant to message.
+
+        Phase 1 — keyword match against each tool's tags (zero cost).
+        Phase 2 — LLM fallback when phase 1 matches nothing outside the baseline.
+        Baseline tools (bash, read_file, read_tool_artifact) are always included.
+        """
+        if not all_tools:
+            return all_tools
+
+        text = message.lower()
+        baseline = [t for t in all_tools if t["function"]["name"] in _BASELINE_TOOLS]
+        non_baseline = [t for t in all_tools if t["function"]["name"] not in _BASELINE_TOOLS]
+
+        # Phase 1: keyword match on tags
+        keyword_matched = [
+            t for t in non_baseline
+            if any(tag in text for tag in t.get("tags", []))
+        ]
+
+        if keyword_matched:
+            selected = baseline + keyword_matched
+            names = [t["function"]["name"] for t in selected]
+            self.logger.tool(f"router phase-1 → {names}")
+            return selected
+
+        # Phase 2: LLM fallback
+        all_names = [t["function"]["name"] for t in all_tools]
+        routing_prompt = (
+            f"You are a tool router. Given the message below, return a JSON array of tool names "
+            f"from this list that are relevant: {all_names}.\n"
+            f"Return only a JSON array, nothing else. Return [] if no tools are needed.\n\n"
+            f"Message: {message}"
+        )
+        try:
+            resp = self.chat_completion(
+                [{"role": "user", "content": routing_prompt}], tools=[]
+            )
+            content = extract_message(resp).get("content", "") or ""
+            # Extract the JSON array from the response (model may wrap it in prose)
+            m = __import__("re").search(r"\[.*?\]", content, __import__("re").DOTALL)
+            routed_names = json.loads(m.group()) if m else []
+        except Exception as exc:
+            self.logger.warning(f"router phase-2 failed ({exc}), using all tools")
+            routed_names = all_names
+
+        # Keep baseline + whatever the LLM selected; filter to valid names only
+        valid = {t["function"]["name"] for t in all_tools}
+        routed_names = [n for n in routed_names if n in valid]
+        selected_names = set(routed_names) | _BASELINE_TOOLS
+        selected = [t for t in all_tools if t["function"]["name"] in selected_names]
+        self.logger.tool(f"router phase-2 → {[t['function']['name'] for t in selected]}")
+        return selected
+
     # Exceptions the LLM can recover from — returned as error content, not re-raised.
     # Anything not in this tuple hard-stops the agent loop via re-raise.
     _RECOVERABLE_EXCEPTIONS = (

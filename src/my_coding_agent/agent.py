@@ -216,7 +216,13 @@ class Agent(LLM):
                         self.context_reset_threshold * 100,
                     )
 
-            resp = self.chat_completion(self.messages, tools=self.tools)
+            # Route: pick the relevant subset of tools for this step's context.
+            last_user_content = next(
+                (m.get("content", "") or "" for m in reversed(self.messages) if m.get("role") == "user"),
+                "",
+            )
+            routed_tools = self.route_tools(last_user_content, self.tools)
+            resp = self.chat_completion(self.messages, tools=routed_tools)
             message = extract_message(resp)
             if not message:
                 self.logger.error("Step %d: API returned empty message — skipping step", self.step_num + 1)
