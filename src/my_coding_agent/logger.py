@@ -462,13 +462,12 @@ def print_run_summary(
         comp_vals   = [u["completion"] for u in usage]
         total_vals  = [u["total"]      for u in usage]
         # Build yticks from all unique data values, sorted
-        all_vals = sorted(set(prompt_vals + comp_vals + total_vals))
+        all_vals = sorted(set(prompt_vals + comp_vals))
         plt.clf()
         plt.plot_size(chart_w, chart_h)
         plt.theme("dark")
-        plt.plot(calls_x, prompt_vals, label="prompt",     color="cyan+",   marker="braille")
-        plt.plot(calls_x, comp_vals,   label="completion", color="green+",  marker="braille")
-        plt.plot(calls_x, total_vals,  label="total",      color="yellow+", marker="braille")
+        plt.plot(calls_x, prompt_vals, label="prompt",     color="cyan+",  marker="braille")
+        plt.plot(calls_x, comp_vals,   label="completion", color="green+", marker="braille")
         plt.xticks(calls_x)
         plt.yticks(all_vals, [f"{v:,}" for v in all_vals])
         plt.xlabel("LLM Call #")
