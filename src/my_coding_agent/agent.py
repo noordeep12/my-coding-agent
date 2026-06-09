@@ -51,7 +51,6 @@ class Agent(LLM):
         # run stats — reset at the start of each run()
         self.step_num = 0
         self.stop_reason = "max_steps"
-        self.total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.tool_records: list = []
         self.handoff_records: list = []  # one entry per context reset that fired
         self.elapsed_seconds: float = 0.0
@@ -94,20 +93,22 @@ class Agent(LLM):
             if msg.get("role") == "assistant" and msg.get("content"):
                 last_message = msg["content"]
                 break
+        calls = self.llm_calls
         print_run_summary(
             steps=self.step_num + 1,
             max_steps=max_steps,
             stop_reason=self.stop_reason,
-            prompt_tokens=self.last_prompt_tokens,
-            completion_tokens=self.total_usage["completion_tokens"],
-            total_tokens=self.total_usage["total_tokens"],
+            prompt_tokens=sum(c["prompt"] for c in calls),
+            completion_tokens=sum(c["completion"] for c in calls),
+            total_tokens=sum(c["total"] for c in calls),
+            last_prompt_tokens=self.last_prompt_tokens,
             context_window=self.context_window,
             elapsed_seconds=self.elapsed_seconds,
             tool_records=self.tool_records,
             handoff_records=self.handoff_records,
             agent_name=self.label,
             last_message=last_message,
-            llm_calls=self.llm_calls,
+            llm_calls=calls,
             model=self.model,
             session_id=self.session_id,
             started_at=self.started_at,
@@ -129,7 +130,11 @@ class Agent(LLM):
             "steps": self.step_num + 1,
             "max_steps": max_steps,
             "stop_reason": self.stop_reason,
-            "total_usage": self.total_usage,
+            "total_usage": {
+                "prompt_tokens":     sum(c["prompt"]     for c in self.llm_calls),
+                "completion_tokens": sum(c["completion"] for c in self.llm_calls),
+                "total_tokens":      sum(c["total"]      for c in self.llm_calls),
+            },
             "context_window": self.context_window,
             "context_reset_threshold": self.context_reset_threshold,
             "tool_records": self.tool_records,
@@ -150,11 +155,10 @@ class Agent(LLM):
         # reset stats for this run
         self.step_num = 0
         self.stop_reason = "max_steps"
-        self.total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.tool_records = []
         self.handoff_records = []
         self.llm_calls = []
-        self.last_prompt_tokens = 0  # actual value from last API response
+        self.last_prompt_tokens = 0  # prompt tokens from the last main-step call (used for context % check)
         t_start = time.monotonic()
 
         self.logger.info("Agent run started with max_steps: %d", max_steps)
@@ -243,14 +247,12 @@ class Agent(LLM):
             for tool_message in (tool_messages or []):
                 self.add_message(tool_message)
 
-            # Track usage — log per-step actuals, not cumulative sums
+            # Track usage — update last_prompt_tokens for context-window check next step
             usage = extract_usage(resp)
             step_prompt     = usage.get("prompt_tokens", 0)
             step_completion = usage.get("completion_tokens", 0)
             step_total      = usage.get("total_tokens", 0)
             self.last_prompt_tokens = step_prompt
-            for key in self.total_usage:
-                self.total_usage[key] += usage.get(key, 0)
             ctx = self.context_window
             ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
             self.logger.info(

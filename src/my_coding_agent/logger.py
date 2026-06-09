@@ -302,6 +302,7 @@ def print_run_summary(
     handoff_records: Optional[list] = None,
     agent_name: str = "Agent",
     last_message: str = "",
+    last_prompt_tokens: int = 0,
     llm_calls: Optional[list] = None,
     model: str = "",
     session_id: str = "",
@@ -429,7 +430,7 @@ def print_run_summary(
         return rows or [empty_row()]
 
     # ── computed values ────────────────────────────────────────────────────────
-    ctx_pct     = f" ({prompt_tokens / context_window * 100:.1f}% of {context_window:,})" if context_window and prompt_tokens else ""
+    ctx_pct     = f" (last call: {last_prompt_tokens / context_window * 100:.1f}% of ctx)" if context_window and last_prompt_tokens else ""
     mins, secs  = divmod(elapsed_seconds, 60)
     elapsed_str = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
     tok_per_sec = f"{completion_tokens / elapsed_seconds:.1f} tok/s" if elapsed_seconds > 0 else "—"
