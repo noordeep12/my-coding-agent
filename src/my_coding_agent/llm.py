@@ -72,7 +72,7 @@ class LLM:
         self.logger.api(f"Context window for {self.model}: {self.context_window} tokens")
         return models
 
-    def chat_completion(self, messages, tools=None) -> Response:
+    def chat_completion(self, messages, tools=None, kind: str = "main") -> Response:
         self.logger.api(f"→ POST {self.api_url}/chat/completions")
         self.logger.debug(f"Request body: {json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4)}")
 
@@ -93,6 +93,7 @@ class LLM:
         usage = data.get("usage", {})
         self.llm_calls.append({
             "call":       len(self.llm_calls) + 1,
+            "kind":       kind,
             "prompt":     usage.get("prompt_tokens", 0),
             "completion": usage.get("completion_tokens", 0),
             "total":      usage.get("total_tokens", 0),
@@ -150,7 +151,7 @@ class LLM:
         )
         try:
             resp = self.chat_completion(
-                [{"role": "user", "content": routing_prompt}], tools=[]
+                [{"role": "user", "content": routing_prompt}], tools=[], kind="router"
             )
             content = extract_message(resp).get("content", "") or ""
             # Extract the JSON array from the response (model may wrap it in prose)
@@ -219,7 +220,7 @@ class LLM:
             f"Output:\n{json.dumps(artifact, indent=2)[:12_000]}"
         )
         try:
-            resp = self.chat_completion([{"role": "user", "content": prompt}], tools=[])
+            resp = self.chat_completion([{"role": "user", "content": prompt}], tools=[], kind="summarizer")
             summary = extract_message(resp).get("content") or ""
         except Exception as exc:
             self.logger.warning(f"artifact summarization failed: {exc}")
@@ -332,7 +333,7 @@ class LLM:
                 f"Please call '{func_name}' again with the correct arguments."
             )},
         ]
-        correction_resp = self.chat_completion(correction_messages, tools=getattr(self, "tools", None))
+        correction_resp = self.chat_completion(correction_messages, tools=getattr(self, "tools", None), kind="correction")
         corrected = next(
             (c for c in (extract_message(correction_resp).get("tool_calls") or [])
              if c.get("function", {}).get("name") == func_name),

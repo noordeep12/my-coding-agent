@@ -456,32 +456,62 @@ def print_run_summary(
         if len(usage) < 1:
             return [metric_row1("TOKEN CHART", "no data")]
         import plotext as plt
+
+        _KIND_LABEL = {
+            "router":     "router",
+            "summarizer": "summarizer",
+            "correction": "correction",
+            "handoff":    "handoff",
+        }
+
+        main_calls     = [u for u in usage if u.get("kind", "main") == "main"]
+        internal_calls = [u for u in usage if u.get("kind", "main") != "main"]
+
+        if not main_calls:
+            return [metric_row1("TOKEN CHART", "no main-agent calls recorded")]
+
+        # Sequential index (1-based) among main calls only
+        main_x      = list(range(1, len(main_calls) + 1))
+        prompt_vals = [u["prompt"]     for u in main_calls]
+        comp_vals   = [u["completion"] for u in main_calls]
+        all_vals    = sorted(set(prompt_vals + comp_vals))
+
         chart_w = W - 6
         chart_h = 20
-        calls_x     = [u["call"]       for u in usage]
-        prompt_vals = [u["prompt"]     for u in usage]
-        comp_vals   = [u["completion"] for u in usage]
-        total_vals  = [u["total"]      for u in usage]
-        # Build yticks from all unique data values, sorted
-        all_vals = sorted(set(prompt_vals + comp_vals))
         plt.clf()
         plt.plot_size(chart_w, chart_h)
         plt.theme("dark")
-        plt.plot(calls_x, prompt_vals, label="prompt",     color="cyan+",  marker="braille")
-        plt.plot(calls_x, comp_vals,   label="completion", color="green+", marker="braille")
-        plt.xticks(calls_x)
+        plt.plot(main_x, prompt_vals, label="prompt",     color="cyan+",  marker="braille")
+        plt.plot(main_x, comp_vals,   label="completion", color="green+", marker="braille")
+        plt.xticks(main_x)
         plt.yticks(all_vals, [f"{v:,}" for v in all_vals])
-        plt.xlabel("LLM Call #")
+        plt.xlabel("Main LLM Call #")
         plt.ylabel("Tokens")
-        plt.title("Token consumption per LLM call")
+        plt.title("Token consumption per main agent call")
         chart_str = plt.build()
+
         rows: List[str] = []
         for line in chart_str.splitlines():
-            if not ansi_re.sub("", line).strip():  # skip blank lines (plotext padding)
+            if not ansi_re.sub("", line).strip():
                 continue
             visible = len(ansi_re.sub("", line))
             pad = (W - 4) - visible
             rows.append(BORDER + "║  " + line + " " * max(pad, 0) + "  " + BORDER + "║" + R)
+
+        # Annotation row for internal (harness) calls
+        if internal_calls:
+            # Group by kind, list call numbers
+            from collections import defaultdict
+            by_kind: dict = defaultdict(list)
+            for c in internal_calls:
+                by_kind[c.get("kind", "internal")].append(str(c["call"]))
+            parts = [f"{_KIND_LABEL.get(k, k)}: #{', #'.join(nums)}" for k, nums in by_kind.items()]
+            note = "harness calls (excluded from chart) — " + "  ·  ".join(parts)
+            note_vis = f"  {note}"
+            pad = W - len(note_vis)
+            ANNOT = Fore.YELLOW + Style.DIM
+            rows.append(BORDER + "║" + f"  {ANNOT}{note}{R}" + " " * max(pad, 0) + BORDER + "║" + R)
+
         return rows or [empty_row()]
 
     def handoff_rows(index: int, h: dict) -> List[str]:

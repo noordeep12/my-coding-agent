@@ -74,7 +74,7 @@ class Agent(LLM):
         """Ask the LLM to summarize current state, persist handoff, return it."""
         handoff_messages = self.messages + [{"role": "user", "content": _HANDOFF_PROMPT}]
         self.logger.info("Generating context handoff summary...")
-        resp = self.chat_completion(handoff_messages, tools=[])
+        resp = self.chat_completion(handoff_messages, tools=[], kind="handoff")
         content = extract_message(resp).get("content", "") or ""
         handoff = ContextHandoff(
             agent_label=self.label,
