@@ -461,19 +461,24 @@ def print_run_summary(
         prompt_vals = [u["prompt"]     for u in usage]
         comp_vals   = [u["completion"] for u in usage]
         total_vals  = [u["total"]      for u in usage]
+        # Build yticks from all unique data values, sorted
+        all_vals = sorted(set(prompt_vals + comp_vals + total_vals))
         plt.clf()
         plt.plot_size(chart_w, chart_h)
         plt.theme("dark")
-        plt.plot(steps_x, prompt_vals, label="prompt",     color="cyan+",   marker="dot")
-        plt.plot(steps_x, comp_vals,   label="completion", color="green+",  marker="dot")
-        plt.plot(steps_x, total_vals,  label="total",      color="yellow+", marker="dot")
+        plt.plot(steps_x, prompt_vals, label="prompt",     color="cyan+",   marker="braille")
+        plt.plot(steps_x, comp_vals,   label="completion", color="green+",  marker="braille")
+        plt.plot(steps_x, total_vals,  label="total",      color="yellow+", marker="braille")
         plt.xticks(steps_x)
+        plt.yticks(all_vals, [f"{v:,}" for v in all_vals])
         plt.xlabel("Step")
         plt.ylabel("Tokens")
         plt.title("Token consumption per step")
         chart_str = plt.build()
         rows: List[str] = []
         for line in chart_str.splitlines():
+            if not ansi_re.sub("", line).strip():  # skip blank lines (plotext padding)
+                continue
             visible = len(ansi_re.sub("", line))
             pad = (W - 4) - visible
             rows.append(BORDER + "║  " + line + " " * max(pad, 0) + "  " + BORDER + "║" + R)
@@ -549,10 +554,10 @@ def print_run_summary(
         metric_row1("PROMPT",     f"{prompt_tokens:,} tok{ctx_pct}"),
         metric_row1("COMPLETION", f"{completion_tokens:,} tok"),
         metric_row1("TOTAL",      f"{total_tokens:,} tok"),
-        empty_row(), mid, empty_row(),
+        mid,
         # ── token chart ───────────────────────────────────────────────────────
         *token_chart_rows(),
-        empty_row(), mid, empty_row(),
+        mid,
         metric_row1("TOOL CALLS", tool_count),
     ]
 
