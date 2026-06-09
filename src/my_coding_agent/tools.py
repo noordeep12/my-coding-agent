@@ -171,13 +171,13 @@ class ToolsRegistry:
 
     def read_tool_artifact(self, tool_call_id: str) -> str:
         """Return the full stored output for a previous tool call identified by tool_call_id.
-        Use this when a bash result was summarized and you need the complete stdout/stderr.
+        Use this when a bash or read_file result was summarized and you need the complete content.
 
         Tags:
             artifact, output, result, retrieve
 
         Args:
-            tool_call_id: The tool_call_id from a previous bash call whose output was summarized.
+            tool_call_id: The tool_call_id from a previous call whose output was summarized.
                 Example: 'call_abc123'
         """
         artifact = self._artifacts.get(tool_call_id)
@@ -185,8 +185,7 @@ class ToolsRegistry:
             return f"Error: no artifact found for tool_call_id '{tool_call_id}'"
         return json.dumps(artifact) if not isinstance(artifact, str) else artifact
 
-    @staticmethod
-    def read_file(file_path: str) -> str:
+    def read_file(self, file_path: str) -> "str | tuple[None, dict]":
         """Read and return the full contents of a file at the given file_path.
         Use to inspect source code, configs, or any text file before editing.
 
@@ -197,11 +196,14 @@ class ToolsRegistry:
             file_path: Absolute path to the file to read. Example: '/path/to/file.py'
         """
         try:
-            return Path(file_path).read_text()
+            content = Path(file_path).read_text()
         except FileNotFoundError:
             return f"Error: file not found: {file_path}"
         except Exception as e:
             return f"Error reading {file_path}: {e}"
+        if len(content) > ARTIFACT_THRESHOLD:
+            return None, {"file_path": file_path, "content": content, "size": len(content)}
+        return content
 
     @staticmethod
     def write_file(file_path: str, content: str) -> str:

@@ -214,12 +214,15 @@ class LLM:
             summary = extract_message(resp).get("content") or ""
         except Exception as exc:
             self.logger.warning(f"artifact summarization failed: {exc}")
-            summary = json.dumps({
-                "exit_code": artifact.get("exit_code"),
-                "ok": artifact.get("ok"),
-                "stdout_chars": len(artifact.get("stdout", "")),
-                "stderr_chars": len(artifact.get("stderr", "")),
-            })
+            if "content" in artifact:
+                summary = json.dumps({"file_path": artifact.get("file_path"), "size": artifact.get("size")})
+            else:
+                summary = json.dumps({
+                    "exit_code": artifact.get("exit_code"),
+                    "ok": artifact.get("ok"),
+                    "stdout_chars": len(artifact.get("stdout", "")),
+                    "stderr_chars": len(artifact.get("stderr", "")),
+                })
         return (
             summary.strip()
             + f'\n[Full output stored — call read_tool_artifact(tool_call_id="{tool_call_id}") to retrieve it.]'
