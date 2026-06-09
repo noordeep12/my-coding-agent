@@ -302,7 +302,7 @@ def print_run_summary(
     handoff_records: Optional[list] = None,
     agent_name: str = "Agent",
     last_message: str = "",
-    step_usage: Optional[list] = None,
+    llm_calls: Optional[list] = None,
     model: str = "",
     session_id: str = "",
     started_at: str = "",
@@ -451,13 +451,13 @@ def print_run_summary(
     ansi_re  = re.compile(r"\x1b\[[0-9;]*m")
 
     def token_chart_rows() -> List[str]:
-        usage = step_usage or []
+        usage = llm_calls or []
         if len(usage) < 1:
-            return [metric_row1("TOKEN CHART", "no step data")]
+            return [metric_row1("TOKEN CHART", "no data")]
         import plotext as plt
         chart_w = W - 6
         chart_h = 20
-        steps_x     = [u["step"]       for u in usage]
+        calls_x     = [u["call"]       for u in usage]
         prompt_vals = [u["prompt"]     for u in usage]
         comp_vals   = [u["completion"] for u in usage]
         total_vals  = [u["total"]      for u in usage]
@@ -466,14 +466,14 @@ def print_run_summary(
         plt.clf()
         plt.plot_size(chart_w, chart_h)
         plt.theme("dark")
-        plt.plot(steps_x, prompt_vals, label="prompt",     color="cyan+",   marker="braille")
-        plt.plot(steps_x, comp_vals,   label="completion", color="green+",  marker="braille")
-        plt.plot(steps_x, total_vals,  label="total",      color="yellow+", marker="braille")
-        plt.xticks(steps_x)
+        plt.plot(calls_x, prompt_vals, label="prompt",     color="cyan+",   marker="braille")
+        plt.plot(calls_x, comp_vals,   label="completion", color="green+",  marker="braille")
+        plt.plot(calls_x, total_vals,  label="total",      color="yellow+", marker="braille")
+        plt.xticks(calls_x)
         plt.yticks(all_vals, [f"{v:,}" for v in all_vals])
-        plt.xlabel("Step")
+        plt.xlabel("LLM Call #")
         plt.ylabel("Tokens")
-        plt.title("Token consumption per step")
+        plt.title("Token consumption per LLM call")
         chart_str = plt.build()
         rows: List[str] = []
         for line in chart_str.splitlines():

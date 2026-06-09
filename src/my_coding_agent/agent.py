@@ -107,7 +107,7 @@ class Agent(LLM):
             handoff_records=self.handoff_records,
             agent_name=self.label,
             last_message=last_message,
-            step_usage=self.step_usage,
+            llm_calls=self.llm_calls,
             model=self.model,
             session_id=self.session_id,
             started_at=self.started_at,
@@ -134,7 +134,7 @@ class Agent(LLM):
             "context_reset_threshold": self.context_reset_threshold,
             "tool_records": self.tool_records,
             "handoff_records": self.handoff_records,
-            "step_usage": self.step_usage,
+            "llm_calls": self.llm_calls,
             "last_message": last_message,
         }
         out = Path(".my_coding_agent") / self.session_id / "session_data.json"
@@ -153,7 +153,7 @@ class Agent(LLM):
         self.total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.tool_records = []
         self.handoff_records = []
-        self.step_usage: list[dict] = []
+        self.llm_calls = []
         self.last_prompt_tokens = 0  # actual value from last API response
         t_start = time.monotonic()
 
@@ -251,13 +251,6 @@ class Agent(LLM):
             self.last_prompt_tokens = step_prompt
             for key in self.total_usage:
                 self.total_usage[key] += usage.get(key, 0)
-            self.step_usage.append({
-                "step": self.step_num + 1,
-                "prompt": step_prompt,
-                "completion": step_completion,
-                "total": step_total,
-            })
-
             ctx = self.context_window
             ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
             self.logger.info(

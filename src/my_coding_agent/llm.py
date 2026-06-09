@@ -39,6 +39,7 @@ class LLM:
         self.available_models()
         self._session_log_path: str | None = None  # set by Agent after session dir is created
         self.tool_artifacts: dict = {}
+        self.llm_calls: list[dict] = []  # one entry per chat_completion call, in order
         self._before_hook = before_tool_call or (lambda name, args: args)
         self._after_hook = after_tool_call or (lambda name, args, result: result)
 
@@ -88,6 +89,14 @@ class LLM:
                 f"Body prefix: {resp.text[:200]!r}"
             ) from exc
         self.logger.debug(f"Response body: {json.dumps(data, indent=4)}")
+
+        usage = data.get("usage", {})
+        self.llm_calls.append({
+            "call":       len(self.llm_calls) + 1,
+            "prompt":     usage.get("prompt_tokens", 0),
+            "completion": usage.get("completion_tokens", 0),
+            "total":      usage.get("total_tokens", 0),
+        })
 
         try:
             choices = data.get("choices", [])
