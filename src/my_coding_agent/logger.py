@@ -457,19 +457,17 @@ def print_run_summary(
         import plotext as plt
         chart_w = W - 6
         chart_h = 20
-        labels      = [str(u["step"]) for u in usage]
+        steps_x     = [u["step"]       for u in usage]
         prompt_vals = [u["prompt"]     for u in usage]
         comp_vals   = [u["completion"] for u in usage]
+        total_vals  = [u["total"]      for u in usage]
         plt.clf()
         plt.plot_size(chart_w, chart_h)
         plt.theme("dark")
-        if len(usage) == 1:
-            plt.bar(labels * 2, prompt_vals * 2, label="prompt",     color="cyan+")
-            plt.bar(labels * 2, comp_vals   * 2, label="completion", color="green+")
-        else:
-            plt.multiple_bar(labels, [prompt_vals, comp_vals],
-                             labels=["prompt", "completion"],
-                             color=["cyan+", "green+"])
+        plt.plot(steps_x, prompt_vals, label="prompt",     color="cyan+",   marker="dot")
+        plt.plot(steps_x, comp_vals,   label="completion", color="green+",  marker="dot")
+        plt.plot(steps_x, total_vals,  label="total",      color="yellow+", marker="dot")
+        plt.xticks(steps_x)
         plt.xlabel("Step")
         plt.ylabel("Tokens")
         plt.title("Token consumption per step")
