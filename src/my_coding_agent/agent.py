@@ -203,6 +203,8 @@ class Agent(LLM):
                         tools=self.tools,
                         label=f"{self.label} (cont.)",
                         context_reset_threshold=self.context_reset_threshold,
+                        before_tool_call=self._before_hook,
+                        after_tool_call=self._after_hook,
                     )
                     remaining_steps = max_steps - self.step_num
                     return continuation.run(max_steps=max(remaining_steps, 1))

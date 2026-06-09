@@ -13,8 +13,7 @@ dependencies = [
     "colorama>=0.4.6",
     "html2text>=2025.4.15",
     "httpx>=0.28.1",
-    "ipdb>=0.13.13",
-    "pydantic>=2.13.4",
+    "python-dotenv>=1.0",
     "rich>=15.0.0",
 ]
 

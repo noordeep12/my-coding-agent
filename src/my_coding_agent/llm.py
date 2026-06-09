@@ -1,17 +1,20 @@
 import httpx
 import inspect
 import json
+import os
 import subprocess
 import time
 
+from dotenv import load_dotenv
 from .logger import get_logger
 from .tools import ToolsRegistry
 from .utils import extract_message, parse_tool_args
 from httpx import Response
 
-OMLX_API_URL = "http://127.0.0.1:8321/v1"
-OMLX_API_KEY = "changeme"
-OMLX_MODEL = "Qwen3.6-35B-A3B-4bit"
+load_dotenv()
+OMLX_API_URL = os.environ.get("OMLX_API_URL", "http://127.0.0.1:8321/v1")
+OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "changeme")
+OMLX_MODEL   = os.environ.get("OMLX_MODEL",   "Qwen3.6-35B-A3B-4bit")
 
 MAX_TOOL_OUTPUT_CHARS = 8_000
 
@@ -215,17 +218,23 @@ class LLM:
         """Runs after every tool dispatch: apply the user hook to the result."""
         return self._after_hook(func_name, args, result)
 
-    def _dispatch_tool(self, registry: ToolsRegistry, func_name: str, args: dict, tool_call_id: str) -> str:
-        """Call func_name(**args), handle artifact tuples, coerce to string, and validate output."""
+    def _dispatch_tool(self, registry: ToolsRegistry, func_name: str, args: dict, tool_call_id: str) -> tuple[str, bool, bool]:
+        """Call func_name(**args), handle artifact tuples, coerce to string, and validate output.
+
+        Returns (result, is_artifact, is_truncated).
+        """
         result = getattr(registry, func_name)(**args)
-        artifact = None
-        if isinstance(result, tuple) and len(result) == 2:
+        is_artifact = isinstance(result, tuple) and len(result) == 2
+        if is_artifact:
             _, artifact = result
             self.tool_artifacts[tool_call_id] = artifact
             result = self._summarize_artifact(artifact, func_name, tool_call_id)
         if not isinstance(result, str):
             result = str(result)
-        return self._validate_tool_output(result, func_name, is_summary=(artifact is not None))
+        pre_len = len(result)
+        result = self._validate_tool_output(result, func_name, is_summary=is_artifact)
+        is_truncated = not is_artifact and len(result) < pre_len
+        return result, is_artifact, is_truncated
 
     def _correct_args(
         self, func_name: str, args: dict, exc: Exception, sig, tool_call: dict, tool_call_id: str, attempt: int
@@ -266,15 +275,15 @@ class LLM:
             self.logger.error(f"not found: '{func_name}' is not registered")
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
-            return err, "error", {"name": func_name, "args": args, "ok": False, "error": f"tool '{func_name}' not found"}
+            return err, "error", {"name": func_name, "args": args, "ok": False, "error": f"tool '{func_name}' not found", "tool_call_id": tool_call_id, "artifact": False, "truncated": False}
 
         sig = inspect.signature(getattr(ToolsRegistry, func_name))
 
         for attempt in range(self._MAX_ARG_RETRIES + 1):
             try:
-                result = self._dispatch_tool(registry, func_name, args, tool_call_id)
+                result, is_artifact, is_truncated = self._dispatch_tool(registry, func_name, args, tool_call_id)
                 self.logger.tool(f"{tool_call_id} → {func_name}: {result}")
-                return result, "success", {"name": func_name, "args": args, "ok": True}
+                return result, "success", {"name": func_name, "args": args, "ok": True, "tool_call_id": tool_call_id, "artifact": is_artifact, "truncated": is_truncated}
 
             except TypeError as wrong_args_exc: # wrong arguments — attempt correction with the LLM
                 self.logger.error(f"wrong args {tool_call_id} → {func_name} (attempt {attempt + 1}/{self._MAX_ARG_RETRIES}): {wrong_args_exc}")
@@ -282,7 +291,7 @@ class LLM:
                 corrected_args = None if retries_exhausted else self._correct_args(func_name, args, wrong_args_exc, sig, tool_call, tool_call_id, attempt)
                 if corrected_args is None:
                     err = f"Error: wrong arguments for '{func_name}' after {attempt + 1} attempt(s): {wrong_args_exc}. Expected: {func_name}{sig}"
-                    return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(wrong_args_exc)}
+                    return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(wrong_args_exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False}
                 args = corrected_args
 
             except Exception as exc: # other errors — log and return as error result (don't re-raise, to allow the agent to keep going)
@@ -291,7 +300,7 @@ class LLM:
                     raise
                 self.logger.error(f"error {tool_call_id} → {func_name}: {exc}")
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
-                return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc)}
+                return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False}
 
     def execute_tool_calls(self, message) -> tuple[list, list]:
         """Dispatch all tool calls in message, returning (tool_messages, call_records).
