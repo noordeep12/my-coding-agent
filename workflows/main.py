@@ -19,8 +19,6 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.shortcuts import checkboxlist_dialog
-from prompt_toolkit.styles import Style
 
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
@@ -64,56 +62,13 @@ def _system_prompt(tools: list) -> str:
 
 _HISTORY_FILE = Path.home() / ".my_coding_agent_history"
 
-_DIALOG_STYLE = Style.from_dict({
-    "dialog":             "bg:#1e1e2e",
-    "dialog.body":        "bg:#1e1e2e fg:#cdd6f4",
-    "dialog shadow":      "bg:#11111b",
-    "dialog frame.label": "fg:#89b4fa bold",
-    "checkbox":           "fg:#cdd6f4",
-    "checkbox-selected":  "fg:#a6e3a1 bold",
-    "button":             "bg:#313244 fg:#cdd6f4",
-    "button.focused":     "bg:#89b4fa fg:#1e1e2e bold",
-})
 
-
-def _all_registry_tools() -> list:
-    """Return tool dicts for every public callable on ToolsRegistry, in definition order."""
+def _all_tools() -> list:
     names = [
         name for name, _ in inspect.getmembers(ToolsRegistry, predicate=inspect.isfunction)
         if not name.startswith("_")
     ]
-    return [(name, getattr(ToolsRegistry, name)) for name in names]
-
-
-def _select_tools() -> list:
-    """Show a checkbox dialog listing all ToolsRegistry tools, all pre-selected.
-
-    Returns a list of tool definition dicts for the selected tools.
-    Falls back to all tools if the dialog is cancelled or the terminal is non-interactive.
-    """
-    registry_tools = _all_registry_tools()
-    values = [
-        (name, f"{name}  —  {(inspect.getdoc(fn) or '').splitlines()[0]}")
-        for name, fn in registry_tools
-    ]
-    all_names = [name for name, _ in values]
-
-    try:
-        selected = checkboxlist_dialog(
-            title="Select tools",
-            text="Space to toggle  ·  Tab to switch focus  ·  Enter to confirm",
-            values=values,
-            default_values=all_names,
-            style=_DIALOG_STYLE,
-        ).run()
-    except Exception:
-        selected = None
-
-    if selected is None:  # cancelled — use all
-        selected = all_names
-
-    tool_map = {name: fn for name, fn in registry_tools}
-    return [tool(tool_map[name]) for name in selected]
+    return [tool(getattr(ToolsRegistry, name)) for name in names]
 
 
 def _read_interactive_prompt() -> str:
@@ -226,9 +181,7 @@ def main(prompt, interactive, discover, max_steps, analyze):
 
     # ── step 2: main agent ─────────────────────────────────────────────────────
     click.secho("\n● Main Agent", fg="cyan", bold=True, err=True)
-    tools = _select_tools()
-    if not tools:
-        click.secho("No tools selected — agent will run without tools.", fg="yellow", err=True)
+    tools = _all_tools()
 
     agent = Agent(
         messages=[
