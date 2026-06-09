@@ -50,7 +50,7 @@ class LLM:
         resp = self.session.get(self.api_url + "/models")
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
-        self.logger.api("Models: %s", models)
+        self.logger.api(f"Models: {models}")
         DEFAULT_CONTEXT_WINDOW = 131_072  # 128k fallback
         self.context_window = DEFAULT_CONTEXT_WINDOW
         for m in data:
@@ -62,18 +62,18 @@ class LLM:
                     or DEFAULT_CONTEXT_WINDOW
                 )
                 break
-        self.logger.api("Context window for %s: %d tokens", self.model, self.context_window)
+        self.logger.api(f"Context window for {self.model}: {self.context_window} tokens")
         return models
 
     def chat_completion(self, messages, tools=None) -> Response:
-        self.logger.api("→ POST %s", self.api_url + "/chat/completions")
-        self.logger.debug("Request body: %s", json.dumps({"model": self.model, "messages": messages, "tools": tools or []}, indent=4))
+        self.logger.api(f"→ POST {self.api_url}/chat/completions")
+        self.logger.debug(f"Request body: {json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4)}")
 
         resp = self.session.post(
             self.api_url + "/chat/completions",
             json={"model": self.model, "messages": messages, "tools": tools or []},
         )
-        self.logger.api("← %s (%d bytes)", resp.status_code, len(resp.content))
+        self.logger.api(f"← {resp.status_code} ({len(resp.content)} bytes)")
         try:
             data = resp.json()
         except Exception as exc:
@@ -81,12 +81,12 @@ class LLM:
                 f"API returned non-JSON response (HTTP {resp.status_code}): {exc}. "
                 f"Body prefix: {resp.text[:200]!r}"
             ) from exc
-        self.logger.debug("Response body: %s", json.dumps(data, indent=4))
+        self.logger.debug(f"Response body: {json.dumps(data, indent=4)}")
 
         try:
             choices = data.get("choices", [])
         except Exception as exc:
-            self.logger.error("Failed to parse choices: %s", exc)
+            self.logger.error(f"Failed to parse choices: {exc}")
             choices = []
 
         for choice in choices:
@@ -94,9 +94,9 @@ class LLM:
             reasoning = message.get("reasoning_content") or ""
             content   = message.get("content") or ""
             if reasoning:
-                self.logger.llm("Reasoning: \n\n%s\n", reasoning)
+                self.logger.llm(f"Reasoning: \n\n{reasoning}\n")
             if content:
-                self.logger.llm("Content: \n\n%s\n", content)
+                self.logger.llm(f"Content: \n\n{content}\n")
         return resp
     
     # Exceptions the LLM can recover from — returned as error content, not re-raised.
@@ -129,10 +129,7 @@ class LLM:
                 if self._session_log_path
                 else ""
             )
-            self.logger.warning(
-                "tool output truncated: %s returned %d chars (limit %d)",
-                func_name, len(result), MAX_TOOL_OUTPUT_CHARS,
-            )
+            self.logger.warning(f"tool output truncated: {func_name} returned {len(result)} chars (limit {MAX_TOOL_OUTPUT_CHARS})")
             result = (
                 result[:MAX_TOOL_OUTPUT_CHARS]
                 + f"\n[output truncated at {MAX_TOOL_OUTPUT_CHARS} chars —"
@@ -156,7 +153,7 @@ class LLM:
             resp = self.chat_completion([{"role": "user", "content": prompt}], tools=[])
             summary = extract_message(resp).get("content") or ""
         except Exception as exc:
-            self.logger.warning("artifact summarization failed: %s", exc)
+            self.logger.warning(f"artifact summarization failed: {exc}")
             summary = json.dumps({
                 "exit_code": artifact.get("exit_code"),
                 "ok": artifact.get("ok"),
@@ -178,22 +175,22 @@ class LLM:
 
         tool_type = tool_call.get("type")
         if tool_type is None:
-            self.logger.warning("skip %s — malformed tool call: missing 'type' field", tool_call_id)
+            self.logger.warning(f"skip {tool_call_id} — malformed tool call: missing 'type' field")
             return tool_call_id, None, None, "Error: malformed tool call — missing 'type' field"
         if tool_type != "function":
-            self.logger.warning("skip %s — type '%s' not supported", tool_call_id, tool_type)
+            self.logger.warning(f"skip {tool_call_id} — type '{tool_type}' not supported")
             return tool_call_id, None, None, f"Error: tool type '{tool_type}' is not supported"
 
         func_block = tool_call.get("function")
         func_name = func_block.get("name") if func_block else None
         if not func_name:
-            self.logger.warning("skip %s — malformed tool call: missing 'function.name'", tool_call_id)
+            self.logger.warning(f"skip {tool_call_id} — malformed tool call: missing 'function.name'")
             return tool_call_id, None, None, "Error: malformed tool call — missing 'function.name'"
 
         try:
             args = parse_tool_args(func_block.get("arguments", {}))
         except json.JSONDecodeError as exc:
-            self.logger.error("malformed args %s → %s: %s", tool_call_id, func_name, exc)
+            self.logger.error(f"malformed args {tool_call_id} → {func_name}: {exc}")
             return tool_call_id, func_name, None, f"Error: could not parse tool arguments as JSON: {exc}"
 
         return tool_call_id, func_name, args, None
@@ -202,7 +199,7 @@ class LLM:
         """Remap known wrong parameter names to their correct names for func_name."""
         for wrong, correct in self._ARG_ALIASES.get(func_name, {}).items():
             if wrong in args and correct not in args:
-                self.logger.warning("arg alias: %s(%s=) → %s(%s=)", func_name, wrong, func_name, correct)
+                self.logger.warning(f"arg alias: {func_name}({wrong}=) → {func_name}({correct}=)")
                 args[correct] = args.pop(wrong)
         return args
 
@@ -250,15 +247,15 @@ class LLM:
             None,
         )
         if not corrected:
-            self.logger.warning("correction attempt %d: model did not return a %s call", attempt + 1, func_name)
+            self.logger.warning(f"correction attempt {attempt + 1}: model did not return a {func_name} call")
             return None
         try:
             args = parse_tool_args(corrected.get("function", {}).get("arguments", {}))
         except json.JSONDecodeError:
-            self.logger.warning("correction attempt %d: could not parse corrected args", attempt + 1)
+            self.logger.warning(f"correction attempt {attempt + 1}: could not parse corrected args")
             return None
         args = self._apply_arg_aliases(func_name, args)
-        self.logger.tool("corrected args (attempt %d): %s(%s)", attempt + 1, func_name, args)
+        self.logger.tool(f"corrected args (attempt {attempt + 1}): {func_name}({args})")
         return args
 
     def invoke_tool(
@@ -266,7 +263,7 @@ class LLM:
     ) -> tuple[str, str, dict]:
         """Dispatch func_name with arg-correction retries. Returns (result, status, record)."""
         if not hasattr(registry, func_name):
-            self.logger.error("not found: '%s' is not registered", func_name)
+            self.logger.error(f"not found: '{func_name}' is not registered")
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
             return err, "error", {"name": func_name, "args": args, "ok": False, "error": f"tool '{func_name}' not found"}
@@ -276,11 +273,11 @@ class LLM:
         for attempt in range(self._MAX_ARG_RETRIES + 1):
             try:
                 result = self._dispatch_tool(registry, func_name, args, tool_call_id)
-                self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
+                self.logger.tool(f"{tool_call_id} → {func_name}: {result}")
                 return result, "success", {"name": func_name, "args": args, "ok": True}
 
             except TypeError as wrong_args_exc: # wrong arguments — attempt correction with the LLM
-                self.logger.error("wrong args %s → %s (attempt %d/%d): %s", tool_call_id, func_name, attempt + 1, self._MAX_ARG_RETRIES, wrong_args_exc)
+                self.logger.error(f"wrong args {tool_call_id} → {func_name} (attempt {attempt + 1}/{self._MAX_ARG_RETRIES}): {wrong_args_exc}")
                 retries_exhausted = attempt == self._MAX_ARG_RETRIES
                 corrected_args = None if retries_exhausted else self._correct_args(func_name, args, wrong_args_exc, sig, tool_call, tool_call_id, attempt)
                 if corrected_args is None:
@@ -290,9 +287,9 @@ class LLM:
 
             except Exception as exc: # other errors — log and return as error result (don't re-raise, to allow the agent to keep going)
                 if not isinstance(exc, self._RECOVERABLE_EXCEPTIONS):
-                    self.logger.error("non-recoverable error %s → %s: %s", tool_call_id, func_name, exc)
+                    self.logger.error(f"non-recoverable error {tool_call_id} → {func_name}: {exc}")
                     raise
-                self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
+                self.logger.error(f"error {tool_call_id} → {func_name}: {exc}")
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc)}
 
@@ -305,7 +302,7 @@ class LLM:
         tool_calls = message.get("tool_calls", []) or []
         messages, records = [], []
         registry = ToolsRegistry(artifacts=self.tool_artifacts)
-        self.logger.tool("dispatch: %d tool call(s)", len(tool_calls))
+        self.logger.tool(f"dispatch: {len(tool_calls)} tool call(s)")
 
         for tool_call in tool_calls:
             # Parse and validate the raw tool call first, to catch issues before invoking any tools.
@@ -320,13 +317,13 @@ class LLM:
             # Run the before_tool_call hook, which can modify args or return None to skip the call.
             args = self.before_tool_call(func_name, args)
             if args is None:
-                self.logger.tool("skip %s → %s (before_tool_call)", tool_call_id, func_name)
+                self.logger.tool(f"skip {tool_call_id} → {func_name} (before_tool_call)")
                 messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": "(tool call skipped)", "status": "skipped"})
                 records.append({"name": func_name, "args": {}, "ok": False, "error": "skipped"})
                 continue
             
             # Invoke the tool with retries for argument correction, and handle any exceptions.
-            self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
+            self.logger.tool(f"{tool_call_id} → {func_name}({args})")
             result, status, record = self.invoke_tool(tool_call_id, func_name, args, registry, tool_call)
 
             # Post-process the result before sending it back to the LLM.
