@@ -13,6 +13,10 @@ import sys
 from pathlib import Path
 
 import click
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
@@ -54,6 +58,47 @@ def _system_prompt(tools: list) -> str:
         )
     )
 
+_HISTORY_FILE = Path.home() / ".my_coding_agent_history"
+
+
+def _read_interactive_prompt() -> str:
+    """Rich interactive prompt with history, cursor navigation, and multi-line input.
+
+    Keybindings:
+      Enter          — new line
+      Meta+Enter / Escape then Enter — submit
+      Up / Down      — cycle through previous prompts
+      Ctrl+C         — cancel (returns empty string)
+    """
+    kb = KeyBindings()
+
+    @kb.add(Keys.ControlC)
+    def _cancel(event):
+        event.app.exit(result="")
+
+    @kb.add(Keys.Escape, Keys.ControlM)   # Escape then Enter
+    @kb.add("escape", "enter")
+    def _submit_esc_enter(event):
+        event.current_buffer.validate_and_handle()
+
+    session: PromptSession = PromptSession(
+        history=FileHistory(str(_HISTORY_FILE)),
+        key_bindings=kb,
+        multiline=True,
+        prompt_continuation=lambda width, line_number, wrap_count: "  " + "·" * (width - 2),
+        enable_history_search=True,
+    )
+
+    click.secho("Enter your prompt  (Meta+Enter or Esc→Enter to submit, ↑/↓ for history):", fg="cyan")
+    click.echo("─" * 60)
+    try:
+        text = session.prompt("❯ ")
+    except (EOFError, KeyboardInterrupt):
+        text = ""
+    click.echo("─" * 60)
+    return text.strip()
+
+
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
     "--prompt", "-p",
@@ -64,13 +109,14 @@ def _system_prompt(tools: list) -> str:
 )
 @click.option(
     "--interactive", "-i",
+    default=True,
     is_flag=True,
     show_default=True,
     help="Read the task prompt interactively from stdin (paste freely, Ctrl+D to submit).",
 )
 @click.option(
     "--discover/--no-discover", "-d/-D",
-    default=True,
+    default=False,
     show_default=True,
     help="Run the Discovery Agent before the Main Agent.",
 )
@@ -107,10 +153,7 @@ def main(prompt, interactive, discover, max_steps, analyze):
     """
     # ── resolve prompt ─────────────────────────────────────────────────────────
     if interactive:
-        click.secho("Enter your prompt (Ctrl+D when done):", fg="cyan")
-        click.echo("─" * 60)
-        user_prompt = click.get_text_stream("stdin").read().strip()
-        click.echo("─" * 60)
+        user_prompt = _read_interactive_prompt()
         if not user_prompt:
             click.secho("No prompt entered — using default.", fg="yellow", err=True)
             user_prompt = _DEFAULT_PROMPT
