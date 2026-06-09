@@ -212,11 +212,25 @@ class LLM:
         Returns the (possibly modified) args to proceed, or None to skip the call.
         """
         args = self._apply_arg_aliases(func_name, args)
-        return self._before_hook(func_name, args)
+        self.logger.tool(f"before_hook → {func_name}({args})")
+        result = self._before_hook(func_name, args)
+        if result is None:
+            self.logger.tool(f"before_hook skipped {func_name}")
+        elif result != args:
+            self.logger.tool(f"before_hook modified {func_name} args: {result}")
+        return result
 
     def after_tool_call(self, func_name: str, args: dict, result: str) -> str:
         """Runs after every tool dispatch: apply the user hook to the result."""
-        return self._after_hook(func_name, args, result)
+        self.logger.tool(f"after_hook → {func_name}")
+        try:
+            modified = self._after_hook(func_name, args, result)
+        except Exception as exc:
+            self.logger.error(f"after_hook raised {type(exc).__name__} for {func_name}: {exc}")
+            return result
+        if modified != result:
+            self.logger.tool(f"after_hook modified result for {func_name}")
+        return modified
 
     def _dispatch_tool(self, registry: ToolsRegistry, func_name: str, args: dict, tool_call_id: str) -> tuple[str, bool, bool]:
         """Call func_name(**args), handle artifact tuples, coerce to string, and validate output.
@@ -275,7 +289,7 @@ class LLM:
             self.logger.error(f"not found: '{func_name}' is not registered")
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
-            return err, "error", {"name": func_name, "args": args, "ok": False, "error": f"tool '{func_name}' not found", "tool_call_id": tool_call_id, "artifact": False, "truncated": False}
+            return err, "error", {"name": func_name, "args": args, "ok": False, "error": f"tool '{func_name}' not found", "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"}
 
         sig = inspect.signature(getattr(ToolsRegistry, func_name))
 
@@ -283,7 +297,7 @@ class LLM:
             try:
                 result, is_artifact, is_truncated = self._dispatch_tool(registry, func_name, args, tool_call_id)
                 self.logger.tool(f"{tool_call_id} → {func_name}: {result}")
-                return result, "success", {"name": func_name, "args": args, "ok": True, "tool_call_id": tool_call_id, "artifact": is_artifact, "truncated": is_truncated}
+                return result, "success", {"name": func_name, "args": args, "ok": True, "tool_call_id": tool_call_id, "artifact": is_artifact, "truncated": is_truncated, "status": "success"}
 
             except TypeError as wrong_args_exc: # wrong arguments — attempt correction with the LLM
                 self.logger.error(f"wrong args {tool_call_id} → {func_name} (attempt {attempt + 1}/{self._MAX_ARG_RETRIES}): {wrong_args_exc}")
@@ -291,7 +305,7 @@ class LLM:
                 corrected_args = None if retries_exhausted else self._correct_args(func_name, args, wrong_args_exc, sig, tool_call, tool_call_id, attempt)
                 if corrected_args is None:
                     err = f"Error: wrong arguments for '{func_name}' after {attempt + 1} attempt(s): {wrong_args_exc}. Expected: {func_name}{sig}"
-                    return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(wrong_args_exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False}
+                    return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(wrong_args_exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"}
                 args = corrected_args
 
             except Exception as exc: # other errors — log and return as error result (don't re-raise, to allow the agent to keep going)
@@ -300,7 +314,7 @@ class LLM:
                     raise
                 self.logger.error(f"error {tool_call_id} → {func_name}: {exc}")
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
-                return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False}
+                return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"}
 
     def execute_tool_calls(self, message) -> tuple[list, list]:
         """Dispatch all tool calls in message, returning (tool_messages, call_records).
@@ -317,18 +331,15 @@ class LLM:
             # Parse and validate the raw tool call first, to catch issues before invoking any tools.
             tool_call_id, func_name, args, error = self.parse_tool_call(tool_call)
             if error:
-                status = "error"
-                messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": error, "status": status})
-                if func_name:
-                    records.append({"name": func_name, "args": {}, "ok": False, "error": error})
+                messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": error, "status": "error"})
+                records.append({"name": func_name or "<unknown>", "args": {}, "ok": False, "error": error, "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"})
                 continue
-            
+
             # Run the before_tool_call hook, which can modify args or return None to skip the call.
             args = self.before_tool_call(func_name, args)
             if args is None:
-                self.logger.tool(f"skip {tool_call_id} → {func_name} (before_tool_call)")
                 messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": "(tool call skipped)", "status": "skipped"})
-                records.append({"name": func_name, "args": {}, "ok": False, "error": "skipped"})
+                records.append({"name": func_name, "args": {}, "ok": False, "error": "skipped", "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "skipped"})
                 continue
             
             # Invoke the tool with retries for argument correction, and handle any exceptions.

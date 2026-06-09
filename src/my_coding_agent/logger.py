@@ -351,15 +351,31 @@ def print_run_summary(
         inner = f"  {LABEL}{lbl}{R}: {VALUE}{val}{R}" + " " * max(pad, 0)
         return BORDER + "║" + inner + BORDER + "║" + R
 
-    def tool_call_rows(index: int, name: str, args: dict, ok: bool) -> List[str]:
+    def tool_call_rows(index: int, name: str, args: dict, ok: bool, status: str = "", artifact: bool = False, truncated: bool = False) -> List[str]:
         """One or more box rows for a single tool call, wrapping long args."""
-        status_vis = "✓" if ok else "✗"
-        status_col = (OK if ok else FAIL) + status_vis + R
+        SKIP = Fore.YELLOW + Style.BRIGHT
+        if status == "skipped":
+            status_vis = "⊘"
+            status_col = SKIP + status_vis + R
+        elif ok:
+            status_vis = "✓"
+            status_col = OK + status_vis + R
+        else:
+            status_vis = "✗"
+            status_col = FAIL + status_vis + R
+        badges = ""
+        badges_vis = ""
+        if artifact:
+            badges_vis += " [artifact]"
+            badges += f" {Fore.CYAN}[artifact]{R}"
+        if truncated:
+            badges_vis += " [truncated]"
+            badges += f" {WARN}[truncated]{R}"
         # margin: 2 left, 3 right (space + status + space)
         MARGIN = 5
         args_raw = ", ".join(f"{k}={repr(v)}" for k, v in args.items()) if args else ""
         prefix = f"{index:3}. {name}("
-        suffix = ")"
+        suffix = ")" + badges_vis
         content_w = W - MARGIN - len(prefix) - len(suffix)
 
         # split args_raw into lines of content_w
@@ -376,18 +392,21 @@ def print_run_summary(
             remaining = "    " + remaining[cut:]  # indent continuation
         chunks.append(remaining)
 
+        colored_suffix = ")" + badges
         rows: List[str] = []
         for ci, chunk in enumerate(chunks):
             is_last = ci == len(chunks) - 1
             if ci == 0:
                 line_vis = prefix + chunk + (suffix if is_last else "")
+                line_col = f"{VALUE}{prefix}{chunk}{R}" + (colored_suffix if is_last else "")
             else:
                 line_vis = " " * len(prefix) + chunk + (suffix if is_last else "")
+                line_col = " " * len(prefix) + f"{VALUE}{chunk}{R}" + (colored_suffix if is_last else "")
             pad = W - 2 - len(line_vis) - (3 if is_last else 2)
             if is_last:
-                inner = f"  {VALUE}{line_vis}{R}" + " " * max(pad, 1) + status_col + "  "
+                inner = f"  {line_col}" + " " * max(pad, 1) + status_col + "  "
             else:
-                inner = f"  {VALUE}{line_vis}{R}" + " " * max(pad + 3, 0)
+                inner = f"  {line_col}" + " " * max(pad + 3, 0)
             rows.append(BORDER + "║" + inner + BORDER + "║" + R)
         return rows
 
@@ -412,8 +431,14 @@ def print_run_summary(
     tok_per_sec = f"{completion_tokens / elapsed_seconds:.1f} tok/s" if elapsed_seconds > 0 else "—"
     records     = tool_records or []
     n_ok        = sum(1 for r in records if r["ok"])
-    n_fail      = len(records) - n_ok
-    tool_count  = f"{len(records)} ({n_ok} ok, {n_fail} failed)" if records else "0"
+    n_skip      = sum(1 for r in records if r.get("status") == "skipped")
+    n_fail      = len(records) - n_ok - n_skip
+    parts       = [f"{n_ok} ok"]
+    if n_fail:
+        parts.append(f"{n_fail} failed")
+    if n_skip:
+        parts.append(f"{n_skip} skipped")
+    tool_count  = f"{len(records)} ({', '.join(parts)})" if records else "0"
     handoffs    = handoff_records or []
 
     WARN = Fore.YELLOW + Style.BRIGHT
@@ -477,7 +502,12 @@ def print_run_summary(
     if records:
         lines.append(empty_row())
         for i, r in enumerate(records, start=1):
-            lines.extend(tool_call_rows(i, r["name"], r["args"], r["ok"]))
+            lines.extend(tool_call_rows(
+                i, r["name"], r["args"], r["ok"],
+                status=r.get("status", ""),
+                artifact=r.get("artifact", False),
+                truncated=r.get("truncated", False),
+            ))
 
     # ── context resets section ─────────────────────────────────────────────────
     if handoffs:
