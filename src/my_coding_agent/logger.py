@@ -302,8 +302,13 @@ def print_run_summary(
     handoff_records: Optional[list] = None,
     agent_name: str = "Agent",
     last_message: str = "",
+    step_usage: Optional[list] = None,
+    model: str = "",
+    session_id: str = "",
+    started_at: str = "",
+    tools: Optional[list] = None,
 ) -> None:
-    W = 68  # same inner width as the startup banner
+    W = 110  # wider box for chart + session header
     R      = Style.RESET_ALL
     BORDER = Fore.CYAN + Style.BRIGHT
     LABEL  = Fore.CYAN + Style.BRIGHT
@@ -417,9 +422,8 @@ def print_run_summary(
         console.print(Markdown(md_text))
         rendered = buf.getvalue()
         rows: List[str] = []
-        ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
         for line in rendered.splitlines():
-            visible_len = len(ansi_escape.sub("", line))
+            visible_len = len(ansi_re.sub("", line))
             pad = (W - 4) - visible_len
             rows.append(BORDER + "║  " + line + " " * max(pad, 0) + "  " + BORDER + "║" + R)
         return rows or [empty_row()]
@@ -440,8 +444,42 @@ def print_run_summary(
         parts.append(f"{n_skip} skipped")
     tool_count  = f"{len(records)} ({', '.join(parts)})" if records else "0"
     handoffs    = handoff_records or []
+    branch      = _git_branch()
+    workspace   = os.getcwd()
 
-    WARN = Fore.YELLOW + Style.BRIGHT
+    WARN     = Fore.YELLOW + Style.BRIGHT
+    ansi_re  = re.compile(r"\x1b\[[0-9;]*m")
+
+    def token_chart_rows() -> List[str]:
+        usage = step_usage or []
+        if len(usage) < 1:
+            return [metric_row1("TOKEN CHART", "no step data")]
+        import plotext as plt
+        chart_w = W - 6
+        chart_h = 20
+        labels      = [str(u["step"]) for u in usage]
+        prompt_vals = [u["prompt"]     for u in usage]
+        comp_vals   = [u["completion"] for u in usage]
+        plt.clf()
+        plt.plot_size(chart_w, chart_h)
+        plt.theme("dark")
+        if len(usage) == 1:
+            plt.bar(labels * 2, prompt_vals * 2, label="prompt",     color="cyan+")
+            plt.bar(labels * 2, comp_vals   * 2, label="completion", color="green+")
+        else:
+            plt.multiple_bar(labels, [prompt_vals, comp_vals],
+                             labels=["prompt", "completion"],
+                             color=["cyan+", "green+"])
+        plt.xlabel("Step")
+        plt.ylabel("Tokens")
+        plt.title("Token consumption per step")
+        chart_str = plt.build()
+        rows: List[str] = []
+        for line in chart_str.splitlines():
+            visible = len(ansi_re.sub("", line))
+            pad = (W - 4) - visible
+            rows.append(BORDER + "║  " + line + " " * max(pad, 0) + "  " + BORDER + "║" + R)
+        return rows or [empty_row()]
 
     def handoff_rows(index: int, h: dict) -> List[str]:
         """Render one handoff event as box rows."""
@@ -486,10 +524,25 @@ def print_run_summary(
         return rows
 
     # ── build box ──────────────────────────────────────────────────────────────
+    ctx_str   = f"{context_window:,}" if context_window else "unknown"
+    reset_str = "—"  # not available in summary context
+    ws_str    = workspace if len(workspace) <= W - 16 else "…" + workspace[-(W - 17):]
+    tools_str = str(len(tools)) if tools is not None else "—"
+
     lines: List[str] = [
         "", top, empty_row(),
         title_row(f"▸  {agent_name.upper()}  —  RUN COMPLETE"),
         empty_row(), mid, empty_row(),
+        # ── session header (mirrors banner) ───────────────────────────────────
+        metric_row1("MODEL",     model or "—"),
+        metric_row1("SESSION",   session_id or "—"),
+        metric_row1("STARTED",   started_at or "—"),
+        metric_row1("BRANCH",    branch),
+        metric_row1("WORKSPACE", ws_str),
+        metric_row1("CONTEXT",   ctx_str),
+        metric_row1("TOOLS",     tools_str),
+        empty_row(), mid, empty_row(),
+        # ── run metrics ───────────────────────────────────────────────────────
         metric_row1("STEPS",       f"{steps} / {max_steps}"),
         metric_row1("STOP REASON", stop_reason),
         metric_row1("ELAPSED",     elapsed_str),
@@ -498,6 +551,9 @@ def print_run_summary(
         metric_row1("PROMPT",     f"{prompt_tokens:,} tok{ctx_pct}"),
         metric_row1("COMPLETION", f"{completion_tokens:,} tok"),
         metric_row1("TOTAL",      f"{total_tokens:,} tok"),
+        empty_row(), mid, empty_row(),
+        # ── token chart ───────────────────────────────────────────────────────
+        *token_chart_rows(),
         empty_row(), mid, empty_row(),
         metric_row1("TOOL CALLS", tool_count),
     ]
