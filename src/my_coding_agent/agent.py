@@ -34,8 +34,10 @@ class Agent(LLM):
         tools=[],
         label="Agent",
         context_reset_threshold: float = 0.75,
+        before_tool_call=None,
+        after_tool_call=None,
     ):
-        super().__init__(api_url, api_key, model)
+        super().__init__(api_url, api_key, model, before_tool_call, after_tool_call)
         self.label = label
         self.messages = messages or []
         self.tools = tools or []
