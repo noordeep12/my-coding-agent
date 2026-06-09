@@ -73,14 +73,15 @@ class LLM:
         return models
 
     def chat_completion(self, messages, tools=None, kind: str = "main") -> Response:
-        self.logger.api(f"→ POST {self.api_url}/chat/completions")
+        call_num = len(self.llm_calls) + 1
+        self.logger.api(f"→ POST {self.api_url}/chat/completions  [call #{call_num}, kind={kind}]")
         self.logger.debug(f"Request body: {json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4)}")
 
         resp = self.session.post(
             self.api_url + "/chat/completions",
             json={"model": self.model, "messages": messages, "tools": tools or []},
         )
-        self.logger.api(f"← {resp.status_code} ({len(resp.content)} bytes)")
+        self.logger.api(f"← {resp.status_code} ({len(resp.content)} bytes)  [call #{call_num}, kind={kind}]")
         try:
             data = resp.json()
         except Exception as exc:
@@ -92,12 +93,18 @@ class LLM:
 
         usage = data.get("usage", {})
         self.llm_calls.append({
-            "call":       len(self.llm_calls) + 1,
+            "call":       call_num,
             "kind":       kind,
             "prompt":     usage.get("prompt_tokens", 0),
             "completion": usage.get("completion_tokens", 0),
             "total":      usage.get("total_tokens", 0),
         })
+        self.logger.api(
+            f"call #{call_num} [{kind}] usage — "
+            f"prompt: {usage.get('prompt_tokens', 0):,}, "
+            f"completion: {usage.get('completion_tokens', 0):,}, "
+            f"total: {usage.get('total_tokens', 0):,}"
+        )
 
         try:
             choices = data.get("choices", [])
