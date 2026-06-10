@@ -158,7 +158,7 @@ class LLM:
         )
         try:
             resp = self.chat_completion(
-                [{"role": "user", "content": routing_prompt}], tools=[], kind="router"
+                [{"role": "user", "content": routing_prompt}], tools=[], kind="tool_router"
             )
             content = extract_message(resp).get("content", "") or ""
             # Extract the JSON array from the response (model may wrap it in prose)
@@ -227,7 +227,7 @@ class LLM:
             f"Output:\n{json.dumps(artifact, indent=2)[:12_000]}"
         )
         try:
-            resp = self.chat_completion([{"role": "user", "content": prompt}], tools=[], kind="summarizer")
+            resp = self.chat_completion([{"role": "user", "content": prompt}], tools=[], kind="tool_output_summarizer")
             summary = extract_message(resp).get("content") or ""
         except Exception as exc:
             self.logger.warning(f"artifact summarization failed: {exc}")
@@ -340,7 +340,7 @@ class LLM:
                 f"Please call '{func_name}' again with the correct arguments."
             )},
         ]
-        correction_resp = self.chat_completion(correction_messages, tools=getattr(self, "tools", None), kind="correction")
+        correction_resp = self.chat_completion(correction_messages, tools=getattr(self, "tools", None), kind="tool_arg_correction")
         corrected = next(
             (c for c in (extract_message(correction_resp).get("tool_calls") or [])
              if c.get("function", {}).get("name") == func_name),
