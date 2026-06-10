@@ -126,7 +126,7 @@ class LLM:
         """Return the subset of all_tools relevant to message.
 
         Phase 1 — keyword match against each tool's tags (zero cost).
-        Phase 2 — LLM fallback when phase 1 matches nothing outside the baseline.
+        Phase 2 — LLM fallback only when phase 1 finds zero tag matches across ALL tools.
         Baseline tools (bash, read_file, read_tool_artifact) are always included.
         """
         if not all_tools:
@@ -136,7 +136,13 @@ class LLM:
         baseline = [t for t in all_tools if t["function"]["name"] in _BASELINE_TOOLS]
         non_baseline = [t for t in all_tools if t["function"]["name"] not in _BASELINE_TOOLS]
 
-        # Phase 1: keyword match on tags
+        # Skip routing entirely when there are no non-baseline tools to choose from.
+        if not non_baseline:
+            names = [t["function"]["name"] for t in all_tools]
+            self.logger.tool(f"router phase-1 → {names} (no non-baseline tools, skipped)")
+            return all_tools
+
+        # Phase 1: keyword match on tags — check non-baseline tools first.
         keyword_matched = [
             t for t in non_baseline
             if any(tag in text for tag in t.get("tags", []))
@@ -148,7 +154,19 @@ class LLM:
             self.logger.tool(f"router phase-1 → {names}")
             return selected
 
-        # Phase 2: LLM fallback
+        # Phase 1b: check if the message matches any baseline tool's tags.
+        # If so, the task clearly needs only baseline tools — skip the LLM call.
+        baseline_matched = any(
+            any(tag in text for tag in t.get("tags", []))
+            for t in baseline
+        )
+        if baseline_matched:
+            names = [t["function"]["name"] for t in all_tools]
+            self.logger.tool(f"router phase-1 → {names} (baseline tag match, skipped phase-2)")
+            return all_tools
+
+        # Phase 2: LLM fallback — only reached when zero tag matches found anywhere.
+        import re as _re
         all_names = [t["function"]["name"] for t in all_tools]
         routing_prompt = (
             f"You are a tool router. Given the message below, return a JSON array of tool names "
@@ -161,9 +179,20 @@ class LLM:
                 [{"role": "user", "content": routing_prompt}], tools=[], kind="tool_router"
             )
             content = extract_message(resp).get("content", "") or ""
-            # Extract the JSON array from the response (model may wrap it in prose)
-            m = __import__("re").search(r"\[.*?\]", content, __import__("re").DOTALL)
-            routed_names = json.loads(m.group()) if m else []
+            # Try multiple extraction strategies in order of reliability.
+            routed_names = None
+            for attempt in [
+                lambda c: json.loads(c.strip()),
+                lambda c: json.loads(_re.search(r"\[.*\]", c, _re.DOTALL).group()),
+                lambda c: json.loads(_re.sub(r"```(?:json)?\s*|\s*```", "", c).strip()),
+            ]:
+                try:
+                    routed_names = attempt(content)
+                    break
+                except Exception:
+                    continue
+            if routed_names is None:
+                raise ValueError(f"could not extract JSON array from: {content[:120]!r}")
         except Exception as exc:
             self.logger.warning(f"router phase-2 failed ({exc}), using all tools")
             routed_names = all_names
@@ -283,13 +312,31 @@ class LLM:
                 args[correct] = args.pop(wrong)
         return args
 
+    def _strip_unknown_args(self, func_name: str, args: dict) -> dict:
+        """Drop kwargs that are not in the tool's actual signature, logging each dropped arg.
+
+        This prevents TypeError from hallucinated parameters (e.g. file_path on bash)
+        from ever reaching the LLM correction loop, which is unreliable on local models.
+        """
+        func = getattr(ToolsRegistry, func_name, None)
+        if func is None:
+            return args
+        valid = set(inspect.signature(func).parameters)
+        dropped = {k: v for k, v in args.items() if k not in valid}
+        if dropped:
+            for k in dropped:
+                self.logger.warning(f"stripped unknown arg: {func_name}({k}=) — not in tool signature")
+            args = {k: v for k, v in args.items() if k in valid}
+        return args
+
     def before_tool_call(self, func_name: str, args: dict) -> dict | None:
         """Runs before every tool dispatch: alias-remap args, then apply the user hook.
 
         Returns the (possibly modified) args to proceed, or None to skip the call.
         """
         args = self._apply_arg_aliases(func_name, args)
-        self.logger.tool(f"before_hook → {func_name}({args})")
+        args = self._strip_unknown_args(func_name, args)
+        self.logger.tool(f"before_hook → {func_name}({args}) [after alias remapping]")
         result = self._before_hook(func_name, args)
         if result is None:
             self.logger.tool(f"before_hook skipped {func_name}")
@@ -299,7 +346,7 @@ class LLM:
 
     def after_tool_call(self, func_name: str, args: dict, result: str) -> str:
         """Runs after every tool dispatch: apply the user hook to the result."""
-        self.logger.tool(f"after_hook → {func_name}")
+        self.logger.tool(f"after_hook → {func_name}({args}) → {result}")
         try:
             modified = self._after_hook(func_name, args, result)
         except Exception as exc:
