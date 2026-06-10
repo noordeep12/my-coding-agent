@@ -47,24 +47,24 @@ def _build_system_prompt(tools: list) -> str:
     )
     is_git = os.path.isdir(".git")
     return (
-        "You are a harness improvement specialist. Your job is to analyze completed LLM agent "
-        "sessions and produce actionable improvement reports.\n\n"
+        "You are an AI Harness improvement specialist. Your job is to analyze completed LLM agent "
+        "sessions, list problems, and produce actionable improvement reports.\n\n"
         f"Available tools:\n{tool_docs}\n\n"
         "Workspace:\n"
-        f"  path     : {os.getcwd()}\n"
-        f"  contents : {os.listdir(os.getcwd())}\n"
-        f"  os       : {os.name}, platform: {sys.platform}, user: {os.getlogin()}\n"
+        f"  current directory     : {os.getcwd()}\n"
+        f"  current directory contents : {os.listdir(os.getcwd())}\n"
+        f"  machine os       : {os.name}, platform: {sys.platform}, user: {os.getlogin()}\n"
         + (
             f"  git      : {os.popen('git status --short').read().strip() or 'clean'}\n"
             f"  branch   : {os.popen('git rev-parse --abbrev-ref HEAD').read().strip()}\n"
             f"  commits  :\n{os.popen('git log -5 --oneline').read().strip()}\n"
             if is_git else "  git      : not a git repository\n"
         )
-        + "\nUse absolute paths when working with files."
+        + "\nUse absolute paths when tool arguments requires files paths."
     )
 
 _USER_PROMPT_TEMPLATE = """\
-Analyze this agent session and produce a structured improvement report.
+Analyze this agent session, list problems, and produce a structured improvement report.
 
 ## Session Data
 ```json
@@ -82,19 +82,19 @@ Analyze this agent session and produce a structured improvement report.
    du -sh .my_coding_agent/{session_id}/stderr.log
 
    # Errors and warnings (with 2 lines of context each)
-   grep -n "| ERROR\|| WARNING\|| CRITICAL" .my_coding_agent/{session_id}/stderr.log | head -60
+   grep -n "| ERROR\\|| WARNING\\|| CRITICAL" .my_coding_agent/{session_id}/stderr.log | head -60
 
    # Tool dispatches (shows which tools were called and their args)
-   grep -n "tool_id\|→" .my_coding_agent/{session_id}/stderr.log | head -80
+   grep -n "tool_id\\|→" .my_coding_agent/{session_id}/stderr.log | head -80
 
    # Step markers (one per agent loop iteration)
    grep -n "STEP [0-9]" .my_coding_agent/{session_id}/stderr.log
 
    # Context % per step (token pressure over time)
-   grep -n "% ctx used\|Context at\|Context reset\|Context limit" .my_coding_agent/{session_id}/stderr.log
+   grep -n "% ctx used\\|Context at\\|Context reset\\|Context limit" .my_coding_agent/{session_id}/stderr.log
 
    # Handoff events
-   grep -n "handoff\|Handoff\|context reset\|continuation" .my_coding_agent/{session_id}/stderr.log | head -30
+   grep -n "handoff\\|Handoff\\|context reset\\|continuation" .my_coding_agent/{session_id}/stderr.log | head -30
 
    # Last 80 lines (final agent state, summary output)
    tail -n 80 .my_coding_agent/{session_id}/stderr.log
@@ -108,13 +108,17 @@ Analyze this agent session and produce a structured improvement report.
    - `src/my_coding_agent/tools.py` — available tools
 
 3. **Fetch one authoritative reference** on LLM agent harness best practices. Use read_article to fetch:
-   https://www.anthropic.com/engineering/building-effective-agents
+   - https://www.anthropic.com/engineering/building-effective-agents
+   - https://medium.com/@tort_mario/ai-agent-best-practices-production-ready-harness-engineering-2026-guide-c1236d713fac
+   - https://gist.github.com/celesteanders/21edad2367c8ede2ff092bd87e56a26f
+   - https://gist.github.com/amazingvince/52158d00fb8b3ba1b8476bc62bb562e3
+
 
 4. **Analyze the session** for:
    - Failure modes (tool errors, context issues, wrong stop reasons, repeated retries, etc.)
    - Successful patterns worth preserving
    - Token efficiency (prompt vs completion ratio, context % at stop)
-   - Context reset events (if any)
+   - Any harness events like: context reset, handoff, continuation, summarization, tool arg correction, tool routing decisions, etc.
    - Any unusual patterns visible in the log (long silences, burst tool calls, error cascades)
 
 5. **Write the report** to `.my_coding_agent/{session_id}/session_analysis.md` using write_file.
