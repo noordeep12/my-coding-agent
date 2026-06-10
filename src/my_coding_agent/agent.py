@@ -162,120 +162,134 @@ class Agent(LLM):
         t_start = time.monotonic()
 
         self.logger.info("Agent run started with max_steps: %d", max_steps)
-        while True:
-            self.logger.info("----------------------------------------------------------------")
-            self.logger.info("----------------------------------------------------------------   STEP %d/%d", self.step_num + 1, max_steps)
-            self.logger.info("----------------------------------------------------------------")
+        try:
+            while True:
+                self.logger.info("----------------------------------------------------------------")
+                self.logger.info("----------------------------------------------------------------   STEP %d/%d", self.step_num + 1, max_steps)
+                self.logger.info("----------------------------------------------------------------")
 
-            # Pre-flight context check using actual tokens reported by the API in the
-            # previous step. Step 1 falls back to a character estimate (no prior data).
-            if self.context_window:
-                ctx_tokens = self.last_prompt_tokens or len(json.dumps(self.messages)) // 2
-                ctx_pct = ctx_tokens / self.context_window
+                # Pre-flight context check using actual tokens reported by the API in the
+                # previous step. Step 1 falls back to a character estimate (no prior data).
+                if self.context_window:
+                    ctx_tokens = self.last_prompt_tokens or len(json.dumps(self.messages)) // 2
+                    ctx_pct = ctx_tokens / self.context_window
 
-                if ctx_pct >= 1.0:
-                    # Hard stop — context fully exhausted, no room to generate handoff.
-                    self.stop_reason = "context_limit"
-                    self.logger.warning(
-                        "Context limit reached: %d / %d tokens (%.1f%%). Stopping.",
-                        ctx_tokens, self.context_window, ctx_pct * 100,
-                    )
+                    if ctx_pct >= 1.0:
+                        # Hard stop — context fully exhausted, no room to generate handoff.
+                        self.stop_reason = "context_limit"
+                        self.logger.warning(
+                            "Context limit reached: %d / %d tokens (%.1f%%). Stopping.",
+                            ctx_tokens, self.context_window, ctx_pct * 100,
+                        )
+                        break
+
+                    elif ctx_pct >= self.context_reset_threshold:
+                        # Threshold reached — generate handoff and continue in a fresh context.
+                        self.logger.warning(
+                            "Context reset threshold reached: %.1f%% used (%d / %d tokens). "
+                            "Generating handoff and spawning continuation.",
+                            ctx_pct * 100, ctx_tokens, self.context_window,
+                        )
+                        handoff = self._generate_handoff(self.step_num, ctx_tokens)
+                        self.handoff_records.append({
+                            "step":       self.step_num,
+                            "ctx_tokens": ctx_tokens,
+                            "ctx_pct":    ctx_pct * 100,
+                            "threshold":  self.context_reset_threshold * 100,
+                            "path":       handoff.path,
+                            "reason":     f"prompt_tokens {ctx_tokens:,} >= {self.context_reset_threshold*100:.0f}% of {self.context_window:,}",
+                        })
+                        self.stop_reason = "context_reset"
+                        self.elapsed_seconds = time.monotonic() - t_start
+                        self._save_session_data(max_steps)
+                        self._print_summary(max_steps)
+                        detach_session_log(self._session_log_handler)
+
+                        # Spawn continuation: system prompt + handoff as the only context.
+                        system_messages = [m for m in self.messages if m.get("role") == "system"]
+                        continuation = Agent(
+                            api_url=self.api_url,
+                            api_key=self.api_key,
+                            model=self.model,
+                            messages=system_messages + [handoff.to_user_message()],
+                            tools=self.tools,
+                            label=f"{self.label} (cont.)",
+                            context_reset_threshold=self.context_reset_threshold,
+                            before_tool_call=self._before_hook,
+                            after_tool_call=self._after_hook,
+                        )
+                        remaining_steps = max_steps - self.step_num
+                        return continuation.run(max_steps=max(remaining_steps, 1))
+
+                    elif ctx_pct >= 0.6:
+                        self.logger.warning(
+                            "Context at %.1f%% (%d / %d tokens) — reset at %.0f%%.",
+                            ctx_pct * 100, ctx_tokens, self.context_window,
+                            self.context_reset_threshold * 100,
+                        )
+
+                # Route: pick the relevant subset of tools for this step's context.
+                # Combine the last user message and last assistant message so the router
+                # can see where the agent is in its task, not just the original prompt.
+                last_user_content = next(
+                    (m.get("content", "") or "" for m in reversed(self.messages) if m.get("role") == "user"),
+                    "",
+                )
+                last_assistant_content = next(
+                    (m.get("content", "") or "" for m in reversed(self.messages) if m.get("role") == "assistant"),
+                    "",
+                )
+                routing_signal = " ".join(filter(None, [last_user_content, last_assistant_content]))
+                routed_tools = self.route_tools(routing_signal, self.tools)
+                resp = self.chat_completion(self.messages, tools=routed_tools)
+                message = extract_message(resp)
+                if not message:
+                    self.logger.error("Step %d: API returned empty message — skipping step", self.step_num + 1)
+                    self.step_num += 1
+                    continue
+                self.add_message(message)
+
+                # Execute tool calls and add results back to messages
+                tool_messages, records = self.execute_tool_calls(message)
+                self.tool_records.extend(records)
+                for tool_message in (tool_messages or []):
+                    self.add_message(tool_message)
+
+                # Track usage — update last_prompt_tokens for context-window check next step
+                usage = extract_usage(resp)
+                step_prompt     = usage.get("prompt_tokens", 0)
+                step_completion = usage.get("completion_tokens", 0)
+                step_total      = usage.get("total_tokens", 0)
+                self.last_prompt_tokens = step_prompt
+                ctx = self.context_window
+                ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
+                self.logger.info(
+                    "Step %d tokens — prompt: %d, completion: %d, total: %d%s",
+                    self.step_num + 1,
+                    step_prompt,
+                    step_completion,
+                    step_total,
+                    ctx_str,
+                )
+
+                # Finish conditions
+                finish_reason = extract_finish_reason(resp)
+                if finish_reason in ('stop', 'exit', 'quit'):
+                    self.stop_reason = finish_reason
                     break
-
-                elif ctx_pct >= self.context_reset_threshold:
-                    # Threshold reached — generate handoff and continue in a fresh context.
-                    self.logger.warning(
-                        "Context reset threshold reached: %.1f%% used (%d / %d tokens). "
-                        "Generating handoff and spawning continuation.",
-                        ctx_pct * 100, ctx_tokens, self.context_window,
-                    )
-                    handoff = self._generate_handoff(self.step_num, ctx_tokens)
-                    self.handoff_records.append({
-                        "step":       self.step_num,
-                        "ctx_tokens": ctx_tokens,
-                        "ctx_pct":    ctx_pct * 100,
-                        "threshold":  self.context_reset_threshold * 100,
-                        "path":       handoff.path,
-                        "reason":     f"prompt_tokens {ctx_tokens:,} >= {self.context_reset_threshold*100:.0f}% of {self.context_window:,}",
-                    })
-                    self.stop_reason = "context_reset"
-                    self.elapsed_seconds = time.monotonic() - t_start
-                    self._save_session_data(max_steps)
-                    self._print_summary(max_steps)
-                    detach_session_log(self._session_log_handler)
-
-                    # Spawn continuation: system prompt + handoff as the only context.
-                    system_messages = [m for m in self.messages if m.get("role") == "system"]
-                    continuation = Agent(
-                        api_url=self.api_url,
-                        api_key=self.api_key,
-                        model=self.model,
-                        messages=system_messages + [handoff.to_user_message()],
-                        tools=self.tools,
-                        label=f"{self.label} (cont.)",
-                        context_reset_threshold=self.context_reset_threshold,
-                        before_tool_call=self._before_hook,
-                        after_tool_call=self._after_hook,
-                    )
-                    remaining_steps = max_steps - self.step_num
-                    return continuation.run(max_steps=max(remaining_steps, 1))
-
-                elif ctx_pct >= 0.6:
-                    self.logger.warning(
-                        "Context at %.1f%% (%d / %d tokens) — reset at %.0f%%.",
-                        ctx_pct * 100, ctx_tokens, self.context_window,
-                        self.context_reset_threshold * 100,
-                    )
-
-            # Route: pick the relevant subset of tools for this step's context.
-            last_user_content = next(
-                (m.get("content", "") or "" for m in reversed(self.messages) if m.get("role") == "user"),
-                "",
-            )
-            routed_tools = self.route_tools(last_user_content, self.tools)
-            resp = self.chat_completion(self.messages, tools=routed_tools)
-            message = extract_message(resp)
-            if not message:
-                self.logger.error("Step %d: API returned empty message — skipping step", self.step_num + 1)
+                if self.step_num >= max_steps:
+                    self.stop_reason = "max_steps"
+                    break
                 self.step_num += 1
-                continue
-            self.add_message(message)
 
-            # Execute tool calls and add results back to messages
-            tool_messages, records = self.execute_tool_calls(message)
-            self.tool_records.extend(records)
-            for tool_message in (tool_messages or []):
-                self.add_message(tool_message)
-
-            # Track usage — update last_prompt_tokens for context-window check next step
-            usage = extract_usage(resp)
-            step_prompt     = usage.get("prompt_tokens", 0)
-            step_completion = usage.get("completion_tokens", 0)
-            step_total      = usage.get("total_tokens", 0)
-            self.last_prompt_tokens = step_prompt
-            ctx = self.context_window
-            ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
-            self.logger.info(
-                "Step %d tokens — prompt: %d, completion: %d, total: %d%s",
-                self.step_num + 1,
-                step_prompt,
-                step_completion,
-                step_total,
-                ctx_str,
-            )
-
-            # Finish conditions
-            finish_reason = extract_finish_reason(resp)
-            if finish_reason in ('stop', 'exit', 'quit'):
-                self.stop_reason = finish_reason
-                break
-            if self.step_num >= max_steps:
-                self.stop_reason = "max_steps"
-                break
-            self.step_num += 1
-
-        self.elapsed_seconds = time.monotonic() - t_start
-        self._save_session_data(max_steps)
-        self._print_summary(max_steps)
-        detach_session_log(self._session_log_handler)
+        except KeyboardInterrupt:
+            self.stop_reason = "aborted"
+            self.logger.warning("Agent run aborted by user (KeyboardInterrupt)")
+        finally:
+            self.elapsed_seconds = time.monotonic() - t_start
+            out = Path(".my_coding_agent") / self.session_id / "session_data.json"
+            if not out.exists():  # context-reset path already saved; don't overwrite
+                self._save_session_data(max_steps)
+                self._print_summary(max_steps)
+                detach_session_log(self._session_log_handler)
         return self.messages
