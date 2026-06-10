@@ -430,7 +430,7 @@ def print_run_summary(
         return rows or [empty_row()]
 
     # ── computed values ────────────────────────────────────────────────────────
-    ctx_pct     = f" (last call: {last_prompt_tokens / context_window * 100:.1f}% of ctx)" if context_window and last_prompt_tokens else ""
+    ctx_pct     = f" ({last_prompt_tokens / context_window * 100:.1f}% of {context_window:,})" if context_window and last_prompt_tokens else ""
     mins, secs  = divmod(elapsed_seconds, 60)
     elapsed_str = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
     tok_per_sec = f"{completion_tokens / elapsed_seconds:.1f} tok/s" if elapsed_seconds > 0 else "—"
@@ -581,9 +581,10 @@ def print_run_summary(
         metric_row1("ELAPSED",     elapsed_str),
         metric_row1("THROUGHPUT",  tok_per_sec),
         empty_row(), mid, empty_row(),
-        metric_row1("PROMPT",     f"{prompt_tokens:,} tok{ctx_pct}"),
-        metric_row1("COMPLETION", f"{completion_tokens:,} tok"),
-        metric_row1("TOTAL",      f"{total_tokens:,} tok"),
+        metric_row1("CONTEXT (last call)",   f"{last_prompt_tokens:,} tok{ctx_pct}"),
+        metric_row1("INPUT (all calls)",     f"{prompt_tokens:,} tok cumulative"),
+        metric_row1("COMPLETION (all calls)", f"{completion_tokens:,} tok"),
+        metric_row1("TOTAL BILLED",           f"{total_tokens:,} tok"),
         mid,
         # ── token chart ───────────────────────────────────────────────────────
         *token_chart_rows(),
