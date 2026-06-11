@@ -72,14 +72,17 @@ class LLM:
         self.logger.api(f"Context window for {self.model}: {self.context_window} tokens")
         return models
 
-    def chat_completion(self, messages, tools=None, kind: str = "main") -> Response:
+    def chat_completion(self, messages, tools=None, kind: str = "main", max_tokens: int | None = None) -> Response:
         call_num = len(self.llm_calls) + 1
         self.logger.api(f"→ POST {self.api_url}/chat/completions  [call #{call_num}, kind={kind}]")
         self.logger.debug(f"Request body: {json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4)}")
 
+        body: dict = {"model": self.model, "messages": messages, "tools": tools or []}
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
         resp = self.session.post(
             self.api_url + "/chat/completions",
-            json={"model": self.model, "messages": messages, "tools": tools or []},
+            json=body,
         )
         self.logger.api(f"← {resp.status_code} ({len(resp.content)} bytes)  [call #{call_num}, kind={kind}]")
         try:
@@ -250,13 +253,19 @@ class LLM:
 
     def _summarize_artifact(self, artifact: dict, func_name: str, tool_call_id: str) -> str:
         prompt = (
+            "/no_think\n"
             f"Summarize the following `{func_name}` tool output concisely for an AI coding agent. "
             "Include: exit status, key findings, any errors, and what the agent needs to know to continue its task. "
             "Be factual and brief — 3 to 8 sentences max.\n\n"
             f"Output:\n{json.dumps(artifact, indent=2)[:12_000]}"
         )
         try:
-            resp = self.chat_completion([{"role": "user", "content": prompt}], tools=[], kind="tool_output_summarizer")
+            resp = self.chat_completion(
+                [{"role": "user", "content": prompt}],
+                tools=[],
+                kind="tool_output_summarizer",
+                max_tokens=512,
+            )
             summary = extract_message(resp).get("content") or ""
         except Exception as exc:
             self.logger.warning(f"artifact summarization failed: {exc}")
@@ -271,7 +280,7 @@ class LLM:
                 })
         return (
             summary.strip()
-            + f'\n[Full output stored — call read_tool_artifact(tool_call_id="{tool_call_id}") to retrieve it.]'
+            + f'\n[Full output stored as artifact — use read_tool_artifact(tool_call_id="{tool_call_id}") ONLY if the summary above is insufficient to proceed. Avoid calling it unless strictly necessary.]'
         )
 
     def parse_tool_call(self, tool_call: dict) -> tuple[str, str | None, dict | None, str | None]:
