@@ -457,7 +457,7 @@ class LLM:
         """
         tool_calls = message.get("tool_calls", []) or []
         messages, records = [], []
-        registry = ToolsRegistry(artifacts=self.tool_artifacts)
+        registry = ToolsRegistry(artifacts=self.tool_artifacts, tools=getattr(self, "tools", []))
         self.logger.tool(f"dispatch: {len(tool_calls)} tool call(s)")
 
         for tool_call in tool_calls:

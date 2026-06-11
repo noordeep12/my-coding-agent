@@ -124,13 +124,14 @@ def tool(func) -> dict:
     return function_to_json(func)
 
 
-ARTIFACT_THRESHOLD = 2_000  # chars; bash output above this triggers artifact separation
+ARTIFACT_THRESHOLD = 8_000  # chars; bash output above this triggers artifact separation
 
 
 class ToolsRegistry:
 
-    def __init__(self, artifacts: dict | None = None):
+    def __init__(self, artifacts: dict | None = None, tools: list | None = None):
         self._artifacts = artifacts if artifacts is not None else {}
+        self._tools = tools if tools is not None else []
 
     def bash(self, command: str) -> "str | tuple[None, dict]":
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
@@ -185,7 +186,48 @@ class ToolsRegistry:
             return f"Error: no artifact found for tool_call_id '{tool_call_id}'"
         return json.dumps(artifact) if not isinstance(artifact, str) else artifact
 
-    def read_file(self, file_path: str) -> "str | tuple[None, dict]":
+    def delegate(self, task: str, context: str) -> str:
+        """Delegate a focused exploration or research task to a subagent.
+        Provide 'context' with the relevant background the subagent needs (file paths,
+        goal of the main task, key names/symbols). The subagent starts fresh with only
+        that context, reads files, runs targeted bash commands, and returns a structured report.
+        Use when understanding a file or codebase section would crowd the main context.
+
+        Tags:
+            delegate, subagent, explore, analyze, file, code, read, understand, investigate
+
+        Args:
+            task: What the subagent should do. Example: 'Read llm.py and explain how before_tool_call hooks work'
+            context: Relevant background from the main agent. Include file paths, goal, and key names.
+                Example: 'We are adding a hook to the agent loop. Relevant files: agent.py, llm.py at /abs/path/'
+        """
+        from my_coding_agent.agent import Agent  # lazy import — avoids circular dependency
+        from my_coding_agent.llm import OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
+
+        subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
+        system_prompt = (
+            "You are a focused code exploration subagent. You receive a task and context from the main agent. "
+            "Read files, run targeted bash commands, understand what is asked, and write a clear structured report. "
+            "Do NOT modify any files. Be concise — the main agent only needs the key findings."
+        )
+        agent = Agent(
+            api_url=OMLX_API_URL,
+            api_key=OMLX_API_KEY,
+            model=OMLX_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Context:\n{context}\n\nTask:\n{task}"},
+            ],
+            tools=subagent_tools,
+            label="SubAgent",
+        )
+        messages = agent.run(max_steps=5)
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                return msg["content"]
+        return "(subagent produced no report)"
+
+    def read_file(self, file_path: str) -> str:
         """Read and return the full contents of a file at the given file_path.
         Use to inspect source code, configs, or any text file before editing.
 
@@ -201,8 +243,6 @@ class ToolsRegistry:
             return f"Error: file not found: {file_path}"
         except Exception as e:
             return f"Error reading {file_path}: {e}"
-        if len(content) > ARTIFACT_THRESHOLD:
-            return None, {"file_path": file_path, "content": content, "size": len(content)}
         return content
 
     @staticmethod
