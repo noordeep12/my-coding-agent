@@ -27,7 +27,7 @@ _CUSTOM_LEVELS: Dict[str, int] = {
 # ── Colors per level (full-line coloring) ─────────────────────────────────────
 _LEVEL_COLORS: Dict[str, str] = {
     "TOOL":     Fore.MAGENTA,
-    "API":      Fore.WHITE,
+    "API":      Fore.CYAN,
     "LLM":      Fore.YELLOW,
     "DEBUG":    Style.DIM,
     "INFO":     Fore.WHITE,
@@ -506,7 +506,7 @@ def print_run_summary(
             for c in internal_calls:
                 by_kind[c.get("kind", "internal")].append(str(c["call"]))
             parts = [f"{_KIND_LABEL.get(k, k)}: #{', #'.join(nums)}" for k, nums in by_kind.items()]
-            note = "harness calls (excluded from chart) — " + "  ·  ".join(parts)
+            note = "harness events — " + "  ·  ".join(parts)
             note_vis = f"  {note}"
             pad = W - len(note_vis)
             ANNOT = Fore.YELLOW + Style.DIM

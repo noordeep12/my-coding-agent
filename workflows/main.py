@@ -181,7 +181,10 @@ def main(prompt, interactive, discover, max_steps, analyze):
 
     # ── step 2: main agent ─────────────────────────────────────────────────────
     click.secho("\n● Main Agent", fg="cyan", bold=True, err=True)
-    tools = _all_tools()
+    # tools = _all_tools()
+    tools = [
+        tool(ToolsRegistry.bash)
+    ]
 
     agent = Agent(
         messages=[
