@@ -338,31 +338,31 @@ class LLM:
             args = {k: v for k, v in args.items() if k in valid}
         return args
 
-    def before_tool_call(self, func_name: str, args: dict) -> dict | None:
+    def before_tool_call(self, tool_call_id: str, func_name: str, args: dict) -> dict | None:
         """Runs before every tool dispatch: alias-remap args, then apply the user hook.
 
         Returns the (possibly modified) args to proceed, or None to skip the call.
         """
         args = self._apply_arg_aliases(func_name, args)
         args = self._strip_unknown_args(func_name, args)
-        self.logger.tool(f"before_hook → {func_name}({args}) [after alias remapping]")
+        self.logger.tool(f"{tool_call_id} → before_hook {func_name}({args}) [after alias remapping]")
         result = self._before_hook(func_name, args)
         if result is None:
-            self.logger.tool(f"before_hook skipped {func_name}")
+            self.logger.tool(f"{tool_call_id} → before_hook skipped {func_name}")
         elif result != args:
-            self.logger.tool(f"before_hook modified {func_name} args: {result}")
+            self.logger.tool(f"{tool_call_id} → before_hook modified {func_name} args: {result}")
         return result
 
-    def after_tool_call(self, func_name: str, args: dict, result: str) -> str:
+    def after_tool_call(self, tool_call_id: str, func_name: str, args: dict, result: str) -> str:
         """Runs after every tool dispatch: apply the user hook to the result."""
-        self.logger.tool(f"after_hook → {func_name}({args}) → {result}")
+        self.logger.tool(f"{tool_call_id} → after_hook {func_name}({args}) → {result}")
         try:
             modified = self._after_hook(func_name, args, result)
         except Exception as exc:
-            self.logger.error(f"after_hook raised {type(exc).__name__} for {func_name}: {exc}")
+            self.logger.error(f"{tool_call_id} → after_hook raised {type(exc).__name__} for {func_name}: {exc}")
             return result
         if modified != result:
-            self.logger.tool(f"after_hook modified result for {func_name}")
+            self.logger.tool(f"{tool_call_id} → after_hook modified result for {func_name}")
         return modified
 
     def _dispatch_tool(self, registry: ToolsRegistry, func_name: str, args: dict, tool_call_id: str) -> tuple[str, bool, bool]:
@@ -469,7 +469,7 @@ class LLM:
                 continue
 
             # Run the before_tool_call hook, which can modify args or return None to skip the call.
-            args = self.before_tool_call(func_name, args)
+            args = self.before_tool_call(tool_call_id, func_name, args)
             if args is None:
                 messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": "(tool call skipped)", "status": "skipped"})
                 records.append({"name": func_name, "args": {}, "ok": False, "error": "skipped", "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "skipped"})
@@ -480,7 +480,7 @@ class LLM:
             result, status, record = self.invoke_tool(tool_call_id, func_name, args, registry, tool_call)
 
             # Post-process the result before sending it back to the LLM.
-            result = self.after_tool_call(func_name, args, result)
+            result = self.after_tool_call(tool_call_id, func_name, args, result)
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": result, "status": status})
             records.append(record)
 
