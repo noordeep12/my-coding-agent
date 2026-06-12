@@ -323,14 +323,14 @@ def test_invoke_tool_unknown_tool_returns_error(bare_llm):
 
 
 def test_invoke_tool_recoverable_exception_returns_error(bare_llm):
-    """read_file with a traversal path raises ValueError, a recoverable error."""
+    """read_file traversal raises PathTraversalError (a ValueError), recoverable."""
     bare_llm._session_log_path = None
     reg = ToolsRegistry()  # base_dir = cwd
     result, status, record = bare_llm.invoke_tool(
         "c1", "read_file", {"file_path": "../../../etc/passwd"}, reg, {}
     )
     assert status == "error"
-    assert "ValueError" in result
+    assert "PathTraversalError" in result
     assert record["ok"] is False
 
 

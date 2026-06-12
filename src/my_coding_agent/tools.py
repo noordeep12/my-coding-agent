@@ -8,6 +8,8 @@ from typing import Any, Callable
 import html2text
 import httpx
 
+from .exceptions import PathTraversalError, ToolDefinitionError
+
 
 def _parse_tags_section(docstring: str) -> list[str]:
     """Extract tags from a Google-style Tags: section (comma-separated on one line)."""
@@ -83,7 +85,10 @@ def function_to_json(func: Callable[..., Any]) -> dict:
     try:
         signature = inspect.signature(func)
     except ValueError as e:
-        raise ValueError(f"Failed to get signature for function {func.__name__}: {e}")
+        raise ToolDefinitionError(
+            f"Failed to get signature for function {func.__name__}: {e}",
+            hint="Tool functions must have an inspectable signature.",
+        ) from e
 
     docstring = inspect.cleandoc(func.__doc__ or "")
     param_descriptions = _parse_args_section(docstring)
@@ -151,16 +156,17 @@ class ToolsRegistry:
         """Resolve file_path against the workspace base, rejecting any escape.
 
         Relative paths are resolved under the base; absolute paths are allowed
-        only when they fall inside the base. Raises ValueError on path traversal.
+        only when they fall inside the base. Raises PathTraversalError on
+        path traversal.
         """
         candidate = Path(file_path)
         target = candidate if candidate.is_absolute() else self._base_dir / candidate
         target = target.resolve()
         if not target.is_relative_to(self._base_dir):
-            raise ValueError(
+            raise PathTraversalError(
                 f"Path traversal detected: '{file_path}' resolves outside "
-                f"the workspace base '{self._base_dir}'. "
-                "Use a path inside the workspace."
+                f"the workspace base '{self._base_dir}'.",
+                hint="Use a path inside the workspace.",
             )
         return target
 

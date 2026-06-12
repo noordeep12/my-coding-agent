@@ -10,6 +10,7 @@ import httpx
 from dotenv import load_dotenv
 from httpx import Response
 
+from .exceptions import APIResponseError
 from .logger import get_logger
 from .tools import ARTIFACT_THRESHOLD, ToolsRegistry
 from .utils import extract_message, parse_tool_args
@@ -208,7 +209,7 @@ class LLM:
             The raw ``httpx.Response`` from the completions endpoint.
 
         Raises:
-            ValueError: If the server returns a non-JSON body.
+            APIResponseError: If the server returns a non-JSON body.
             httpx.HTTPError: If the request cannot reach the server after the
                 transient-failure retries are exhausted.
         """
@@ -239,9 +240,11 @@ class LLM:
         try:
             data = resp.json()
         except Exception as exc:
-            raise ValueError(
+            raise APIResponseError(
                 f"API returned non-JSON response (HTTP {resp.status_code}): {exc}. "
-                f"Body prefix: {resp.text[:200]!r}"
+                f"Body prefix: {resp.text[:200]!r}",
+                hint="Check that api_url points at an OpenAI-compatible endpoint "
+                "and the server is healthy.",
             ) from exc
         self.logger.debug("Response body: %s", json.dumps(data, indent=4))
 
