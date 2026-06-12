@@ -124,7 +124,9 @@ def tool(func) -> dict:
     return function_to_json(func)
 
 
-ARTIFACT_THRESHOLD = 8_000  # chars; bash output above this triggers artifact separation
+# Single source of truth for the large-tool-output boundary (chars). bash output
+# above this triggers artifact separation; llm.MAX_TOOL_OUTPUT_CHARS aliases this.
+ARTIFACT_THRESHOLD = 8_000
 
 
 class ToolsRegistry:

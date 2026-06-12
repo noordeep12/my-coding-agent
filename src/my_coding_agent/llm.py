@@ -7,7 +7,7 @@ import subprocess
 
 from dotenv import load_dotenv
 from .logger import get_logger
-from .tools import ToolsRegistry
+from .tools import ARTIFACT_THRESHOLD, ToolsRegistry
 from .utils import extract_message, parse_tool_args
 from httpx import Response
 
@@ -16,7 +16,9 @@ OMLX_API_URL = os.environ.get("OMLX_API_URL", "http://127.0.0.1:8321/v1")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "changeme")
 OMLX_MODEL   = os.environ.get("OMLX_MODEL",   "Qwen3.6-35B-A3B-4bit")
 
-MAX_TOOL_OUTPUT_CHARS = 8_000
+# Single source of truth lives in tools.ARTIFACT_THRESHOLD: the artifact-separation
+# boundary and this truncation boundary are the same concept (large tool output).
+MAX_TOOL_OUTPUT_CHARS = ARTIFACT_THRESHOLD
 
 # Tools always included regardless of routing decision.
 _BASELINE_TOOLS = {"bash", "read_file", "read_tool_artifact"}
