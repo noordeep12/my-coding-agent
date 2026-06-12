@@ -7,6 +7,15 @@ from pathlib import Path
 
 @dataclass
 class ContextHandoff:
+    """Capture the state transferred when a run hands off to a fresh context.
+
+    Hold the originating agent's label, step number, and token usage alongside the
+    LLM-written ``content`` summarizing progress and remaining work. Render that
+    state as a seed user message for the continuation agent (``to_user_message``)
+    and persist it as a markdown file under ``.my_coding_agent/handoffs/``
+    (``save``).
+    """
+
     agent_label: str
     step_num: int
     prompt_tokens: int
@@ -19,6 +28,7 @@ class ContextHandoff:
 
     @property
     def context_pct(self) -> float:
+        """Return prompt tokens as a percent of the context window (0 if unknown)."""
         if not self.context_window:
             return 0.0
         return self.prompt_tokens / self.context_window * 100

@@ -1,3 +1,12 @@
+"""Tool registry and tool-definition conversion.
+
+Defines ``ToolsRegistry``, whose methods are the tools the agent can call (shell,
+file read/write, URL fetch, artifact retrieval, and subagent delegation), and the
+``function_to_json``/``tool`` converter that turns a Python function into an
+OpenAI-compatible tool definition by inspecting its signature and Google-style
+docstring.
+"""
+
 import inspect
 import json
 import re
@@ -137,6 +146,16 @@ ARTIFACT_THRESHOLD = 8_000
 
 
 class ToolsRegistry:
+    """Hold the callable tools exposed to the agent.
+
+    Each public method is a tool the LLM can invoke: ``bash`` runs a shell command,
+    ``read_file``/``write_file`` access the workspace (confined to ``base_dir`` to
+    block path traversal), ``read_article`` fetches a URL as markdown,
+    ``read_tool_artifact`` retrieves a previously stored large output, and
+    ``delegate`` spawns a read-only subagent. Large outputs are stored as artifacts
+    and summarized for the model rather than returned inline.
+    """
+
     def __init__(
         self,
         artifacts: dict | None = None,

@@ -1,3 +1,10 @@
+"""Public API for my-coding-agent.
+
+Re-exports the agent harness's core types — the ``Agent`` loop, the ``LLM``
+client, the ``ToolsRegistry`` and ``tool`` converter, the ``ContextHandoff``
+state object, and the exception hierarchy.
+"""
+
 from .agent import Agent
 from .exceptions import (
     APIResponseError,

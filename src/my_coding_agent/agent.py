@@ -1,3 +1,12 @@
+"""Agentic loop built on top of the LLM client.
+
+Defines ``Agent``, which extends ``LLM`` to run the step-by-step reason-act loop:
+per-step context pre-flight checks, tool routing, model calls, tool dispatch, and
+token accounting. When the context window fills, it performs a structured handoff
+and spawns a fresh continuation agent. After the run it persists session data and
+prints the run summary.
+"""
+
 import json
 import time
 import uuid
@@ -33,6 +42,15 @@ _HANDOFF_PROMPT = (
 
 
 class Agent(LLM):
+    """Run the main agentic loop over the LLM client.
+
+    Extend ``LLM`` to drive a bounded reason-act loop in ``run(max_steps)``. Each
+    step checks context usage (handing off to a fresh continuation agent when the
+    window nears full), routes the relevant tool subset, calls the model, dispatches
+    any tool calls, and tracks token usage. On completion it saves session data,
+    prints the run summary, and detaches the session log.
+    """
+
     # Messages from a continuation agent when a context reset fires mid-run.
     _continuation_result: list[dict[str, Any]]
 

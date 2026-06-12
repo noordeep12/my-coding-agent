@@ -1,3 +1,12 @@
+"""LLM HTTP client and tool-execution machinery.
+
+Defines ``LLM``, the base class that owns the ``httpx`` session, calls the
+OpenAI-compatible ``/chat/completions`` endpoint with retries, and records token
+usage per call. It also handles tool selection (``route_tools``), tool dispatch
+with argument-correction retries (``execute_tool_calls``/``invoke_tool``), and
+artifact separation for oversized tool outputs.
+"""
+
 import inspect
 import json
 import os
@@ -51,6 +60,16 @@ def _search_bracketed(text: str) -> str:
 
 
 class LLM:
+    """HTTP client for an OpenAI-compatible LLM server with tool execution.
+
+    Own the ``httpx`` session and issue chat-completion requests, recording every
+    call's token usage in ``self.llm_calls`` tagged by ``kind``. Provide two-phase
+    tool routing, tool-call dispatch with argument-correction retries, and artifact
+    separation that stores oversized tool outputs in ``self.tool_artifacts`` and
+    returns a summary to the model. Construction probes the server to discover the
+    model's context window, so it performs a network call.
+    """
+
     def __init__(
         self,
         api_url: str = OMLX_API_URL,

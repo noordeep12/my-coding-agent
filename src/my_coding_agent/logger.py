@@ -1,3 +1,11 @@
+"""Logging, stderr tee/session-log capture, and terminal-UI rendering.
+
+Provides the package logger with custom TOOL/API/LLM levels, a stderr handler that
+follows ``sys.stderr`` replacement, the ``_TeeStream`` that fans session output to
+plain and ANSI-colored log files (``attach_session_log``/``detach_session_log``),
+and the rich box-drawn ``print_banner`` and ``print_run_summary`` renderers.
+"""
+
 import io
 import logging
 import os
@@ -68,7 +76,10 @@ class _PackageLogger(logging.Logger):
 
 # ── Formatter ─────────────────────────────────────────────────────────────────
 class ColoredFormatter(logging.Formatter):
+    """Format log records with a per-level ANSI color wrapping the whole line."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Attach the level's color/reset codes to the record and format it."""
         color = _LEVEL_COLORS.get(record.levelname, "")
         record.color = color
         record.reset = Style.RESET_ALL
@@ -242,6 +253,21 @@ def print_banner(  # noqa: C901
     context_reset_threshold: float = 0.75,
     session_id: str | None = None,
 ) -> None:
+    """Render the startup banner box to stderr.
+
+    Draw the ASCII logo and a panel of run metadata — model, tool count, context
+    window, message count, reset threshold, workspace, git branch, session id, and
+    timestamp — using box-drawing characters and color.
+
+    Args:
+        label: Agent label shown in the banner title.
+        model: Model id being run.
+        tools: Tool definitions; their count and names are listed.
+        context_window: Model context window in tokens, or None if unknown.
+        n_messages: Number of seed messages already in the conversation.
+        context_reset_threshold: Fraction of the window that triggers a handoff.
+        session_id: Session identifier; a random one is shown if omitted.
+    """
     W = 68  # visible inner width (between the two ║)
     R: str = Style.RESET_ALL
     BORDER: str = Fore.CYAN + Style.BRIGHT
@@ -730,6 +756,25 @@ def print_run_summary(
     started_at: str = "",
     tools: list | None = None,
 ) -> None:
+    """Render the end-of-run summary box to stderr.
+
+    Draw a box reporting the run outcome: step count, stop reason, elapsed time and
+    throughput, token totals, a per-call token-consumption chart, the last model
+    message, and the tool-call and context-reset sections.
+
+    Args:
+        steps: Number of loop steps executed.
+        max_steps: Configured step budget.
+        stop_reason: Why the loop ended (e.g. ``stop``, ``max_steps``).
+        prompt_tokens: Total prompt tokens across the run.
+        completion_tokens: Total completion tokens across the run.
+        total_tokens: Combined token total.
+        context_window: Model context window in tokens, or None if unknown.
+        elapsed_seconds: Wall-clock run duration.
+        tool_records: Per-tool-call records summarized in the tool section.
+        handoff_records: Context-reset/handoff records, if any.
+        llm_calls: Per-call usage entries plotted in the token chart.
+    """
     s = _SummaryStyle()
     metric_row1 = s.metric_row1
 
