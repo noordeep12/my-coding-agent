@@ -7,6 +7,8 @@ WITHOUT ``__init__`` via ``object.__new__`` — only the attributes the methods
 under test actually read are attached.
 """
 
+import json
+
 from my_coding_agent.agent import Agent
 
 # --- helpers -----------------------------------------------------------------
@@ -243,3 +245,99 @@ def test_run_returns_continuation_result_on_reset(silent_logger, mocker):
     result = agent.run(max_steps=5)
     assert result == cont
     agent.chat_completion.assert_not_called()
+
+
+# --- _generate_handoff -------------------------------------------------------
+
+
+def test_generate_handoff_builds_and_saves(silent_logger, mocker):
+    agent = _make_agent(
+        silent_logger,
+        messages=[{"role": "user", "content": "task"}],
+        context_window=10000,
+    )
+    mocker.patch.object(
+        agent, "chat_completion",
+        return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
+    )
+    saved = mocker.patch(
+        "my_coding_agent.agent.ContextHandoff.save", return_value="/tmp/h.json")
+    handoff = agent._generate_handoff(step_num=2, prompt_tokens=8000)
+    assert handoff.content == "handoff summary"
+    assert handoff.step_num == 2
+    saved.assert_called_once()
+
+
+# --- _print_summary ----------------------------------------------------------
+
+
+def test_print_summary_forwards_aggregates(silent_logger, mocker):
+    agent = _make_agent(
+        silent_logger,
+        messages=[{"role": "assistant", "content": "final answer"}],
+        context_window=10000,
+        last_prompt_tokens=2000,
+        llm_calls=[{"prompt": 100, "completion": 20, "total": 120}],
+        model="m",
+        session_id="s1",
+        started_at="2026-06-12",
+    )
+    spy = mocker.patch("my_coding_agent.agent.print_run_summary")
+    agent._print_summary(max_steps=5)
+    kwargs = spy.call_args.kwargs
+    assert kwargs["prompt_tokens"] == 100
+    assert kwargs["completion_tokens"] == 20
+    assert kwargs["last_message"] == "final answer"
+
+
+# --- _save_session_data ------------------------------------------------------
+
+
+def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
+    agent = _make_agent(
+        silent_logger,
+        messages=[{"role": "assistant", "content": "done"}],
+        context_window=10000,
+        last_prompt_tokens=0,
+        llm_calls=[{"prompt": 10, "completion": 5, "total": 15}],
+        model="m",
+        session_id="sess9",
+        started_at="2026-06-12",
+        tool_artifacts={},
+    )
+    mocker.patch("my_coding_agent.agent.Path", lambda *a: tmp_path.joinpath(*a))
+    agent._save_session_data(max_steps=5)
+    out = tmp_path / ".my_coding_agent" / "sess9" / "session_data.json"
+    data = json.loads(out.read_text())
+    assert data["session_id"] == "sess9"
+    assert data["total_usage"]["total_tokens"] == 15
+    assert data["last_message"] == "done"
+
+
+# --- _spawn_continuation -----------------------------------------------------
+
+
+def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
+    agent = _make_agent(
+        silent_logger,
+        messages=[{"role": "system", "content": "sys"},
+                  {"role": "user", "content": "u"}],
+        api_url="http://x",
+        api_key="k",
+        model="m",
+        context_reset_threshold=0.75,
+        _before_hook=lambda n, a: a,
+        _after_hook=lambda n, a, r: r,
+    )
+    handoff = mocker.Mock()
+    handoff.to_user_message.return_value = {"role": "user", "content": "HANDOFF"}
+    fake_cont = mocker.Mock()
+    fake_cont.run.return_value = [{"role": "assistant", "content": "cont done"}]
+    cont_cls = mocker.patch("my_coding_agent.agent.Agent", return_value=fake_cont)
+
+    result = agent._spawn_continuation(handoff, max_steps=5)
+    assert result == [{"role": "assistant", "content": "cont done"}]
+    # Continuation is seeded with the system message + the handoff user message.
+    seeded = cont_cls.call_args.kwargs["messages"]
+    assert seeded[0] == {"role": "system", "content": "sys"}
+    assert seeded[1] == {"role": "user", "content": "HANDOFF"}

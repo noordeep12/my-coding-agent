@@ -121,3 +121,21 @@ def test_get_logger_emits_at_custom_level(caplog):
     with caplog.at_level(lg.TOOL, logger="test-logger-emit"):
         log.tool("a tool message")
     assert "a tool message" in caplog.text
+
+
+# --- attach_session_log / detach_session_log ---------------------------------
+
+
+def test_attach_then_detach_session_log_tees_and_restores(tmp_path, monkeypatch):
+    original = lg.sys.stderr
+    plain_path = tmp_path / "logs" / "stderr.log"
+    handle = lg.attach_session_log(plain_path)
+    try:
+        # stderr is now a TeeStream; a write fans out to the plain log file.
+        lg.sys.stderr.write("hello\n")
+        lg.sys.stderr.flush()
+    finally:
+        lg.detach_session_log(handle)
+    assert lg.sys.stderr is original              # stderr restored
+    assert "hello" in plain_path.read_text()       # plain log captured the write
+    assert (tmp_path / "logs" / "stderr_colored.log").exists()

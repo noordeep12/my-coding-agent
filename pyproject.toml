@@ -69,14 +69,14 @@ exclude_dirs = ["tests", ".venv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# NOTE: --cov-fail-under is set to 30 (just below the current ~32% achieved by
-# this starter suite), NOT the §30 target of 85. Shipping a passing gate that the
-# team ratchets up as coverage grows beats a permanently-red 85 gate on day one.
-addopts = "--cov=my_coding_agent --cov-branch --cov-report=term-missing --cov-fail-under=30"
+# Coverage gate per CONTRIBUTE.md §30: 85% minimum. Measured over the library
+# package (src/my_coding_agent); the agents/workflows app entrypoints are not in
+# the gated scope (they are thin glue exercised end-to-end, not unit-gated here).
+addopts = "--cov=my_coding_agent --cov-branch --cov-report=term-missing --cov-fail-under=85"
 
 [tool.coverage.run]
 branch = true
-source = ["src/my_coding_agent", "agents", "workflows"]
+source = ["src/my_coding_agent"]
 
 [tool.coverage.report]
 show_missing = true
