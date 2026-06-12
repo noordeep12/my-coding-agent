@@ -214,7 +214,7 @@ class LLM:
         resp = self._request_with_retry("GET", self.api_url + "/models")
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
-        self.logger.api(f"Models: {models}")
+        self.logger.api("Models: %s", models)
         self._context_window = self.DEFAULT_CONTEXT_WINDOW
         for m in data:
             if m["id"] == self.model:
@@ -226,7 +226,7 @@ class LLM:
                 )
                 break
         self.logger.api(
-            f"Context window for {self.model}: {self._context_window} tokens"
+            "Context window for %s: %s tokens", self.model, self._context_window
         )
         return models
 
@@ -262,7 +262,10 @@ class LLM:
         """
         call_num = len(self.llm_calls) + 1
         self.logger.api(
-            f"→ POST {self.api_url}/chat/completions  [call #{call_num}, kind={kind}]"
+            "→ POST %s/chat/completions  [call #%d, kind=%s]",
+            self.api_url,
+            call_num,
+            kind,
         )
         self.logger.debug(
             "Request body: %s",
@@ -281,8 +284,11 @@ class LLM:
             json=body,
         )
         self.logger.api(
-            f"← {resp.status_code} ({len(resp.content)} bytes)  "
-            f"[call #{call_num}, kind={kind}]"
+            "← %d (%d bytes)  [call #%d, kind=%s]",
+            resp.status_code,
+            len(resp.content),
+            call_num,
+            kind,
         )
         try:
             data = resp.json()
@@ -306,10 +312,12 @@ class LLM:
             }
         )
         self.logger.api(
-            f"call #{call_num} [{kind}] usage — "
-            f"prompt: {usage.get('prompt_tokens', 0):,}, "
-            f"completion: {usage.get('completion_tokens', 0):,}, "
-            f"total: {usage.get('total_tokens', 0):,}"
+            "call #%d [%s] usage — prompt: %s, completion: %s, total: %s",
+            call_num,
+            kind,
+            f"{usage.get('prompt_tokens', 0):,}",
+            f"{usage.get('completion_tokens', 0):,}",
+            f"{usage.get('total_tokens', 0):,}",
         )
 
         try:
@@ -351,7 +359,7 @@ class LLM:
         if not non_baseline:
             names = [t["function"]["name"] for t in all_tools]
             self.logger.tool(
-                f"router phase-1 → {names} (no non-baseline tools, skipped)"
+                "router phase-1 → %s (no non-baseline tools, skipped)", names
             )
             return all_tools
 
@@ -363,7 +371,7 @@ class LLM:
         if keyword_matched:
             selected = baseline + keyword_matched
             names = [t["function"]["name"] for t in selected]
-            self.logger.tool(f"router phase-1 → {names}")
+            self.logger.tool("router phase-1 → %s", names)
             return selected
 
         # Phase 1b: check if the message matches any baseline tool's tags.
@@ -374,7 +382,7 @@ class LLM:
         if baseline_matched:
             names = [t["function"]["name"] for t in all_tools]
             self.logger.tool(
-                f"router phase-1 → {names} (baseline tag match, skipped phase-2)"
+                "router phase-1 → %s (baseline tag match, skipped phase-2)", names
             )
             return all_tools
 
@@ -421,7 +429,7 @@ class LLM:
         selected_names = set(routed_names) | _BASELINE_TOOLS
         selected = [t for t in all_tools if t["function"]["name"] in selected_names]
         self.logger.tool(
-            f"router phase-2 → {[t['function']['name'] for t in selected]}"
+            "router phase-2 → %s", [t["function"]["name"] for t in selected]
         )
         return selected
 
@@ -901,7 +909,7 @@ class LLM:
         registry = ToolsRegistry(
             artifacts=self.tool_artifacts, tools=getattr(self, "tools", [])
         )
-        self.logger.tool(f"dispatch: {len(tool_calls)} tool call(s)")
+        self.logger.tool("dispatch: %d tool call(s)", len(tool_calls))
 
         for tool_call in tool_calls:
             # Parse and validate the raw tool call first, to catch issues
