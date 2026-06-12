@@ -22,7 +22,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 
-from my_coding_agent import Agent, ToolsRegistry, tool
+from my_coding_agent import Agent, ToolsRegistry, __version__, tool
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -159,7 +159,7 @@ def _read_interactive_prompt() -> str:
     show_default=True,
     help="Run the Session Analyzer Agent after the Main Agent completes.",
 )
-@click.version_option(version="0.1.0", prog_name="my-coding-agent")
+@click.version_option(version=__version__, prog_name="my-coding-agent")
 def main(prompt, interactive, discover, max_steps, analyze):
     """Run the full coding-agent workflow.
 

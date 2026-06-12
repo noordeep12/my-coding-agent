@@ -13,10 +13,20 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 
 from colorama import Fore, Style  # type: ignore[import-untyped]
 from rich.console import Console
 from rich.markdown import Markdown
+
+# Resolve the package version from installed metadata (single source of truth:
+# pyproject [project] version) rather than reimporting the top-level package,
+# which would create a circular import — terminal_ui is loaded while
+# ``my_coding_agent.__init__`` is still executing.
+try:
+    __version__ = version("my-coding-agent")
+except PackageNotFoundError:  # not installed (e.g. source tree without install)
+    __version__ = "0.0.0"
 
 
 # ── Git helper ────────────────────────────────────────────────────────────────
@@ -74,7 +84,7 @@ def print_banner(  # noqa: C901
         r" ██║     ██║   ██║██║  ██║██╔══╝  ",
         r" ╚██████╗╚██████╔╝██████╔╝███████╗",
         r"  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
-        r"     MY CODING AGENT  v0.1.0       ",
+        f"MY CODING AGENT  v{__version__}",
     ]
 
     branch = _git_branch()
