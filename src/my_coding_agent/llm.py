@@ -6,6 +6,8 @@ import re
 import subprocess
 import time
 
+from typing import Any, Callable
+
 from dotenv import load_dotenv
 from .logger import get_logger
 from .tools import ARTIFACT_THRESHOLD, ToolsRegistry
@@ -38,13 +40,13 @@ _TRANSIENT_HTTP_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTi
 class LLM:
     def __init__(
         self,
-        api_url=OMLX_API_URL,
-        api_key=OMLX_API_KEY,
-        model=OMLX_MODEL,
-        before_tool_call=None,
-        after_tool_call=None,
+        api_url: str = OMLX_API_URL,
+        api_key: str = OMLX_API_KEY,
+        model: str = OMLX_MODEL,
+        before_tool_call: Callable[..., Any] | None = None,
+        after_tool_call: Callable[..., Any] | None = None,
         timeout: float = DEFAULT_HTTP_TIMEOUT,
-    ):
+    ) -> None:
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
@@ -90,7 +92,7 @@ class LLM:
                 time.sleep(backoff)
         raise last_exc
 
-    def available_models(self) -> list:
+    def available_models(self) -> list[str]:
         resp = self._request_with_retry("GET", self.api_url + "/models")
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
@@ -109,7 +111,13 @@ class LLM:
         self.logger.api(f"Context window for {self.model}: {self.context_window} tokens")
         return models
 
-    def chat_completion(self, messages, tools=None, kind: str = "main", max_tokens: int | None = None) -> Response:
+    def chat_completion(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        kind: str = "main",
+        max_tokens: int | None = None,
+    ) -> Response:
         call_num = len(self.llm_calls) + 1
         self.logger.api(f"→ POST {self.api_url}/chat/completions  [call #{call_num}, kind={kind}]")
         self.logger.debug("Request body: %s", json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4))
@@ -163,7 +171,7 @@ class LLM:
                 self.logger.llm("Content: \n\n%s\n", content)
         return resp
     
-    def route_tools(self, message: str, all_tools: list) -> list:
+    def route_tools(self, message: str, all_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Return the subset of all_tools relevant to message.
 
         Phase 1 — keyword match against each tool's tags (zero cost).
@@ -486,7 +494,9 @@ class LLM:
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"}
 
-    def execute_tool_calls(self, message) -> tuple[list, list]:
+    def execute_tool_calls(
+        self, message: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Dispatch all tool calls in message, returning (tool_messages, call_records).
 
         Success record: {"name": str, "args": dict, "ok": True}

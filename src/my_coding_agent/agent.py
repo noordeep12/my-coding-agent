@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 _HANDOFF_PROMPT = (
     "CONTEXT RESET REQUIRED: your context window is nearly full. "
@@ -27,16 +28,16 @@ class Agent(LLM):
 
     def __init__(
         self,
-        api_url=OMLX_API_URL,
-        api_key=OMLX_API_KEY,
-        model=OMLX_MODEL,
-        messages=None,
-        tools=None,
-        label="Agent",
+        api_url: str = OMLX_API_URL,
+        api_key: str = OMLX_API_KEY,
+        model: str = OMLX_MODEL,
+        messages: list[dict[str, Any]] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        label: str = "Agent",
         context_reset_threshold: float = 0.75,
-        before_tool_call=None,
-        after_tool_call=None,
-    ):
+        before_tool_call: Callable[..., Any] | None = None,
+        after_tool_call: Callable[..., Any] | None = None,
+    ) -> None:
         super().__init__(api_url, api_key, model, before_tool_call, after_tool_call)
         self.label = label
         self.messages = messages or []
@@ -65,7 +66,7 @@ class Agent(LLM):
         )
         self.logger.info("%s initialized with %d messages and %d tools", label, len(self.messages), len(self.tools))
     
-    def add_message(self, message) -> None:
+    def add_message(self, message: dict[str, Any]) -> None:
         self.messages.append(message)
         message_type = message.get("role", "unknown").upper()
         self.logger.info("%s message added to the conversation", message_type)
@@ -151,7 +152,7 @@ class Agent(LLM):
             artifacts_out.write_text(json.dumps(self.tool_artifacts, indent=2))
             self.logger.info("Tool artifacts saved → %s", artifacts_out)
 
-    def run(self, max_steps=5):
+    def run(self, max_steps: int = 5) -> list[dict[str, Any]]:
         # reset stats for this run
         self.step_num = 0
         self.stop_reason = "max_steps"

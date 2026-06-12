@@ -6,7 +6,6 @@ import uuid
 import logging
 import subprocess
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from colorama import Fore, Back, Style
 from rich.console import Console
@@ -18,14 +17,14 @@ TOOL = 15
 API  = 25
 LLM  = 35
 
-_CUSTOM_LEVELS: Dict[str, int] = {
+_CUSTOM_LEVELS: dict[str, int] = {
     "TOOL": TOOL,
     "API":  API,
     "LLM":  LLM,
 }
 
 # ── Colors per level (full-line coloring) ─────────────────────────────────────
-_LEVEL_COLORS: Dict[str, str] = {
+_LEVEL_COLORS: dict[str, str] = {
     "TOOL":     Fore.MAGENTA,
     "API":      Fore.CYAN,
     "LLM":      Fore.YELLOW,
@@ -181,10 +180,10 @@ def print_banner(
     label: str,
     model: str,
     tools: list,
-    context_window: Optional[int] = None,
+    context_window: int | None = None,
     n_messages: int = 0,
     context_reset_threshold: float = 0.75,
-    session_id: Optional[str] = None,
+    session_id: str | None = None,
 ) -> None:
     W = 68  # visible inner width (between the two ║)
     R = Style.RESET_ALL
@@ -296,18 +295,18 @@ def print_run_summary(
     prompt_tokens: int,
     completion_tokens: int,
     total_tokens: int,
-    context_window: Optional[int] = None,
+    context_window: int | None = None,
     elapsed_seconds: float = 0.0,
-    tool_records: Optional[list] = None,
-    handoff_records: Optional[list] = None,
+    tool_records: list | None = None,
+    handoff_records: list | None = None,
     agent_name: str = "Agent",
     last_message: str = "",
     last_prompt_tokens: int = 0,
-    llm_calls: Optional[list] = None,
+    llm_calls: list | None = None,
     model: str = "",
     session_id: str = "",
     started_at: str = "",
-    tools: Optional[list] = None,
+    tools: list | None = None,
 ) -> None:
     W = 110  # wider box for chart + session header
     R      = Style.RESET_ALL
@@ -357,7 +356,7 @@ def print_run_summary(
         inner = f"  {LABEL}{lbl}{R}: {VALUE}{val}{R}" + " " * max(pad, 0)
         return BORDER + "║" + inner + BORDER + "║" + R
 
-    def tool_call_rows(index: int, name: str, args: dict, ok: bool, status: str = "", artifact: bool = False, truncated: bool = False) -> List[str]:
+    def tool_call_rows(index: int, name: str, args: dict, ok: bool, status: str = "", artifact: bool = False, truncated: bool = False) -> list[str]:
         """One or more box rows for a single tool call, wrapping long args."""
         SKIP = Fore.YELLOW + Style.BRIGHT
         if status == "skipped":
@@ -385,7 +384,7 @@ def print_run_summary(
         content_w = W - MARGIN - len(prefix) - len(suffix)
 
         # split args_raw into lines of content_w
-        chunks: List[str] = []
+        chunks: list[str] = []
         remaining = args_raw
         while len(remaining) > content_w:
             # try to break at a comma+space boundary within the limit
@@ -399,7 +398,7 @@ def print_run_summary(
         chunks.append(remaining)
 
         colored_suffix = ")" + badges
-        rows: List[str] = []
+        rows: list[str] = []
         for ci, chunk in enumerate(chunks):
             is_last = ci == len(chunks) - 1
             if ci == 0:
@@ -416,13 +415,13 @@ def print_run_summary(
             rows.append(BORDER + "║" + inner + BORDER + "║" + R)
         return rows
 
-    def markdown_rows(md_text: str) -> List[str]:
+    def markdown_rows(md_text: str) -> list[str]:
         """Render markdown via rich and box each output line."""
         buf = io.StringIO()
         console = Console(file=buf, width=W - 4, force_terminal=True, highlight=False, no_color=False)
         console.print(Markdown(md_text))
         rendered = buf.getvalue()
-        rows: List[str] = []
+        rows: list[str] = []
         for line in rendered.splitlines():
             visible_len = len(ansi_re.sub("", line))
             pad = (W - 4) - visible_len
@@ -451,7 +450,7 @@ def print_run_summary(
     WARN     = Fore.YELLOW + Style.BRIGHT
     ansi_re  = re.compile(r"\x1b\[[0-9;]*m")
 
-    def token_chart_rows() -> List[str]:
+    def token_chart_rows() -> list[str]:
         usage = llm_calls or []
         if len(usage) < 1:
             return [metric_row1("TOKEN CHART", "no data")]
@@ -490,7 +489,7 @@ def print_run_summary(
         plt.title("Token consumption per main agent call")
         chart_str = plt.build()
 
-        rows: List[str] = []
+        rows: list[str] = []
         for line in chart_str.splitlines():
             if not ansi_re.sub("", line).strip():
                 continue
@@ -514,9 +513,9 @@ def print_run_summary(
 
         return rows or [empty_row()]
 
-    def handoff_rows(index: int, h: dict) -> List[str]:
+    def handoff_rows(index: int, h: dict) -> list[str]:
         """Render one handoff event as box rows."""
-        rows: List[str] = []
+        rows: list[str] = []
 
         # Line 1: index, step, context % at trigger
         line1_vis = f"  {index}. step {h['step']} — {h['ctx_pct']:.1f}% ctx used ({h['ctx_tokens']:,} / {context_window:,} tok)"
@@ -562,7 +561,7 @@ def print_run_summary(
     ws_str    = workspace if len(workspace) <= W - 16 else "…" + workspace[-(W - 17):]
     tools_str = str(len(tools)) if tools is not None else "—"
 
-    lines: List[str] = [
+    lines: list[str] = [
         "", top, empty_row(),
         title_row(f"▸  {agent_name.upper()}  —  RUN COMPLETE"),
         empty_row(), mid, empty_row(),
