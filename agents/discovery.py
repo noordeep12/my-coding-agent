@@ -13,6 +13,7 @@ Importable:
     run_discovery(force=True)
 """
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +22,15 @@ import click
 from my_coding_agent import Agent, tool, ToolsRegistry
 
 OUTPUT_PATH = ".my_coding_agent/discovery.md"
+
+
+def _git(*args: str) -> str:
+    """Run a git command (no shell) and return stripped stdout, or '' on failure."""
+    try:
+        result = subprocess.run(["git", *args], capture_output=True, text=True)
+    except (OSError, FileNotFoundError):
+        return ""
+    return result.stdout.strip()
 
 _DISCOVERY_USER_PROMPT = (
     "Explore the workspace and discover any relevant information that can help you "
@@ -74,9 +84,9 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
         f"- Current path: {os.getcwd()}\n"
         f"- Directory contents: {os.listdir(os.getcwd())}\n"
         f"- OS: {os.name}, Platform: {sys.platform}, User: {os.getlogin()}\n"
-        f"- Git status: {os.popen('git status').read().strip() if os.path.isdir('.git') else 'Not a git repository'}\n"
-        f"- Git branch: {os.popen('git rev-parse --abbrev-ref HEAD').read().strip() if os.path.isdir('.git') else 'N/A'}\n"
-        f"- Git recent commits:\n{os.popen('git log -5 --oneline').read().strip() if os.path.isdir('.git') else 'N/A'}\n"
+        f"- Git status: {_git('status') if os.path.isdir('.git') else 'Not a git repository'}\n"
+        f"- Git branch: {_git('rev-parse', '--abbrev-ref', 'HEAD') if os.path.isdir('.git') else 'N/A'}\n"
+        f"- Git recent commits:\n{_git('log', '-5', '--oneline') if os.path.isdir('.git') else 'N/A'}\n"
     )
 
     agent = Agent(

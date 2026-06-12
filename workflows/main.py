@@ -9,6 +9,7 @@ Run:
     uv run python workflows/main.py --help
 """
 import os
+import subprocess
 from pathlib import Path
 
 import inspect
@@ -30,6 +31,17 @@ _DEFAULT_PROMPT = (
 )
 
 
+def _git(*args: str) -> str:
+    """Run a git command (no shell) and return stripped stdout, or '' on failure."""
+    try:
+        result = subprocess.run(
+            ["git", *args], capture_output=True, text=True
+        )
+    except (OSError, FileNotFoundError):
+        return ""
+    return result.stdout.strip()
+
+
 def _system_prompt(tools: list) -> str:
     tool_docs = "\n".join(
         f"  - {t['function']['name']}("
@@ -44,9 +56,9 @@ def _system_prompt(tools: list) -> str:
         "Workspace:\n"
         f"  path     : {os.getcwd()}\n"
         f"  contents : {os.listdir(os.getcwd())}\n"
-        f"  git      : {os.popen('git status --short').read().strip() or 'clean'}\n"
-        f"  branch   : {os.popen('git rev-parse --abbrev-ref HEAD').read().strip()}\n"
-        f"  commits  :\n{os.popen('git log -5 --oneline').read().strip()}\n"
+        f"  git      : {_git('status', '--short') or 'clean'}\n"
+        f"  branch   : {_git('rev-parse', '--abbrev-ref', 'HEAD')}\n"
+        f"  commits  :\n{_git('log', '-5', '--oneline')}\n"
         + (
             "\nDiscovery notes are available at `.my_coding_agent/discovery.md` — "
             "use the read_file tool to consult them when you need codebase context."

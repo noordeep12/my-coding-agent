@@ -15,6 +15,7 @@ Importable:
 """
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,6 +24,15 @@ import click
 from my_coding_agent import Agent, tool, ToolsRegistry
 
 _BASE_DIR = Path(".my_coding_agent")
+
+
+def _git(*args: str) -> str:
+    """Run a git command (no shell) and return stripped stdout, or '' on failure."""
+    try:
+        result = subprocess.run(["git", *args], capture_output=True, text=True)
+    except (OSError, FileNotFoundError):
+        return ""
+    return result.stdout.strip()
 
 
 def _most_recent_session() -> str | None:
@@ -53,9 +63,9 @@ def _build_system_prompt(tools: list) -> str:
         f"  current directory contents : {os.listdir(os.getcwd())}\n"
         f"  machine os       : {os.name}, platform: {sys.platform}, user: {os.getlogin()}\n"
         + (
-            f"  git      : {os.popen('git status --short').read().strip() or 'clean'}\n"
-            f"  branch   : {os.popen('git rev-parse --abbrev-ref HEAD').read().strip()}\n"
-            f"  commits  :\n{os.popen('git log -5 --oneline').read().strip()}\n"
+            f"  git      : {_git('status', '--short') or 'clean'}\n"
+            f"  branch   : {_git('rev-parse', '--abbrev-ref', 'HEAD')}\n"
+            f"  commits  :\n{_git('log', '-5', '--oneline')}\n"
             if is_git else "  git      : not a git repository\n"
         )
         + "\nUse absolute paths when tool arguments requires files paths."
