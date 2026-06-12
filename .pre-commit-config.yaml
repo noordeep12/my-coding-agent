@@ -17,3 +17,11 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
+
+  - repo: local
+    hooks:
+      - id: commit-subject-length
+        name: commit subject max 72 chars
+        entry: python3 -c "import sys; s=open(sys.argv[1]).readline().rstrip(chr(10)); n=len(s); print(chr(10).join([f'Commit subject is {n} chars, max 72 allowed.', s])) if n > 72 else None; sys.exit(1 if n > 72 else 0)"
+        language: system
+        stages: [commit-msg]
