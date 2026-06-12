@@ -18,6 +18,12 @@ wheels/
 
 *.log
 
+# Test / coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 .my_coding_agent/handoffs/
 .my_coding_agent/
 .claude/
