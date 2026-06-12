@@ -70,6 +70,9 @@ A plain class whose methods are the tools the LLM can call:
 | `write_file(file_path, content)` | Writes a file, creating parent dirs |
 | `read_article(url)` | Fetches a URL and converts HTML → markdown |
 | `read_tool_artifact(tool_call_id)` | Retrieves a previously stored large output |
+| `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task with the given context; returns its final report |
+
+`delegate` recursively spawns a child `Agent` (read-only, `max_steps=5`, the `delegate` tool itself removed from its toolset), so the main agent can offload focused exploration without crowding its own context.
 
 The `@tool` decorator (actually `function_to_json`) converts any `ToolsRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings for parameter descriptions and routing `Tags`.
 
