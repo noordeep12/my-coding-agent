@@ -42,14 +42,13 @@ def silent_logger():
 
 @pytest.fixture
 def bare_llm(silent_logger):
-    """An LLM instance built WITHOUT __init__ — no network call to /models.
+    """An LLM instance with a silent logger and no network I/O at construction.
 
-    __init__ performs an HTTP GET to discover the context window, which we must
-    not trigger in unit tests. We allocate the object directly and attach only
-    the attributes the pure methods under test actually read.
+    ``LLM.__init__`` is network-free (the context-window probe is deferred to
+    first access of ``context_window``), so we construct normally and only swap
+    in the silent logger. Tests that exercise ``available_models`` patch
+    ``_request_with_retry`` so the deferred probe never reaches a real server.
     """
-    llm = object.__new__(LLM)
+    llm = LLM()
     llm.logger = silent_logger
-    llm.llm_calls = []
-    llm.tool_artifacts = {}
     return llm

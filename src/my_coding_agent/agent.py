@@ -66,12 +66,13 @@ class Agent(LLM):
         before_tool_call: Callable[..., Any] | None = None,
         after_tool_call: Callable[..., Any] | None = None,
     ) -> None:
-        """Initialize the agent, open a session log, and print the banner.
+        """Initialize the agent and open a session log (no network I/O).
 
-        Extend ``LLM`` (which probes the server for the context window), assign a
-        fresh session id, redirect stderr into per-session log files via
-        ``attach_session_log``, initialize run statistics, and print the startup
-        banner. Like ``LLM.__init__``, construction performs a network call.
+        Extend ``LLM`` (whose context-window probe is deferred), assign a fresh
+        session id, redirect stderr into per-session log files via
+        ``attach_session_log``, and initialize run statistics. Construction
+        performs no network call; the startup banner is printed at the start of
+        ``run`` once the real context window is known.
 
         Args:
             api_url: Base URL of the OpenAI-compatible API.
@@ -85,10 +86,6 @@ class Agent(LLM):
                 (0-1) at which a handoff is generated and a continuation spawned.
             before_tool_call: Optional pre-dispatch hook (see ``LLM``).
             after_tool_call: Optional post-dispatch hook (see ``LLM``).
-
-        Raises:
-            httpx.HTTPError: If the inherited startup ``/models`` probe cannot
-                reach the server after retries are exhausted.
         """
         super().__init__(api_url, api_key, model, before_tool_call, after_tool_call)
         self.label = label
@@ -107,15 +104,6 @@ class Agent(LLM):
         self.tool_records: list = []
         self.handoff_records: list = []  # one entry per context reset that fired
         self.elapsed_seconds: float = 0.0
-        print_banner(
-            label=self.label,
-            model=self.model,
-            tools=self.tools,
-            context_window=self.context_window,
-            n_messages=len(self.messages),
-            context_reset_threshold=self.context_reset_threshold,
-            session_id=self.session_id,
-        )
         self.logger.info(
             "%s initialized with %d messages and %d tools",
             label,
@@ -380,6 +368,17 @@ class Agent(LLM):
         self._continuation_result = []
         t_start = time.monotonic()
 
+        # Emit the startup banner here (not in __init__) so construction stays
+        # network-free: reading context_window now resolves the real value.
+        print_banner(
+            label=self.label,
+            model=self.model,
+            tools=self.tools,
+            context_window=self.context_window,
+            n_messages=len(self.messages),
+            context_reset_threshold=self.context_reset_threshold,
+            session_id=self.session_id,
+        )
         self.logger.info("Agent run started with max_steps: %d", max_steps)
         try:
             # step_num counts completed steps and is 1-based once a step begins.

@@ -83,6 +83,48 @@ def test_available_models_uses_alternate_context_keys(bare_llm, mocker):
     assert bare_llm.context_window == 4096
 
 
+# --- lazy context_window (G-09) ---------------------------------------------
+
+
+def test_construction_makes_no_http_request(mocker):
+    """Regression (G-09): constructing LLM probes nothing — no /models call."""
+    from my_coding_agent.llm import LLM
+
+    probe = mocker.patch.object(LLM, "available_models")
+    request = mocker.patch.object(LLM, "_request_with_retry")
+    LLM()
+    probe.assert_not_called()
+    request.assert_not_called()
+
+
+def test_context_window_resolves_lazily_on_first_use(bare_llm, mocker):
+    """The /models probe fires on first context_window read, then is cached."""
+    bare_llm.api_url = "http://x/v1"
+    bare_llm.model = "m"
+    request = mocker.patch.object(
+        bare_llm,
+        "_request_with_retry",
+        return_value=_Resp({"data": [{"id": "m", "context_length": 7777}]}),
+    )
+    assert request.call_count == 0  # untouched until first access
+    assert bare_llm.context_window == 7777
+    assert request.call_count == 1
+    assert bare_llm.context_window == 7777  # cached — no second probe
+    assert request.call_count == 1
+
+
+def test_context_window_falls_back_when_probe_fails(bare_llm, mocker):
+    """An unreachable server yields the documented fallback, not an exception."""
+    import httpx
+
+    bare_llm.api_url = "http://x/v1"
+    bare_llm.model = "m"
+    mocker.patch.object(
+        bare_llm, "_request_with_retry", side_effect=httpx.ConnectError("down")
+    )
+    assert bare_llm.context_window == 131_072  # fallback, no raise
+
+
 # --- chat_completion ---------------------------------------------------------
 
 

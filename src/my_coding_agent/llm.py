@@ -66,9 +66,12 @@ class LLM:
     call's token usage in ``self.llm_calls`` tagged by ``kind``. Provide two-phase
     tool routing, tool-call dispatch with argument-correction retries, and artifact
     separation that stores oversized tool outputs in ``self.tool_artifacts`` and
-    returns a summary to the model. Construction probes the server to discover the
-    model's context window, so it performs a network call.
+    returns a summary to the model. Construction performs no network I/O: the
+    model's context window is probed lazily on first access to ``context_window``.
     """
+
+    # 128k fallback used when the server is unreachable or omits a context length.
+    DEFAULT_CONTEXT_WINDOW = 131_072
 
     def __init__(
         self,
@@ -79,25 +82,21 @@ class LLM:
         after_tool_call: Callable[..., Any] | None = None,
         timeout: float = DEFAULT_HTTP_TIMEOUT,
     ) -> None:
-        """Initialize the LLM client and probe the server for model metadata.
+        """Initialize the LLM client without performing any network I/O.
 
-        Build the HTTP session and immediately call ``available_models`` to
-        discover the model's context window. This means construction performs a
-        network round-trip to ``{api_url}/models``.
+        Build the HTTP session and defer the model's context-window probe: it is
+        resolved lazily on first access to ``self.context_window`` (see the
+        property), so construction never reaches the server.
 
         Args:
             api_url: Base URL of the OpenAI-compatible API (e.g. ``.../v1``).
             api_key: Bearer token sent on every request.
-            model: Model id whose context window is looked up at startup.
+            model: Model id whose context window is looked up on first use.
             before_tool_call: Optional ``(name, args) -> args | None`` hook run
                 before each tool dispatch; returning None skips the call.
             after_tool_call: Optional ``(name, args, result) -> result`` hook run
                 after each tool dispatch to post-process the result.
             timeout: Per-request HTTP timeout in seconds for the session.
-
-        Raises:
-            httpx.HTTPError: If the startup ``/models`` probe cannot reach the
-                server after the transient-failure retries are exhausted.
         """
         self.api_url = api_url
         self.api_key = api_key
@@ -105,7 +104,8 @@ class LLM:
         self.timeout = timeout
         self.logger = get_logger(self.__class__.__name__)
         self.setup_session()
-        self.available_models()
+        # Resolved lazily on first read of the context_window property.
+        self._context_window: int | None = None
         self._session_log_path: str | None = (
             None  # set by Agent after session dir is created
         )
@@ -134,6 +134,34 @@ class LLM:
             }
         )
         self.session.timeout = self.timeout
+
+    @property
+    def context_window(self) -> int:
+        """The model's context window in tokens, resolved lazily and cached.
+
+        On first access, probe the server via ``available_models`` to discover the
+        window; if the probe fails (server unreachable), fall back to
+        ``DEFAULT_CONTEXT_WINDOW`` and cache that so construction-time failures
+        never surface here. Subsequent reads return the cached value.
+        """
+        if self._context_window is None:
+            try:
+                self.available_models()
+            except httpx.HTTPError as exc:
+                self.logger.warning(
+                    "context-window probe failed (%s) — falling back to %d tokens",
+                    exc,
+                    self.DEFAULT_CONTEXT_WINDOW,
+                )
+                self._context_window = self.DEFAULT_CONTEXT_WINDOW
+        # available_models sets _context_window on success; the except sets it too.
+        assert self._context_window is not None
+        return self._context_window
+
+    @context_window.setter
+    def context_window(self, value: int | None) -> None:
+        """Set the cached context window directly (used by tests and resets)."""
+        self._context_window = value
 
     def _request_with_retry(self, method: str, url: str, **kwargs: Any) -> Response:
         """Issue an HTTP request, retrying transient failures with backoff.
@@ -168,12 +196,13 @@ class LLM:
         raise last_exc
 
     def available_models(self) -> list[str]:
-        """Fetch the server's model list and set ``self.context_window``.
+        """Fetch the server's model list and cache ``self.context_window``.
 
         Issue a GET to ``{api_url}/models`` and read each entry's id. As a side
-        effect, look up ``self.model`` in the response and store its context
-        length on ``self.context_window``, falling back to 131,072 tokens when
-        the model is absent or reports no context length.
+        effect, look up ``self.model`` in the response and cache its context
+        length on ``self._context_window``, falling back to
+        ``DEFAULT_CONTEXT_WINDOW`` when the model is absent or reports no context
+        length.
 
         Returns:
             The list of model ids advertised by the server.
@@ -186,19 +215,18 @@ class LLM:
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
         self.logger.api(f"Models: {models}")
-        DEFAULT_CONTEXT_WINDOW = 131_072  # 128k fallback
-        self.context_window = DEFAULT_CONTEXT_WINDOW
+        self._context_window = self.DEFAULT_CONTEXT_WINDOW
         for m in data:
             if m["id"] == self.model:
-                self.context_window = (
+                self._context_window = (
                     m.get("context_length")
                     or m.get("max_context_length")
                     or m.get("context_window")
-                    or DEFAULT_CONTEXT_WINDOW
+                    or self.DEFAULT_CONTEXT_WINDOW
                 )
                 break
         self.logger.api(
-            f"Context window for {self.model}: {self.context_window} tokens"
+            f"Context window for {self.model}: {self._context_window} tokens"
         )
         return models
 

@@ -23,6 +23,7 @@ def _make_agent(silent_logger, **overrides):
     agent.messages = []
     agent.tools = []
     agent.label = "Test Agent"
+    agent.model = "test-model"
     agent.context_window = 1000
     agent.context_reset_threshold = 0.75
     agent.last_prompt_tokens = 0
@@ -124,7 +125,8 @@ def test_track_step_usage_missing_usage_defaults_zero(silent_logger):
 
 
 def test_track_step_usage_handles_no_context_window(silent_logger):
-    agent = _make_agent(silent_logger, context_window=None)
+    # 0 is the falsy "window unknown" sentinel — must not raise or probe.
+    agent = _make_agent(silent_logger, context_window=0)
     agent._track_step_usage(_Resp({"usage": {"prompt_tokens": 50}}))
     assert agent.last_prompt_tokens == 50  # ctx_str branch must not raise
 
@@ -187,6 +189,8 @@ def _stub_run_internals(agent, mocker):
     mocker.patch.object(agent, "route_tools", side_effect=lambda signal, tools: tools)
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
+    # Banner is emitted at the start of run() (not __init__) — stub its output.
+    mocker.patch("my_coding_agent.agent.print_banner")
     mocker.patch("my_coding_agent.agent.detach_session_log")
     # session_data.json existence check in finally → pretend it already exists so
     # the finally block does not try to save/summarize/detach again.

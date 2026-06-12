@@ -130,4 +130,4 @@ Handoffs are saved under `.my_coding_agent/handoffs/`.
 | `OMLX_API_KEY` | `changeme` | API key (typically ignored by local servers) |
 | `OMLX_MODEL` | `Qwen3.6-35B-A3B-4bit` | Model ID |
 
-The context window size is discovered at startup by querying `/v1/models` and reading `context_length` from the model's metadata. Falls back to 128k.
+The context window size is discovered lazily — on first access to `LLM.context_window` (at the start of `Agent.run`), not during construction — by querying `/v1/models` and reading `context_length` from the model's metadata. The result is cached; an unreachable server falls back to 128k. Constructing `LLM`/`Agent` therefore performs no network I/O.
