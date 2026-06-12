@@ -76,7 +76,7 @@ addopts = "--cov=my_coding_agent --cov-branch --cov-report=term-missing --cov-fa
 
 [tool.coverage.run]
 branch = true
-source = ["src/my_coding_agent"]
+source = ["src/my_coding_agent", "agents", "workflows"]
 
 [tool.coverage.report]
 show_missing = true
