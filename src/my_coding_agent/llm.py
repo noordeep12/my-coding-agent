@@ -77,7 +77,7 @@ class LLM:
     def chat_completion(self, messages, tools=None, kind: str = "main", max_tokens: int | None = None) -> Response:
         call_num = len(self.llm_calls) + 1
         self.logger.api(f"→ POST {self.api_url}/chat/completions  [call #{call_num}, kind={kind}]")
-        self.logger.debug(f"Request body: {json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4)}")
+        self.logger.debug("Request body: %s", json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4))
 
         body: dict = {"model": self.model, "messages": messages, "tools": tools or []}
         if max_tokens is not None:
@@ -94,7 +94,7 @@ class LLM:
                 f"API returned non-JSON response (HTTP {resp.status_code}): {exc}. "
                 f"Body prefix: {resp.text[:200]!r}"
             ) from exc
-        self.logger.debug(f"Response body: {json.dumps(data, indent=4)}")
+        self.logger.debug("Response body: %s", json.dumps(data, indent=4))
 
         usage = data.get("usage", {})
         self.llm_calls.append({
@@ -114,7 +114,7 @@ class LLM:
         try:
             choices = data.get("choices", [])
         except Exception as exc:
-            self.logger.error(f"Failed to parse choices: {exc}")
+            self.logger.error("Failed to parse choices: %s", exc)
             choices = []
 
         for choice in choices:
@@ -122,9 +122,9 @@ class LLM:
             reasoning = message.get("reasoning_content") or ""
             content   = message.get("content") or ""
             if reasoning:
-                self.logger.llm(f"Reasoning: \n\n{reasoning}\n")
+                self.logger.llm("Reasoning: \n\n%s\n", reasoning)
             if content:
-                self.logger.llm(f"Content: \n\n{content}\n")
+                self.logger.llm("Content: \n\n%s\n", content)
         return resp
     
     def route_tools(self, message: str, all_tools: list) -> list:
@@ -198,7 +198,7 @@ class LLM:
             if routed_names is None:
                 raise ValueError(f"could not extract JSON array from: {content[:120]!r}")
         except Exception as exc:
-            self.logger.warning(f"router phase-2 failed ({exc}), using all tools")
+            self.logger.warning("router phase-2 failed (%s), using all tools", exc)
             routed_names = all_names
 
         # Keep baseline + whatever the LLM selected; filter to valid names only
@@ -239,7 +239,7 @@ class LLM:
                 if self._session_log_path
                 else ""
             )
-            self.logger.warning(f"tool output truncated: {func_name} returned {len(result)} chars (limit {MAX_TOOL_OUTPUT_CHARS})")
+            self.logger.warning("tool output truncated: %s returned %d chars (limit %d)", func_name, len(result), MAX_TOOL_OUTPUT_CHARS)
             result = (
                 result[:MAX_TOOL_OUTPUT_CHARS]
                 + f"\n[output truncated at {MAX_TOOL_OUTPUT_CHARS} chars —"
@@ -269,7 +269,7 @@ class LLM:
             )
             summary = extract_message(resp).get("content") or ""
         except Exception as exc:
-            self.logger.warning(f"artifact summarization failed: {exc}")
+            self.logger.warning("artifact summarization failed: %s", exc)
             if "content" in artifact:
                 summary = json.dumps({"file_path": artifact.get("file_path"), "size": artifact.get("size")})
             else:
@@ -294,22 +294,22 @@ class LLM:
 
         tool_type = tool_call.get("type")
         if tool_type is None:
-            self.logger.warning(f"skip {tool_call_id} — malformed tool call: missing 'type' field")
+            self.logger.warning("skip %s — malformed tool call: missing 'type' field", tool_call_id)
             return tool_call_id, None, None, "Error: malformed tool call — missing 'type' field"
         if tool_type != "function":
-            self.logger.warning(f"skip {tool_call_id} — type '{tool_type}' not supported")
+            self.logger.warning("skip %s — type '%s' not supported", tool_call_id, tool_type)
             return tool_call_id, None, None, f"Error: tool type '{tool_type}' is not supported"
 
         func_block = tool_call.get("function")
         func_name = func_block.get("name") if func_block else None
         if not func_name:
-            self.logger.warning(f"skip {tool_call_id} — malformed tool call: missing 'function.name'")
+            self.logger.warning("skip %s — malformed tool call: missing 'function.name'", tool_call_id)
             return tool_call_id, None, None, "Error: malformed tool call — missing 'function.name'"
 
         try:
             args = parse_tool_args(func_block.get("arguments", {}))
         except json.JSONDecodeError as exc:
-            self.logger.error(f"malformed args {tool_call_id} → {func_name}: {exc}")
+            self.logger.error("malformed args %s → %s: %s", tool_call_id, func_name, exc)
             return tool_call_id, func_name, None, f"Error: could not parse tool arguments as JSON: {exc}"
 
         return tool_call_id, func_name, args, None
@@ -318,7 +318,7 @@ class LLM:
         """Remap known wrong parameter names to their correct names for func_name."""
         for wrong, correct in self._ARG_ALIASES.get(func_name, {}).items():
             if wrong in args and correct not in args:
-                self.logger.warning(f"arg alias: {func_name}({wrong}=) → {func_name}({correct}=)")
+                self.logger.warning("arg alias: %s(%s=) → %s(%s=)", func_name, wrong, func_name, correct)
                 args[correct] = args.pop(wrong)
         return args
 
@@ -335,7 +335,7 @@ class LLM:
         dropped = {k: v for k, v in args.items() if k not in valid}
         if dropped:
             for k in dropped:
-                self.logger.warning(f"stripped unknown arg: {func_name}({k}=) — not in tool signature")
+                self.logger.warning("stripped unknown arg: %s(%s=) — not in tool signature", func_name, k)
             args = {k: v for k, v in args.items() if k in valid}
         return args
 
@@ -346,24 +346,24 @@ class LLM:
         """
         args = self._apply_arg_aliases(func_name, args)
         args = self._strip_unknown_args(func_name, args)
-        self.logger.tool(f"{tool_call_id} → before_hook {func_name}({args}) [after alias remapping]")
+        self.logger.tool("%s → before_hook %s(%s) [after alias remapping]", tool_call_id, func_name, args)
         result = self._before_hook(func_name, args)
         if result is None:
-            self.logger.tool(f"{tool_call_id} → before_hook skipped {func_name}")
+            self.logger.tool("%s → before_hook skipped %s", tool_call_id, func_name)
         elif result != args:
-            self.logger.tool(f"{tool_call_id} → before_hook modified {func_name} args: {result}")
+            self.logger.tool("%s → before_hook modified %s args: %s", tool_call_id, func_name, result)
         return result
 
     def after_tool_call(self, tool_call_id: str, func_name: str, args: dict, result: str) -> str:
         """Runs after every tool dispatch: apply the user hook to the result."""
-        self.logger.tool(f"{tool_call_id} → after_hook {func_name}({args}) → {result}")
+        self.logger.tool("%s → after_hook %s(%s) → %s", tool_call_id, func_name, args, result)
         try:
             modified = self._after_hook(func_name, args, result)
         except Exception as exc:
-            self.logger.error(f"{tool_call_id} → after_hook raised {type(exc).__name__} for {func_name}: {exc}")
+            self.logger.error("%s → after_hook raised %s for %s: %s", tool_call_id, type(exc).__name__, func_name, exc)
             return result
         if modified != result:
-            self.logger.tool(f"{tool_call_id} → after_hook modified result for {func_name}")
+            self.logger.tool("%s → after_hook modified result for %s", tool_call_id, func_name)
         return modified
 
     def _dispatch_tool(self, registry: ToolsRegistry, func_name: str, args: dict, tool_call_id: str) -> tuple[str, bool, bool]:
@@ -404,15 +404,15 @@ class LLM:
             None,
         )
         if not corrected:
-            self.logger.warning(f"correction attempt {attempt + 1}: model did not return a {func_name} call")
+            self.logger.warning("correction attempt %s: model did not return a %s call", attempt + 1, func_name)
             return None
         try:
             args = parse_tool_args(corrected.get("function", {}).get("arguments", {}))
         except json.JSONDecodeError:
-            self.logger.warning(f"correction attempt {attempt + 1}: could not parse corrected args")
+            self.logger.warning("correction attempt %s: could not parse corrected args", attempt + 1)
             return None
         args = self._apply_arg_aliases(func_name, args)
-        self.logger.tool(f"corrected args (attempt {attempt + 1}): {func_name}({args})")
+        self.logger.tool("corrected args (attempt %s): %s(%s)", attempt + 1, func_name, args)
         return args
 
     def invoke_tool(
@@ -420,7 +420,7 @@ class LLM:
     ) -> tuple[str, str, dict]:
         """Dispatch func_name with arg-correction retries. Returns (result, status, record)."""
         if not hasattr(registry, func_name):
-            self.logger.error(f"not found: '{func_name}' is not registered")
+            self.logger.error("not found: '%s' is not registered", func_name)
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
             return err, "error", {"name": func_name, "args": args, "ok": False, "error": f"tool '{func_name}' not found", "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"}
@@ -430,11 +430,11 @@ class LLM:
         for attempt in range(self._MAX_ARG_RETRIES + 1):
             try:
                 result, is_artifact, is_truncated = self._dispatch_tool(registry, func_name, args, tool_call_id)
-                self.logger.tool(f"{tool_call_id} → {func_name}: {result}")
+                self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
                 return result, "success", {"name": func_name, "args": args, "ok": True, "tool_call_id": tool_call_id, "artifact": is_artifact, "truncated": is_truncated, "status": "success"}
 
             except TypeError as wrong_args_exc: # wrong arguments — attempt correction with the LLM
-                self.logger.error(f"wrong args {tool_call_id} → {func_name} (attempt {attempt + 1}/{self._MAX_ARG_RETRIES}): {wrong_args_exc}")
+                self.logger.error("wrong args %s → %s (attempt %s/%s): %s", tool_call_id, func_name, attempt + 1, self._MAX_ARG_RETRIES, wrong_args_exc)
                 retries_exhausted = attempt == self._MAX_ARG_RETRIES
                 corrected_args = None if retries_exhausted else self._correct_args(func_name, args, wrong_args_exc, sig, tool_call, tool_call_id, attempt)
                 if corrected_args is None:
@@ -444,9 +444,9 @@ class LLM:
 
             except Exception as exc: # other errors — log and return as error result (don't re-raise, to allow the agent to keep going)
                 if not isinstance(exc, self._RECOVERABLE_EXCEPTIONS):
-                    self.logger.error(f"non-recoverable error {tool_call_id} → {func_name}: {exc}")
+                    self.logger.error("non-recoverable error %s → %s: %s", tool_call_id, func_name, exc)
                     raise
-                self.logger.error(f"error {tool_call_id} → {func_name}: {exc}")
+                self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"}
 
@@ -477,7 +477,7 @@ class LLM:
                 continue
             
             # Invoke the tool with retries for argument correction, and handle any exceptions.
-            self.logger.tool(f"{tool_call_id} → {func_name}({args})")
+            self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
             result, status, record = self.invoke_tool(tool_call_id, func_name, args, registry, tool_call)
 
             # Post-process the result before sending it back to the LLM.
