@@ -143,7 +143,7 @@ class Agent(LLM):
                 break
         calls = self.llm_calls
         print_run_summary(
-            steps=self.step_num + 1,
+            steps=self.step_num,
             max_steps=max_steps,
             stop_reason=self.stop_reason,
             prompt_tokens=sum(c["prompt"] for c in calls),
@@ -175,7 +175,7 @@ class Agent(LLM):
             "model": self.model,
             "started_at": self.started_at,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
-            "steps": self.step_num + 1,
+            "steps": self.step_num,
             "max_steps": max_steps,
             "stop_reason": self.stop_reason,
             "total_usage": {
@@ -325,7 +325,7 @@ class Agent(LLM):
         ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
         self.logger.info(
             "Step %d tokens — prompt: %d, completion: %d, total: %d%s",
-            self.step_num + 1,
+            self.step_num,
             step_prompt,
             step_completion,
             step_total,
@@ -364,27 +364,31 @@ class Agent(LLM):
 
         self.logger.info("Agent run started with max_steps: %d", max_steps)
         try:
-            while True:
-                self.logger.info(
-                    "----------------------------------------------------------------"
-                )
-                self.logger.info(
-                    "----------------------------------------------------------------   STEP %d/%d",  # noqa: E501
-                    self.step_num + 1,
-                    max_steps,
-                )
-                self.logger.info(
-                    "----------------------------------------------------------------"
-                )
-
+            # step_num counts completed steps and is 1-based once a step begins.
+            # Each pass runs exactly one main chat_completion; the loop performs
+            # at most max_steps passes, so exactly max_steps main calls are made.
+            while self.step_num < max_steps:
                 # Pre-flight context check using actual tokens reported by the
                 # API in the previous step. Step 1 falls back to a character
-                # estimate (no prior data).
+                # estimate (no prior data). Uses the completed-step count.
                 preflight = self._context_preflight(max_steps, t_start)
                 if preflight == "stop":
                     break
                 if preflight == "reset":
                     return self._continuation_result  # continuation finished the run
+
+                self.step_num += 1
+                self.logger.info(
+                    "----------------------------------------------------------------"
+                )
+                self.logger.info(
+                    "----------------------------------------------------------------   STEP %d/%d",  # noqa: E501
+                    self.step_num,
+                    max_steps,
+                )
+                self.logger.info(
+                    "----------------------------------------------------------------"
+                )
 
                 # Route: pick the relevant subset of tools for this step's context.
                 routed_tools = self.route_tools(self._routing_signal(), self.tools)
@@ -393,9 +397,8 @@ class Agent(LLM):
                 if not message:
                     self.logger.error(
                         "Step %d: API returned empty message — skipping step",
-                        self.step_num + 1,
+                        self.step_num,
                     )
-                    self.step_num += 1
                     continue
                 self.add_message(message)
 
@@ -409,15 +412,14 @@ class Agent(LLM):
                 # context-window check
                 self._track_step_usage(resp)
 
-                # Finish conditions
+                # Finish conditions. The max_steps bound is enforced by the
+                # while condition (step_num was incremented at the top of this
+                # pass); stop_reason defaults to "max_steps" and is set here only
+                # for an early model-signalled finish.
                 finish_reason = extract_finish_reason(resp)
                 if finish_reason in ("stop", "exit", "quit"):
                     self.stop_reason = finish_reason
                     break
-                if self.step_num >= max_steps:
-                    self.stop_reason = "max_steps"
-                    break
-                self.step_num += 1
 
         except KeyboardInterrupt:
             self.stop_reason = "aborted"

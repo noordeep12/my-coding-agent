@@ -9,6 +9,8 @@ under test actually read are attached.
 
 import json
 
+import pytest
+
 from my_coding_agent.agent import Agent
 
 # --- helpers -----------------------------------------------------------------
@@ -232,6 +234,37 @@ def test_run_stops_at_max_steps(silent_logger, mocker):
     mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=1)
+    assert agent.stop_reason == "max_steps"
+
+
+@pytest.mark.parametrize("max_steps", [1, 3, 20])
+def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
+    """Regression (G-05): a run that never finishes early performs EXACTLY
+    max_steps main chat_completion calls — not max_steps + 1 — and reports a
+    step count equal to max_steps with stop_reason "max_steps".
+    """
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    # finish_reason "tool_calls" never matches the early-stop set, so the loop
+    # only ever exits via the max_steps bound.
+    resp = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "working"},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
+    chat = mocker.patch.object(agent, "chat_completion", return_value=resp)
+    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+
+    agent.run(max_steps=max_steps)
+
+    assert chat.call_count == max_steps
+    assert agent.step_num == max_steps
     assert agent.stop_reason == "max_steps"
 
 
