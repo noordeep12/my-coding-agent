@@ -16,27 +16,49 @@ from my_coding_agent.tools import ARTIFACT_THRESHOLD, ToolsRegistry
 
 
 def test_write_then_read_round_trip(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
     target = tmp_path / "sub" / "out.txt"
-    msg = ToolsRegistry.write_file(str(target), "hello world")
+    msg = reg.write_file(str(target), "hello world")
     assert "Written 11 bytes" in msg
     assert target.read_text() == "hello world"
 
 
-def test_read_file_missing_returns_error():
-    out = ToolsRegistry().read_file("/no/such/file/here.xyz")
+def test_read_file_missing_returns_error(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
+    out = reg.read_file(str(tmp_path / "no_such_file.xyz"))
     assert out.startswith("Error: file not found:")
 
 
 def test_write_file_creates_parent_dirs(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
     target = tmp_path / "a" / "b" / "c.txt"
-    ToolsRegistry.write_file(str(target), "x")
+    reg.write_file(str(target), "x")
     assert target.exists()
 
 
 def test_read_file_reads_existing(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
     f = tmp_path / "f.txt"
     f.write_text("content")
-    assert ToolsRegistry().read_file(str(f)) == "content"
+    assert reg.read_file(str(f)) == "content"
+
+
+def test_read_file_relative_path_resolves_under_base(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
+    (tmp_path / "rel.txt").write_text("data")
+    assert reg.read_file("rel.txt") == "data"
+
+
+def test_read_file_traversal_raises(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        reg.read_file("../../etc/passwd")
+
+
+def test_write_file_absolute_outside_base_raises(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        reg.write_file("/tmp/escape.txt", "x")
 
 
 # --- read_tool_artifact ------------------------------------------------------

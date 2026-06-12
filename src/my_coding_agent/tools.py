@@ -131,9 +131,28 @@ ARTIFACT_THRESHOLD = 8_000
 
 class ToolsRegistry:
 
-    def __init__(self, artifacts: dict | None = None, tools: list | None = None):
+    def __init__(self, artifacts: dict | None = None, tools: list | None = None, base_dir: str | None = None):
         self._artifacts = artifacts if artifacts is not None else {}
         self._tools = tools if tools is not None else []
+        # Workspace root that read_file/write_file must stay within. Defaults to the
+        # current working directory; override per deployment if a different root applies.
+        self._base_dir = Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
+
+    def _resolve_in_base(self, file_path: str) -> Path:
+        """Resolve file_path against the workspace base and reject anything that escapes it.
+
+        Relative paths are resolved under the base; absolute paths are allowed only when
+        they fall inside the base. Raises ValueError on path traversal.
+        """
+        candidate = Path(file_path)
+        target = candidate if candidate.is_absolute() else self._base_dir / candidate
+        target = target.resolve()
+        if not target.is_relative_to(self._base_dir):
+            raise ValueError(
+                f"Path traversal detected: '{file_path}' resolves outside the workspace "
+                f"base '{self._base_dir}'. Use a path inside the workspace."
+            )
+        return target
 
     def bash(self, command: str) -> "str | tuple[None, dict]":
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
@@ -239,16 +258,16 @@ class ToolsRegistry:
         Args:
             file_path: Absolute path to the file to read. Example: '/path/to/file.py'
         """
+        target = self._resolve_in_base(file_path)
         try:
-            content = Path(file_path).read_text()
+            content = target.read_text()
         except FileNotFoundError:
             return f"Error: file not found: {file_path}"
         except Exception as e:
             return f"Error reading {file_path}: {e}"
         return content
 
-    @staticmethod
-    def write_file(file_path: str, content: str) -> str:
+    def write_file(self, file_path: str, content: str) -> str:
         """Write content to a file at file_path, creating parent directories if needed.
         Use to create new files or overwrite existing ones.
 
@@ -260,10 +279,10 @@ class ToolsRegistry:
                 Example: '/path/to/file.py'
             content: Full text content to write. Overwrites any existing file.
         """
+        target = self._resolve_in_base(file_path)
         try:
-            p = Path(file_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
             return f"Written {len(content)} bytes to {file_path}"
         except Exception as e:
             return f"Error writing {file_path}: {e}"
