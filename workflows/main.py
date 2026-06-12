@@ -9,7 +9,6 @@ Run:
     uv run python workflows/main.py --help
 """
 import os
-import sys
 from pathlib import Path
 
 import inspect
@@ -20,13 +19,9 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 
-_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(_ROOT / "src"))
-sys.path.insert(0, str(_ROOT))
-
-from my_coding_agent import Agent, tool, ToolsRegistry  # noqa: E402
-from agents.discovery import run_discovery              # noqa: E402
-from agents.session_analyzer import run_analysis        # noqa: E402
+from my_coding_agent import Agent, tool, ToolsRegistry
+from agents.discovery import run_discovery
+from agents.session_analyzer import run_analysis
 
 
 _DEFAULT_PROMPT = (

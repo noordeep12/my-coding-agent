@@ -20,8 +20,6 @@ from pathlib import Path
 
 import click
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from my_coding_agent import Agent, tool, ToolsRegistry
 
 _BASE_DIR = Path(".my_coding_agent")

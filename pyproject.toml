@@ -22,8 +22,11 @@ dependencies = [
     "rich>=15.0.0",
 ]
 
+[project.scripts]
+my-coding-agent = "workflows.main:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/my_coding_agent"]
+packages = ["src/my_coding_agent", "agents", "workflows"]
 
 [dependency-groups]
 dev = [
