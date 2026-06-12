@@ -7,9 +7,10 @@ __init__ (see the bare_llm fixture) so no HTTP call to /models occurs.
 
 import json
 
+import httpx
 import pytest
 
-from my_coding_agent.llm import _BASELINE_TOOLS
+from my_coding_agent.llm import _BASELINE_TOOLS, _HTTP_RETRIES
 
 # --- helpers -----------------------------------------------------------------
 
@@ -109,6 +110,51 @@ def test_parse_tool_call_missing_id_uses_unknown(bare_llm):
     tc = {"type": "function", "function": {"name": "bash", "arguments": "{}"}}
     tid, _, _, _ = bare_llm.parse_tool_call(tc)
     assert tid == "unknown_id"
+
+
+# --- _request_with_retry -----------------------------------------------------
+
+
+class _FlakySession:
+    """Fails with a transient error for the first `fail_times` calls, then succeeds."""
+
+    def __init__(self, fail_times):
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def request(self, method, url, **kwargs):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise httpx.ConnectError("down")
+        return "OK"
+
+
+def test_request_with_retry_succeeds_after_transient_failures(bare_llm, mocker):
+    mocker.patch("my_coding_agent.llm.time.sleep")  # don't actually wait
+    bare_llm.session = _FlakySession(fail_times=_HTTP_RETRIES - 1)
+    assert bare_llm._request_with_retry("GET", "http://x/models") == "OK"
+    assert bare_llm.session.calls == _HTTP_RETRIES
+
+
+def test_request_with_retry_raises_after_exhausting_attempts(bare_llm, mocker):
+    mocker.patch("my_coding_agent.llm.time.sleep")
+    bare_llm.session = _FlakySession(fail_times=_HTTP_RETRIES)
+    with pytest.raises(httpx.ConnectError):
+        bare_llm._request_with_retry("GET", "http://x/models")
+    assert bare_llm.session.calls == _HTTP_RETRIES
+
+
+def test_request_with_retry_does_not_retry_non_transient(bare_llm, mocker):
+    sleep = mocker.patch("my_coding_agent.llm.time.sleep")
+
+    class _ProtocolErrorSession:
+        def request(self, method, url, **kwargs):
+            raise httpx.HTTPStatusError("nope", request=mocker.Mock(), response=mocker.Mock())
+
+    bare_llm.session = _ProtocolErrorSession()
+    with pytest.raises(httpx.HTTPStatusError):
+        bare_llm._request_with_retry("GET", "http://x/models")
+    sleep.assert_not_called()
 
 
 # --- route_tools (phase-1, no LLM call) --------------------------------------

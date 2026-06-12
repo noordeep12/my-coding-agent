@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 from dotenv import load_dotenv
 from .logger import get_logger
@@ -24,6 +25,16 @@ MAX_TOOL_OUTPUT_CHARS = ARTIFACT_THRESHOLD
 _BASELINE_TOOLS = {"bash", "read_file", "read_tool_artifact"}
 
 
+# Default per-request HTTP timeout (seconds) for the LLM API session.
+DEFAULT_HTTP_TIMEOUT = 30.0
+# Number of attempts for transient (connection/timeout) failures on external calls.
+_HTTP_RETRIES = 3
+# Base backoff (seconds) between retries; doubles each attempt.
+_HTTP_BACKOFF = 0.5
+# Errors worth retrying — transient connectivity/timeout, not protocol errors.
+_TRANSIENT_HTTP_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout)
+
+
 class LLM:
     def __init__(
         self,
@@ -32,10 +43,12 @@ class LLM:
         model=OMLX_MODEL,
         before_tool_call=None,
         after_tool_call=None,
+        timeout: float = DEFAULT_HTTP_TIMEOUT,
     ):
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
+        self.timeout = timeout
         self.logger = get_logger(self.__class__.__name__)
         self.setup_session()
         self.available_models()
@@ -53,10 +66,32 @@ class LLM:
                 "Authorization": "Bearer " + self.api_key,
             }
         )
-        self.session.timeout = 30.0
+        self.session.timeout = self.timeout
+
+    def _request_with_retry(self, method: str, url: str, **kwargs) -> Response:
+        """Issue an HTTP request, retrying transient connection/timeout failures with backoff.
+
+        Non-transient errors (HTTP protocol errors, etc.) are not retried. Raises the last
+        transient error if all attempts fail.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(_HTTP_RETRIES):
+            try:
+                return self.session.request(method, url, **kwargs)
+            except _TRANSIENT_HTTP_ERRORS as exc:
+                last_exc = exc
+                if attempt == _HTTP_RETRIES - 1:
+                    break
+                backoff = _HTTP_BACKOFF * (2 ** attempt)
+                self.logger.warning(
+                    "transient HTTP error on %s %s (attempt %s/%s): %s — retrying in %.1fs",
+                    method, url, attempt + 1, _HTTP_RETRIES, exc, backoff,
+                )
+                time.sleep(backoff)
+        raise last_exc
 
     def available_models(self) -> list:
-        resp = self.session.get(self.api_url + "/models")
+        resp = self._request_with_retry("GET", self.api_url + "/models")
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
         self.logger.api(f"Models: {models}")
@@ -82,7 +117,8 @@ class LLM:
         body: dict = {"model": self.model, "messages": messages, "tools": tools or []}
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
-        resp = self.session.post(
+        resp = self._request_with_retry(
+            "POST",
             self.api_url + "/chat/completions",
             json=body,
         )

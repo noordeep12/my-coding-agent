@@ -154,7 +154,7 @@ class ToolsRegistry:
             )
         return target
 
-    def bash(self, command: str) -> "str | tuple[None, dict]":
+    def bash(self, command: str, timeout: int = 60) -> "str | tuple[None, dict]":
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
         Use for running tests, installing packages, git operations, or any shell task.
         The 'ok' field is true when exit_code is 0.
@@ -165,6 +165,7 @@ class ToolsRegistry:
         Args:
             command: Shell command to run. Use absolute paths where possible.
                 Example: 'ls -la' or 'git status'
+            timeout: Seconds before the command is killed. Defaults to 60.
         """
         try:
             result = subprocess.run(
@@ -172,12 +173,12 @@ class ToolsRegistry:
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             return json.dumps({
                 "stdout":    "",
-                "stderr":    "Error: command timed out after 60s",
+                "stderr":    f"Error: command timed out after {timeout}s",
                 "exit_code": -1,
                 "ok":        False,
             })
@@ -288,7 +289,7 @@ class ToolsRegistry:
             return f"Error writing {file_path}: {e}"
 
     @staticmethod
-    def read_article(url: str) -> str:
+    def read_article(url: str, timeout: float = 15.0) -> str:
         """Fetch a web page and return its content as clean markdown (max ~6 000 tokens).
         Use when the user provides a URL or link to an article, blog post, or documentation page.
 
@@ -297,13 +298,14 @@ class ToolsRegistry:
 
         Args:
             url: Full URL of the web page to fetch. Example: 'https://example.com/article'
+            timeout: Seconds before the request is abandoned. Defaults to 15.0.
         """
         MAX_CHARS = 24_000  # ~6 000 tokens; prevents context explosion from large pages
         try:
             resp = httpx.get(
                 url,
                 follow_redirects=True,
-                timeout=15.0,
+                timeout=timeout,
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             resp.raise_for_status()
