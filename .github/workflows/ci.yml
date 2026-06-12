@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Lint (ruff check)
+        run: uv run ruff check src agents workflows
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check src agents workflows
+
+      - name: Type check (mypy)
+        run: uv run mypy src
+
+      - name: Security (bandit)
+        run: uv run bandit -r src/ -ll
+
+      - name: Dependency audit (pip-audit)
+        run: uv run pip-audit
+
+      - name: Test (pytest)
+        run: uv run pytest
