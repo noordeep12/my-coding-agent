@@ -38,6 +38,30 @@ class Agent(LLM):
         before_tool_call: Callable[..., Any] | None = None,
         after_tool_call: Callable[..., Any] | None = None,
     ) -> None:
+        """Initialize the agent, open a session log, and print the banner.
+
+        Extend ``LLM`` (which probes the server for the context window), assign a
+        fresh session id, redirect stderr into per-session log files via
+        ``attach_session_log``, initialize run statistics, and print the startup
+        banner. Like ``LLM.__init__``, construction performs a network call.
+
+        Args:
+            api_url: Base URL of the OpenAI-compatible API.
+            api_key: Bearer token sent on every request.
+            model: Model id used for completions and context-window lookup.
+            messages: Initial conversation (e.g. system prompt). None starts
+                empty; the same list is appended to in place by ``add_message``.
+            tools: Tool schemas available to the agent. None starts empty.
+            label: Human-readable name shown in the banner and summary.
+            context_reset_threshold: Prompt-token fraction of the context window
+                (0-1) at which a handoff is generated and a continuation spawned.
+            before_tool_call: Optional pre-dispatch hook (see ``LLM``).
+            after_tool_call: Optional post-dispatch hook (see ``LLM``).
+
+        Raises:
+            httpx.HTTPError: If the inherited startup ``/models`` probe cannot
+                reach the server after retries are exhausted.
+        """
         super().__init__(api_url, api_key, model, before_tool_call, after_tool_call)
         self.label = label
         self.messages = messages or []
@@ -67,6 +91,12 @@ class Agent(LLM):
         self.logger.info("%s initialized with %d messages and %d tools", label, len(self.messages), len(self.tools))
     
     def add_message(self, message: dict[str, Any]) -> None:
+        """Append one message to the conversation in place and log its role.
+
+        Args:
+            message: An OpenAI-style message dict. A missing ``role`` is logged
+                as ``UNKNOWN``; the message is appended either way.
+        """
         self.messages.append(message)
         message_type = message.get("role", "unknown").upper()
         self.logger.info("%s message added to the conversation", message_type)
@@ -153,6 +183,23 @@ class Agent(LLM):
             self.logger.info("Tool artifacts saved → %s", artifacts_out)
 
     def run(self, max_steps: int = 5) -> list[dict[str, Any]]:
+        """Run the agentic loop until a stop condition, returning the messages.
+
+        Each step performs a context pre-flight check, routes a relevant tool
+        subset, calls the model, and dispatches any tool calls. The loop ends
+        when the model signals stop/exit/quit, ``max_steps`` is reached, or the
+        context window is exhausted. When usage crosses
+        ``context_reset_threshold``, a handoff is generated and a fresh
+        continuation agent finishes the remaining steps (this method then
+        returns that continuation's result). Session data and a summary are
+        written on exit, including the ``KeyboardInterrupt`` (aborted) path.
+
+        Args:
+            max_steps: Maximum number of agent steps before stopping.
+
+        Returns:
+            The full conversation message list at the point the loop stopped.
+        """
         # reset stats for this run
         self.step_num = 0
         self.stop_reason = "max_steps"

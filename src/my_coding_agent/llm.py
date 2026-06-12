@@ -47,6 +47,26 @@ class LLM:
         after_tool_call: Callable[..., Any] | None = None,
         timeout: float = DEFAULT_HTTP_TIMEOUT,
     ) -> None:
+        """Initialize the LLM client and probe the server for model metadata.
+
+        Build the HTTP session and immediately call ``available_models`` to
+        discover the model's context window. This means construction performs a
+        network round-trip to ``{api_url}/models``.
+
+        Args:
+            api_url: Base URL of the OpenAI-compatible API (e.g. ``.../v1``).
+            api_key: Bearer token sent on every request.
+            model: Model id whose context window is looked up at startup.
+            before_tool_call: Optional ``(name, args) -> args | None`` hook run
+                before each tool dispatch; returning None skips the call.
+            after_tool_call: Optional ``(name, args, result) -> result`` hook run
+                after each tool dispatch to post-process the result.
+            timeout: Per-request HTTP timeout in seconds for the session.
+
+        Raises:
+            httpx.HTTPError: If the startup ``/models`` probe cannot reach the
+                server after the transient-failure retries are exhausted.
+        """
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
@@ -61,6 +81,13 @@ class LLM:
         self._after_hook = after_tool_call or (lambda name, args, result: result)
 
     def setup_session(self) -> None:
+        """Create the httpx client and apply auth headers and the timeout.
+
+        Assign a fresh ``httpx.Client`` to ``self.session``, set the JSON
+        content-type and bearer-auth headers, and apply ``self.timeout`` as the
+        per-request timeout. Called once from ``__init__``; calling it again
+        replaces the existing session.
+        """
         self.session = httpx.Client()
         self.session.headers.update(
             {
@@ -93,6 +120,20 @@ class LLM:
         raise last_exc
 
     def available_models(self) -> list[str]:
+        """Fetch the server's model list and set ``self.context_window``.
+
+        Issue a GET to ``{api_url}/models`` and read each entry's id. As a side
+        effect, look up ``self.model`` in the response and store its context
+        length on ``self.context_window``, falling back to 131,072 tokens when
+        the model is absent or reports no context length.
+
+        Returns:
+            The list of model ids advertised by the server.
+
+        Raises:
+            httpx.HTTPError: If the request cannot reach the server after the
+                transient-failure retries are exhausted.
+        """
         resp = self._request_with_retry("GET", self.api_url + "/models")
         data = resp.json().get("data", [])
         models = [m["id"] for m in data]
@@ -118,6 +159,29 @@ class LLM:
         kind: str = "main",
         max_tokens: int | None = None,
     ) -> Response:
+        """Send one chat-completion request and record its token usage.
+
+        POST ``messages`` and ``tools`` to ``{api_url}/chat/completions``, append
+        the call's prompt/completion/total token usage to ``self.llm_calls``
+        (tagged with ``kind``), log any reasoning/content, and return the raw
+        httpx response. The caller extracts the message via ``extract_message``.
+
+        Args:
+            messages: Conversation so far, as OpenAI-style role/content dicts.
+            tools: Tool schemas to expose this turn; None sends an empty list.
+            kind: Usage tag for accounting (``main``, ``handoff``,
+                ``tool_router``, ``tool_output_summarizer``,
+                ``tool_arg_correction``).
+            max_tokens: Optional cap on generated tokens; omitted when None.
+
+        Returns:
+            The raw ``httpx.Response`` from the completions endpoint.
+
+        Raises:
+            ValueError: If the server returns a non-JSON body.
+            httpx.HTTPError: If the request cannot reach the server after the
+                transient-failure retries are exhausted.
+        """
         call_num = len(self.llm_calls) + 1
         self.logger.api(f"→ POST {self.api_url}/chat/completions  [call #{call_num}, kind={kind}]")
         self.logger.debug("Request body: %s", json.dumps({'model': self.model, 'messages': messages, 'tools': tools or []}, indent=4))
