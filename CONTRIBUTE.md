@@ -860,3 +860,25 @@ Key PEPs behind modern packaging:
 - PEP 621 — project metadata (`[project]`)
 - PEP 660 — editable installs (`pip install -e .`)
 
+---
+
+## 46. Commit Standards
+
+Use **Conventional Commits**: `type(scope): description`.
+
+- **Subject ≤ 72 characters**, imperative present tense. This is enforced
+  automatically by the `commit-subject-length` pre-commit hook
+  (`.pre-commit-config.yaml`, `commit-msg` stage) — an over-length subject fails
+  the commit.
+- **Types:** `feat` `fix` `refactor` `docs` `test` `chore` `perf` `ci`.
+- **Body** explains *why* the change is needed (the problem), not what changed.
+- **Footer** references the GitHub Project Board item the commit addresses:
+  `Refs: https://github.com/users/noordeep12/projects/1` (or `Refs: #<issue>`).
+
+A commit-message template lives at the repository root (`.gitmessage`) and models
+this convention. Enable it locally:
+
+```bash
+git config commit.template .gitmessage
+```
+

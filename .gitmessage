@@ -1,0 +1,12 @@
+# <type>(<scope>): <description>   <-- subject: <=72 chars, imperative, present tense
+#   type: feat|fix|refactor|docs|test|chore|perf|ci
+#   (enforced by the commit-subject-length pre-commit hook)
+#
+# <blank line above this body>
+# Explain WHY this change is needed — the problem, not the mechanics.
+# Wrap body lines at ~72 chars.
+#
+# Footer: reference the GitHub Project Board item this commit addresses.
+# Refs: https://github.com/users/noordeep12/projects/1
+#
+# Enable this template locally:  git config commit.template .gitmessage
