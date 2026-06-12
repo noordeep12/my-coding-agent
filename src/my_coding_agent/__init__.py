@@ -5,6 +5,7 @@ client, the ``ToolsRegistry`` and ``tool`` converter, the ``ContextHandoff``
 state object, and the exception hierarchy.
 """
 
+import logging
 from importlib.metadata import PackageNotFoundError, version
 
 from .agent import Agent
@@ -17,6 +18,11 @@ from .exceptions import (
 from .handoff import ContextHandoff
 from .llm import LLM
 from .tools import ToolsRegistry, tool
+
+# Library logging convention (CONTRIBUTE.md §31): attach a no-op handler to the
+# package's top-level logger once, so the library emits no output and no
+# "No handlers could be found" warning unless the application configures logging.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 try:
     __version__ = version("my-coding-agent")
