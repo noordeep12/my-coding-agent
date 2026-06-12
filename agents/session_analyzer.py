@@ -23,6 +23,9 @@ from pathlib import Path
 import click
 
 from my_coding_agent import Agent, ToolsRegistry, tool
+from my_coding_agent.logger import get_logger
+
+logger = get_logger(__name__)
 
 _BASE_DIR = Path(".my_coding_agent")
 
@@ -184,32 +187,31 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
     if session_id is None:
         session_id = _most_recent_session()
         if session_id is None:
-            print(
+            logger.warning(
                 "[session-analyzer] No sessions found in .my_coding_agent/",
-                file=sys.stderr,
             )
             return None
-        print(
-            f"[session-analyzer] Auto-selected most recent session: {session_id}",
-            file=sys.stderr,
+        logger.info(
+            "[session-analyzer] Auto-selected most recent session: %s",
+            session_id,
         )
 
     session_data_path = _BASE_DIR / session_id / "session_data.json"
     if not session_data_path.exists():
-        print(
-            f"[session-analyzer] Session data not found: {session_data_path}",
-            file=sys.stderr,
+        logger.warning(
+            "[session-analyzer] Session data not found: %s",
+            session_data_path,
         )
         return None
 
     session_json = session_data_path.read_text()
     session_data = json.loads(session_json)
 
-    print(
-        f"[session-analyzer] Analyzing session {session_id} "
-        f"({session_data.get('steps', '?')} steps, "
-        f"stop={session_data.get('stop_reason', '?')})",
-        file=sys.stderr,
+    logger.info(
+        "[session-analyzer] Analyzing session %s (%s steps, stop=%s)",
+        session_id,
+        session_data.get("steps", "?"),
+        session_data.get("stop_reason", "?"),
     )
 
     tools = [
@@ -237,14 +239,14 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
 
     out = _BASE_DIR / session_id / "session_analysis.md"
     if out.exists():
-        print(
-            f"[session-analyzer] Report written → {out.resolve()} "
-            f"({out.stat().st_size:,} bytes)",
-            file=sys.stderr,
+        logger.info(
+            "[session-analyzer] Report written → %s (%s bytes)",
+            out.resolve(),
+            f"{out.stat().st_size:,}",
         )
         return out
 
-    print(f"[session-analyzer] Warning: agent did not write {out}", file=sys.stderr)
+    logger.warning("[session-analyzer] Warning: agent did not write %s", out)
     return None
 
 

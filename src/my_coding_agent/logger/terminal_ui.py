@@ -185,7 +185,10 @@ def print_banner(  # noqa: C901
             lines.append(tool_row(t))
 
     lines += [empty_row(), bottom, ""]
-    print("\n".join(lines), file=sys.stderr)
+    # Intentional terminal-UI output: render the ANSI box directly to stderr,
+    # deliberately bypassing the logger so the box is not prefixed by the
+    # ColoredFormatter's "timestamp | LEVEL |" header (CONTRIBUTE.md §31/§36).
+    sys.stderr.write("\n".join(lines) + "\n")
 
 
 # ── Run summary ───────────────────────────────────────────────────────────────
@@ -639,4 +642,7 @@ def print_run_summary(
         lines += _markdown_rows(s, last_message)
 
     lines += [s.empty_row(), s.bottom, ""]
-    print("\n".join(lines), file=sys.stderr)
+    # Intentional terminal-UI output: render the ANSI box directly to stderr,
+    # deliberately bypassing the logger so the box is not prefixed by the
+    # ColoredFormatter's "timestamp | LEVEL |" header (CONTRIBUTE.md §31/§36).
+    sys.stderr.write("\n".join(lines) + "\n")

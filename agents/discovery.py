@@ -21,6 +21,9 @@ from pathlib import Path
 import click
 
 from my_coding_agent import Agent, ToolsRegistry, tool
+from my_coding_agent.logger import get_logger
+
+logger = get_logger(__name__)
 
 OUTPUT_PATH = ".my_coding_agent/discovery.md"
 
@@ -58,15 +61,14 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     out = Path(OUTPUT_PATH)
 
     if out.exists() and not force:
-        print(
-            f"[discovery] {OUTPUT_PATH} already exists — skipping "
-            "(use force=True to overwrite)",
-            file=sys.stderr,
+        logger.info(
+            "[discovery] %s already exists — skipping (use force=True to overwrite)",
+            OUTPUT_PATH,
         )
         return out
 
     reason = "forced" if force else "file missing"
-    print(f"[discovery] running Discovery Agent ({reason})", file=sys.stderr)
+    logger.info("[discovery] running Discovery Agent (%s)", reason)
 
     tools = [
         tool(ToolsRegistry.bash),
@@ -112,14 +114,14 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     agent.run(max_steps=max_steps)
 
     if out.exists():
-        print(
-            f"[discovery] discovery.md written → {out.resolve()} "
-            f"({out.stat().st_size:,} bytes)",
-            file=sys.stderr,
+        logger.info(
+            "[discovery] discovery.md written → %s (%s bytes)",
+            out.resolve(),
+            f"{out.stat().st_size:,}",
         )
         return out
 
-    print(f"[discovery] warning: agent did not write {OUTPUT_PATH}", file=sys.stderr)
+    logger.warning("[discovery] warning: agent did not write %s", OUTPUT_PATH)
     return None
 
 
