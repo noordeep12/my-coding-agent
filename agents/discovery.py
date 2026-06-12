@@ -12,6 +12,7 @@ Importable:
     from agents.discovery import run_discovery
     run_discovery(force=True)
 """
+
 import os
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import click
 
-from my_coding_agent import Agent, tool, ToolsRegistry
+from my_coding_agent import Agent, ToolsRegistry, tool
 
 OUTPUT_PATH = ".my_coding_agent/discovery.md"
 
@@ -31,6 +32,7 @@ def _git(*args: str) -> str:
     except (OSError, FileNotFoundError):
         return ""
     return result.stdout.strip()
+
 
 _DISCOVERY_USER_PROMPT = (
     "Explore the workspace and discover any relevant information that can help you "
@@ -56,7 +58,11 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     out = Path(OUTPUT_PATH)
 
     if out.exists() and not force:
-        print(f"[discovery] {OUTPUT_PATH} already exists — skipping (use force=True to overwrite)", file=sys.stderr)
+        print(
+            f"[discovery] {OUTPUT_PATH} already exists — skipping "
+            "(use force=True to overwrite)",
+            file=sys.stderr,
+        )
         return out
 
     reason = "forced" if force else "file missing"
@@ -71,28 +77,34 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     ]
 
     tool_docs = "\n".join(
-        f"- {t['function']['name']}({', '.join(t['function']['parameters']['properties'].keys())}) "
+        f"- {t['function']['name']}"
+        f"({', '.join(t['function']['parameters']['properties'].keys())}) "
         f"— {t['function']['description']}"
         for t in tools
     )
 
+    is_git = os.path.isdir(".git")
+    git_status = _git("status") if is_git else "Not a git repository"
+    git_branch = _git("rev-parse", "--abbrev-ref", "HEAD") if is_git else "N/A"
+    git_commits = _git("log", "-5", "--oneline") if is_git else "N/A"
     system_prompt = (
-        "You are a helpful assistant. Use tools when needed. Use absolute paths when working with files. "
+        "You are a helpful assistant. Use tools when needed. "
+        "Use absolute paths when working with files. "
         "You are running on a MacBook Pro.\n\n"
         f"Available tools:\n{tool_docs}\n\n"
         "Workspace:\n"
         f"- Current path: {os.getcwd()}\n"
         f"- Directory contents: {os.listdir(os.getcwd())}\n"
         f"- OS: {os.name}, Platform: {sys.platform}, User: {os.getlogin()}\n"
-        f"- Git status: {_git('status') if os.path.isdir('.git') else 'Not a git repository'}\n"
-        f"- Git branch: {_git('rev-parse', '--abbrev-ref', 'HEAD') if os.path.isdir('.git') else 'N/A'}\n"
-        f"- Git recent commits:\n{_git('log', '-5', '--oneline') if os.path.isdir('.git') else 'N/A'}\n"
+        f"- Git status: {git_status}\n"
+        f"- Git branch: {git_branch}\n"
+        f"- Git recent commits:\n{git_commits}\n"
     )
 
     agent = Agent(
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": _DISCOVERY_USER_PROMPT},
+            {"role": "user", "content": _DISCOVERY_USER_PROMPT},
         ],
         tools=tools,
         label="Discovery Agent",
@@ -100,7 +112,11 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     agent.run(max_steps=max_steps)
 
     if out.exists():
-        print(f"[discovery] discovery.md written → {out.resolve()} ({out.stat().st_size:,} bytes)", file=sys.stderr)
+        print(
+            f"[discovery] discovery.md written → {out.resolve()} "
+            f"({out.stat().st_size:,} bytes)",
+            file=sys.stderr,
+        )
         return out
 
     print(f"[discovery] warning: agent did not write {OUTPUT_PATH}", file=sys.stderr)
@@ -109,8 +125,13 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing discovery.md.")
-@click.option("--max-steps", default=20, show_default=True,
-              type=click.IntRange(1, 100), help="Max agent loop steps.")
+@click.option(
+    "--max-steps",
+    default=20,
+    show_default=True,
+    type=click.IntRange(1, 100),
+    help="Max agent loop steps.",
+)
 def cli(force, max_steps):
     """Run the Discovery Agent.
 

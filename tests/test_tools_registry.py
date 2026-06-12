@@ -164,7 +164,9 @@ def test_read_article_http_error(mocker):
     err_resp = mocker.Mock(status_code=404)
     mocker.patch(
         "my_coding_agent.tools.httpx.get",
-        side_effect=httpx.HTTPStatusError("nf", request=mocker.Mock(), response=err_resp),
+        side_effect=httpx.HTTPStatusError(
+            "nf", request=mocker.Mock(), response=err_resp
+        ),
     )
     out = ToolsRegistry.read_article("https://example.com/missing")
     assert "HTTP 404" in out

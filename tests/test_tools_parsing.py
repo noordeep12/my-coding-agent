@@ -59,12 +59,7 @@ def test_parse_args_section_multiline_continuation():
 
 
 def test_parse_args_section_multiple_params():
-    doc = (
-        "Summary.\n\n"
-        "Args:\n"
-        "    task: What to do.\n"
-        "    context: Background info.\n"
-    )
+    doc = "Summary.\n\nArgs:\n    task: What to do.\n    context: Background info.\n"
     assert _parse_args_section(doc) == {
         "task": "What to do.",
         "context": "Background info.",
@@ -88,11 +83,7 @@ def test_strip_tags_section_removes_tags():
 
 
 def test_strip_args_section_removes_args_and_tags():
-    doc = (
-        "Top description.\n\n"
-        "Tags:\n    a, b\n\n"
-        "Args:\n    p: a param.\n"
-    )
+    doc = "Top description.\n\nTags:\n    a, b\n\nArgs:\n    p: a param.\n"
     assert _strip_args_section(doc) == "Top description."
 
 

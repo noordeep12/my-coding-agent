@@ -62,10 +62,10 @@ def test_teestream_write_fans_out_and_strips_ansi():
 
     n = tee.write(colored_text)
 
-    assert n == len(colored_text)            # returns count written
-    assert orig.getvalue() == colored_text    # original keeps the ANSI codes
+    assert n == len(colored_text)  # returns count written
+    assert orig.getvalue() == colored_text  # original keeps the ANSI codes
     assert colored.getvalue() == colored_text  # colored file keeps them too
-    assert plain.getvalue() == "red text"     # plain file is stripped of ANSI
+    assert plain.getvalue() == "red text"  # plain file is stripped of ANSI
 
 
 def test_teestream_flush_propagates():
@@ -136,6 +136,6 @@ def test_attach_then_detach_session_log_tees_and_restores(tmp_path, monkeypatch)
         lg.sys.stderr.flush()
     finally:
         lg.detach_session_log(handle)
-    assert lg.sys.stderr is original              # stderr restored
-    assert "hello" in plain_path.read_text()       # plain log captured the write
+    assert lg.sys.stderr is original  # stderr restored
+    assert "hello" in plain_path.read_text()  # plain log captured the write
     assert (tmp_path / "logs" / "stderr_colored.log").exists()

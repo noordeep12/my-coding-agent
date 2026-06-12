@@ -47,10 +47,12 @@ def test_setup_session_applies_auth_and_timeout(bare_llm):
 def test_available_models_sets_context_window_from_match(bare_llm, mocker):
     bare_llm.api_url = "http://x/v1"
     bare_llm.model = "my-model"
-    payload = {"data": [
-        {"id": "other", "context_length": 999},
-        {"id": "my-model", "context_length": 50_000},
-    ]}
+    payload = {
+        "data": [
+            {"id": "other", "context_length": 999},
+            {"id": "my-model", "context_length": 50_000},
+        ]
+    }
     mocker.patch.object(bare_llm, "_request_with_retry", return_value=_Resp(payload))
     models = bare_llm.available_models()
     assert models == ["other", "my-model"]
@@ -61,7 +63,8 @@ def test_available_models_falls_back_when_model_absent(bare_llm, mocker):
     bare_llm.api_url = "http://x/v1"
     bare_llm.model = "missing"
     mocker.patch.object(
-        bare_llm, "_request_with_retry",
+        bare_llm,
+        "_request_with_retry",
         return_value=_Resp({"data": [{"id": "other", "context_length": 1}]}),
     )
     bare_llm.available_models()
@@ -72,7 +75,8 @@ def test_available_models_uses_alternate_context_keys(bare_llm, mocker):
     bare_llm.api_url = "http://x/v1"
     bare_llm.model = "m"
     mocker.patch.object(
-        bare_llm, "_request_with_retry",
+        bare_llm,
+        "_request_with_retry",
         return_value=_Resp({"data": [{"id": "m", "max_context_length": 4096}]}),
     )
     bare_llm.available_models()
@@ -101,7 +105,8 @@ def test_chat_completion_passes_max_tokens(bare_llm, mocker):
     bare_llm.api_url = "http://x/v1"
     bare_llm.model = "m"
     req = mocker.patch.object(
-        bare_llm, "_request_with_retry",
+        bare_llm,
+        "_request_with_retry",
         return_value=_Resp({"choices": [], "usage": {}}),
     )
     bare_llm.chat_completion([{"role": "user", "content": "q"}], max_tokens=128)
@@ -112,7 +117,8 @@ def test_chat_completion_omits_max_tokens_when_none(bare_llm, mocker):
     bare_llm.api_url = "http://x/v1"
     bare_llm.model = "m"
     req = mocker.patch.object(
-        bare_llm, "_request_with_retry",
+        bare_llm,
+        "_request_with_retry",
         return_value=_Resp({"choices": [], "usage": {}}),
     )
     bare_llm.chat_completion([{"role": "user", "content": "q"}])
@@ -128,7 +134,8 @@ def test_chat_completion_non_json_body_raises_value_error(bare_llm, mocker):
             raise ValueError("not json")
 
     mocker.patch.object(
-        bare_llm, "_request_with_retry",
+        bare_llm,
+        "_request_with_retry",
         return_value=_BadResp(None, content=b"<html>", status_code=500),
     )
     with pytest.raises(ValueError, match="non-JSON response"):
@@ -144,12 +151,15 @@ def _tool(name, tags=None):
 
 def test_route_tools_phase2_selects_llm_choice_plus_baseline(bare_llm, mocker):
     tools = [
-        _tool("bash"), _tool("read_file"), _tool("read_tool_artifact"),
+        _tool("bash"),
+        _tool("read_file"),
+        _tool("read_tool_artifact"),
         _tool("read_article", tags=["web"]),
     ]
     # Message matches no tag anywhere → phase-2 LLM fallback runs.
     mocker.patch.object(
-        bare_llm, "chat_completion",
+        bare_llm,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": '["read_article"]'}}]}),
     )
     selected = {t["function"]["name"] for t in bare_llm.route_tools("xyzzy", tools)}
@@ -158,10 +168,15 @@ def test_route_tools_phase2_selects_llm_choice_plus_baseline(bare_llm, mocker):
 
 
 def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_llm, mocker):
-    tools = [_tool("bash"), _tool("read_file"), _tool("read_tool_artifact"),
-             _tool("read_article", tags=["web"])]
+    tools = [
+        _tool("bash"),
+        _tool("read_file"),
+        _tool("read_tool_artifact"),
+        _tool("read_article", tags=["web"]),
+    ]
     mocker.patch.object(
-        bare_llm, "chat_completion",
+        bare_llm,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "not an array"}}]}),
     )
     selected = bare_llm.route_tools("xyzzy", tools)
@@ -169,12 +184,26 @@ def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_llm, mocker):
 
 
 def test_route_tools_phase2_extracts_array_from_prose(bare_llm, mocker):
-    tools = [_tool("bash"), _tool("read_file"), _tool("read_tool_artifact"),
-             _tool("read_article", tags=["web"])]
+    tools = [
+        _tool("bash"),
+        _tool("read_file"),
+        _tool("read_tool_artifact"),
+        _tool("read_article", tags=["web"]),
+    ]
     mocker.patch.object(
-        bare_llm, "chat_completion",
-        return_value=_Resp({"choices": [{"message": {
-            "content": 'Sure! Here you go: ["read_article"] done.'}}]}),
+        bare_llm,
+        "chat_completion",
+        return_value=_Resp(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": 'Sure! Here you go: ["read_article"] done.'
+                        }
+                    }
+                ]
+            }
+        ),
     )
     selected = {t["function"]["name"] for t in bare_llm.route_tools("xyzzy", tools)}
     assert "read_article" in selected
@@ -208,7 +237,8 @@ def test_validate_tool_output_summary_not_truncated(bare_llm):
 
 def test_summarize_artifact_uses_llm_summary(bare_llm, mocker):
     mocker.patch.object(
-        bare_llm, "chat_completion",
+        bare_llm,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "all good"}}]}),
     )
     out = bare_llm._summarize_artifact({"exit_code": 0, "ok": True}, "bash", "call_1")
@@ -253,7 +283,8 @@ def test_dispatch_tool_plain_string_result(bare_llm, tmp_path):
 def test_dispatch_tool_artifact_tuple_is_summarized(bare_llm, mocker):
     bare_llm._session_log_path = None
     mocker.patch.object(
-        bare_llm, "chat_completion",
+        bare_llm,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "summary"}}]}),
     )
 
@@ -348,11 +379,18 @@ def test_execute_tool_calls_success_flow(bare_llm):
     bare_llm._before_hook = lambda name, args: args
     bare_llm._after_hook = lambda name, args, result: result
     # Read a file that exists under the cwd (the registry's default base_dir).
-    message = {"tool_calls": [{
-        "id": "c1", "type": "function",
-        "function": {"name": "read_file",
-                     "arguments": json.dumps({"file_path": "pyproject.toml"})},
-    }]}
+    message = {
+        "tool_calls": [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": json.dumps({"file_path": "pyproject.toml"}),
+                },
+            }
+        ]
+    }
     messages, records = bare_llm.execute_tool_calls(message)
     assert len(messages) == 1
     assert records[0]["name"] == "read_file"
@@ -366,10 +404,15 @@ def test_execute_tool_calls_skips_on_before_hook_none(bare_llm):
     bare_llm.tool_artifacts = {}
     bare_llm._before_hook = lambda name, args: None  # skip every call
     bare_llm._after_hook = lambda name, args, result: result
-    message = {"tool_calls": [{
-        "id": "c1", "type": "function",
-        "function": {"name": "bash", "arguments": "{}"},
-    }]}
+    message = {
+        "tool_calls": [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "bash", "arguments": "{}"},
+            }
+        ]
+    }
     messages, records = bare_llm.execute_tool_calls(message)
     assert messages[0]["status"] == "skipped"
     assert records[0]["status"] == "skipped"
@@ -400,10 +443,12 @@ def test_execute_tool_calls_empty_returns_empty(bare_llm):
 def test_correct_args_returns_parsed_corrected_call(bare_llm, mocker):
     bare_llm.messages = []
     bare_llm.tools = []
-    fixed = {"function": {"name": "read_file",
-                          "arguments": json.dumps({"file_path": "/ok"})}}
+    fixed = {
+        "function": {"name": "read_file", "arguments": json.dumps({"file_path": "/ok"})}
+    }
     mocker.patch.object(
-        bare_llm, "chat_completion",
+        bare_llm,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": [fixed]}}]}),
     )
     out = bare_llm._correct_args(
@@ -416,7 +461,8 @@ def test_correct_args_returns_none_when_model_skips_tool(bare_llm, mocker):
     bare_llm.messages = []
     bare_llm.tools = []
     mocker.patch.object(
-        bare_llm, "chat_completion",
+        bare_llm,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": []}}]}),
     )
     out = bare_llm._correct_args(
@@ -430,7 +476,8 @@ def test_correct_args_returns_none_on_unparseable_args(bare_llm, mocker):
     bare_llm.tools = []
     bad_call = {"function": {"name": "read_file", "arguments": "{not json}"}}
     mocker.patch.object(
-        bare_llm, "chat_completion",
+        bare_llm,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": [bad_call]}}]}),
     )
     out = bare_llm._correct_args(

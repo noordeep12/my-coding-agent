@@ -13,6 +13,7 @@ Importable:
     from agents.session_analyzer import run_analysis
     run_analysis(session_id="ff2a5270d0d0")
 """
+
 import json
 import os
 import subprocess
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import click
 
-from my_coding_agent import Agent, tool, ToolsRegistry
+from my_coding_agent import Agent, ToolsRegistry, tool
 
 _BASE_DIR = Path(".my_coding_agent")
 
@@ -49,27 +50,32 @@ def _most_recent_session() -> str | None:
 
 def _build_system_prompt(tools: list) -> str:
     tool_docs = "\n".join(
-        f"  - {t['function']['name']}({', '.join(t['function']['parameters']['properties'].keys())})"
+        f"  - {t['function']['name']}"
+        f"({', '.join(t['function']['parameters']['properties'].keys())})"
         f" — {t['function']['description']}"
         for t in tools
     )
     is_git = os.path.isdir(".git")
     return (
-        "You are an AI Harness improvement specialist. Your job is to analyze completed LLM agent "
+        "You are an AI Harness improvement specialist. Your job is to analyze "
+        "completed LLM agent "
         "sessions, list problems, and produce actionable improvement reports.\n\n"
         f"Available tools:\n{tool_docs}\n\n"
         "Workspace:\n"
         f"  current directory     : {os.getcwd()}\n"
         f"  current directory contents : {os.listdir(os.getcwd())}\n"
-        f"  machine os       : {os.name}, platform: {sys.platform}, user: {os.getlogin()}\n"
+        f"  machine os       : {os.name}, platform: {sys.platform}, "
+        f"user: {os.getlogin()}\n"
         + (
             f"  git      : {_git('status', '--short') or 'clean'}\n"
             f"  branch   : {_git('rev-parse', '--abbrev-ref', 'HEAD')}\n"
             f"  commits  :\n{_git('log', '-5', '--oneline')}\n"
-            if is_git else "  git      : not a git repository\n"
+            if is_git
+            else "  git      : not a git repository\n"
         )
         + "\nUse absolute paths when tool arguments requires files paths."
     )
+
 
 _USER_PROMPT_TEMPLATE = """\
 Analyze this agent session, list problems, and produce a structured improvement report.
@@ -82,7 +88,8 @@ Analyze this agent session, list problems, and produce a structured improvement 
 ## Your Tasks
 
 1. **Skim the session log file** at `.my_coding_agent/{session_id}/stderr.log`.
-   The log can be very large — DO NOT read it whole. Use targeted bash commands to extract signal:
+   The log can be very large — DO NOT read it whole. Use targeted bash
+   commands to extract signal:
 
    ```bash
    # Size and line count
@@ -90,7 +97,8 @@ Analyze this agent session, list problems, and produce a structured improvement 
    du -sh .my_coding_agent/{session_id}/stderr.log
 
    # Errors and warnings (with 2 lines of context each)
-   grep -n "| ERROR\\|| WARNING\\|| CRITICAL" .my_coding_agent/{session_id}/stderr.log | head -60
+   grep -n "| ERROR\\|| WARNING\\|| CRITICAL" \
+       .my_coding_agent/{session_id}/stderr.log | head -60
 
    # Tool dispatches (shows which tools were called and their args)
    grep -n "tool_id\\|→" .my_coding_agent/{session_id}/stderr.log | head -80
@@ -99,10 +107,12 @@ Analyze this agent session, list problems, and produce a structured improvement 
    grep -n "STEP [0-9]" .my_coding_agent/{session_id}/stderr.log
 
    # Context % per step (token pressure over time)
-   grep -n "% ctx used\\|Context at\\|Context reset\\|Context limit" .my_coding_agent/{session_id}/stderr.log
+   grep -n "% ctx used\\|Context at\\|Context reset\\|Context limit" \
+       .my_coding_agent/{session_id}/stderr.log
 
    # Handoff events
-   grep -n "handoff\\|Handoff\\|context reset\\|continuation" .my_coding_agent/{session_id}/stderr.log | head -30
+   grep -n "handoff\\|Handoff\\|context reset\\|continuation" \
+       .my_coding_agent/{session_id}/stderr.log | head -30
 
    # Last 80 lines (final agent state, summary output)
    tail -n 80 .my_coding_agent/{session_id}/stderr.log
@@ -115,7 +125,8 @@ Analyze this agent session, list problems, and produce a structured improvement 
    - `src/my_coding_agent/llm.py` — LLM client, tool execution
    - `src/my_coding_agent/tools.py` — available tools
 
-3. **Fetch one authoritative reference** on LLM agent harness best practices. Use read_article to fetch:
+3. **Fetch one authoritative reference** on LLM agent harness best practices.
+   Use read_article to fetch:
    - https://www.anthropic.com/engineering/building-effective-agents
    - https://medium.com/@tort_mario/ai-agent-best-practices-production-ready-harness-engineering-2026-guide-c1236d713fac
    - https://gist.github.com/celesteanders/21edad2367c8ede2ff092bd87e56a26f
@@ -123,13 +134,17 @@ Analyze this agent session, list problems, and produce a structured improvement 
 
 
 4. **Analyze the session** for:
-   - Failure modes (tool errors, context issues, wrong stop reasons, repeated retries, etc.)
+   - Failure modes (tool errors, context issues, wrong stop reasons,
+     repeated retries, etc.)
    - Successful patterns worth preserving
    - Token efficiency (prompt vs completion ratio, context % at stop)
-   - Any harness events like: context reset, handoff, continuation, summarization, tool arg correction, tool routing decisions, etc.
-   - Any unusual patterns visible in the log (long silences, burst tool calls, error cascades)
+   - Any harness events like: context reset, handoff, continuation,
+     summarization, tool arg correction, tool routing decisions, etc.
+   - Any unusual patterns visible in the log (long silences, burst tool calls,
+     error cascades)
 
-5. **Write the report** to `.my_coding_agent/{session_id}/session_analysis.md` using write_file.
+5. **Write the report** to `.my_coding_agent/{session_id}/session_analysis.md`
+   using write_file.
 
 The report MUST follow this exact structure:
 ```markdown
@@ -159,7 +174,8 @@ The report MUST follow this exact structure:
 <!-- Sources consulted -->
 ```
 
-Write only facts derived from the session data and source code. Be specific and actionable.
+Write only facts derived from the session data and source code.
+Be specific and actionable.
 """
 
 
@@ -168,20 +184,33 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
     if session_id is None:
         session_id = _most_recent_session()
         if session_id is None:
-            print("[session-analyzer] No sessions found in .my_coding_agent/", file=sys.stderr)
+            print(
+                "[session-analyzer] No sessions found in .my_coding_agent/",
+                file=sys.stderr,
+            )
             return None
-        print(f"[session-analyzer] Auto-selected most recent session: {session_id}", file=sys.stderr)
+        print(
+            f"[session-analyzer] Auto-selected most recent session: {session_id}",
+            file=sys.stderr,
+        )
 
     session_data_path = _BASE_DIR / session_id / "session_data.json"
     if not session_data_path.exists():
-        print(f"[session-analyzer] Session data not found: {session_data_path}", file=sys.stderr)
+        print(
+            f"[session-analyzer] Session data not found: {session_data_path}",
+            file=sys.stderr,
+        )
         return None
 
     session_json = session_data_path.read_text()
     session_data = json.loads(session_json)
 
-    print(f"[session-analyzer] Analyzing session {session_id} ({session_data.get('steps', '?')} steps, "
-          f"stop={session_data.get('stop_reason', '?')})", file=sys.stderr)
+    print(
+        f"[session-analyzer] Analyzing session {session_id} "
+        f"({session_data.get('steps', '?')} steps, "
+        f"stop={session_data.get('stop_reason', '?')})",
+        file=sys.stderr,
+    )
 
     tools = [
         tool(ToolsRegistry.bash),
@@ -199,7 +228,7 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
     agent = Agent(
         messages=[
             {"role": "system", "content": _build_system_prompt(tools)},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         tools=tools,
         label="Session Analyzer",
@@ -208,7 +237,11 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
 
     out = _BASE_DIR / session_id / "session_analysis.md"
     if out.exists():
-        print(f"[session-analyzer] Report written → {out.resolve()} ({out.stat().st_size:,} bytes)", file=sys.stderr)
+        print(
+            f"[session-analyzer] Report written → {out.resolve()} "
+            f"({out.stat().st_size:,} bytes)",
+            file=sys.stderr,
+        )
         return out
 
     print(f"[session-analyzer] Warning: agent did not write {out}", file=sys.stderr)
@@ -216,10 +249,20 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--session-id", "-s", default=None, metavar="ID",
-              help="Session ID to analyze. Defaults to the most recent session.")
-@click.option("--max-steps", default=15, show_default=True,
-              type=click.IntRange(1, 100), help="Max agent loop steps.")
+@click.option(
+    "--session-id",
+    "-s",
+    default=None,
+    metavar="ID",
+    help="Session ID to analyze. Defaults to the most recent session.",
+)
+@click.option(
+    "--max-steps",
+    default=15,
+    show_default=True,
+    type=click.IntRange(1, 100),
+    help="Max agent loop steps.",
+)
 def cli(session_id, max_steps):
     """Run the Session Analyzer Agent.
 

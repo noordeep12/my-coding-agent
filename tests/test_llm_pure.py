@@ -5,8 +5,6 @@ zero-cost (phase-1) paths of route_tools. The LLM instance is built without
 __init__ (see the bare_llm fixture) so no HTTP call to /models occurs.
 """
 
-import json
-
 import httpx
 import pytest
 
@@ -39,7 +37,9 @@ def test_apply_arg_aliases_unknown_tool_unchanged(bare_llm):
 
 
 def test_apply_arg_aliases_read_file_variants(bare_llm):
-    assert bare_llm._apply_arg_aliases("read_file", {"filename": "x"}) == {"file_path": "x"}
+    assert bare_llm._apply_arg_aliases("read_file", {"filename": "x"}) == {
+        "file_path": "x"
+    }
 
 
 # --- _strip_unknown_args -----------------------------------------------------
@@ -149,7 +149,9 @@ def test_request_with_retry_does_not_retry_non_transient(bare_llm, mocker):
 
     class _ProtocolErrorSession:
         def request(self, method, url, **kwargs):
-            raise httpx.HTTPStatusError("nope", request=mocker.Mock(), response=mocker.Mock())
+            raise httpx.HTTPStatusError(
+                "nope", request=mocker.Mock(), response=mocker.Mock()
+            )
 
     bare_llm.session = _ProtocolErrorSession()
     with pytest.raises(httpx.HTTPStatusError):

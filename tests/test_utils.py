@@ -24,7 +24,9 @@ def _resp(payload, factory):
 
 
 def test_extract_message_returns_message_dict(fake_response):
-    resp = fake_response({"choices": [{"message": {"role": "assistant", "content": "hi"}}]})
+    resp = fake_response(
+        {"choices": [{"message": {"role": "assistant", "content": "hi"}}]}
+    )
     assert extract_message(resp) == {"role": "assistant", "content": "hi"}
 
 

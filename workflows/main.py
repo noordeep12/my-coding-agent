@@ -8,22 +8,21 @@ Run:
     uv run python workflows/main.py [OPTIONS]
     uv run python workflows/main.py --help
 """
+
+import inspect
 import os
 import subprocess
 from pathlib import Path
 
-import inspect
-
 import click
+from agents.discovery import run_discovery
+from agents.session_analyzer import run_analysis
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 
-from my_coding_agent import Agent, tool, ToolsRegistry
-from agents.discovery import run_discovery
-from agents.session_analyzer import run_analysis
-
+from my_coding_agent import Agent, ToolsRegistry, tool
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -34,9 +33,7 @@ _DEFAULT_PROMPT = (
 def _git(*args: str) -> str:
     """Run a git command (no shell) and return stripped stdout, or '' on failure."""
     try:
-        result = subprocess.run(
-            ["git", *args], capture_output=True, text=True
-        )
+        result = subprocess.run(["git", *args], capture_output=True, text=True)
     except (OSError, FileNotFoundError):
         return ""
     return result.stdout.strip()
@@ -67,12 +64,14 @@ def _system_prompt(tools: list) -> str:
         )
     )
 
+
 _HISTORY_FILE = Path.home() / ".my_coding_agent_history"
 
 
 def _all_tools() -> list:
     names = [
-        name for name, _ in inspect.getmembers(ToolsRegistry, predicate=inspect.isfunction)
+        name
+        for name, _ in inspect.getmembers(ToolsRegistry, predicate=inspect.isfunction)
         if not name.startswith("_")
     ]
     return [tool(getattr(ToolsRegistry, name)) for name in names]
@@ -93,7 +92,7 @@ def _read_interactive_prompt() -> str:
     def _cancel(event):
         event.app.exit(result="")
 
-    @kb.add(Keys.Escape, Keys.ControlM)   # Escape then Enter
+    @kb.add(Keys.Escape, Keys.ControlM)  # Escape then Enter
     @kb.add("escape", "enter")
     def _submit_esc_enter(event):
         event.current_buffer.validate_and_handle()
@@ -102,11 +101,16 @@ def _read_interactive_prompt() -> str:
         history=FileHistory(str(_HISTORY_FILE)),
         key_bindings=kb,
         multiline=True,
-        prompt_continuation=lambda width, line_number, wrap_count: "  " + "·" * (width - 2),
+        prompt_continuation=lambda width, line_number, wrap_count: (
+            "  " + "·" * (width - 2)
+        ),
         enable_history_search=True,
     )
 
-    click.secho("Enter your prompt  (Meta+Enter or Esc→Enter to submit, ↑/↓ for history):", fg="cyan")
+    click.secho(
+        "Enter your prompt  (Meta+Enter or Esc→Enter to submit, ↑/↓ for history):",
+        fg="cyan",
+    )
     click.echo("─" * 60)
     try:
         text = session.prompt("❯ ")
@@ -118,22 +122,25 @@ def _read_interactive_prompt() -> str:
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
-    "--prompt", "-p",
+    "--prompt",
+    "-p",
     default=None,
     show_default="default commit-and-push task",
     metavar="TEXT",
     help="Task for the Main Agent.",
 )
 @click.option(
-    "--interactive", "-i",
+    "--interactive",
+    "-i",
     default=False,
     is_flag=True,
     show_default=True,
     help="Read the task prompt interactively from stdin (paste freely; "
-         "Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel).",
+    "Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel).",
 )
 @click.option(
-    "--discover/--no-discover", "-d/-D",
+    "--discover/--no-discover",
+    "-d/-D",
     default=True,
     show_default=True,
     help="Run the Discovery Agent before the Main Agent.",
@@ -146,7 +153,8 @@ def _read_interactive_prompt() -> str:
     help="Maximum agent loop steps for the Main Agent.",
 )
 @click.option(
-    "--analyze/--no-analyze", "-a/-A",
+    "--analyze/--no-analyze",
+    "-a/-A",
     default=False,
     show_default=True,
     help="Run the Session Analyzer Agent after the Main Agent completes.",
@@ -159,7 +167,7 @@ def main(prompt, interactive, discover, max_steps, analyze):
     Steps executed:
       1. Discovery Agent  — maps the workspace (skip with --no-discover)
       2. Main Agent       — executes the requested task
-      3. Session Analyzer — reviews the session and writes a report (opt-in with --analyze)
+      3. Session Analyzer — reviews the session and writes a report (--analyze)
 
     \b
     Examples:
@@ -185,7 +193,9 @@ def main(prompt, interactive, discover, max_steps, analyze):
         click.secho("\n● Discovery Agent", fg="cyan", bold=True, err=True)
         run_discovery(force=True)
     else:
-        click.secho("\n● Discovery Agent  (skipped via --no-discover)", fg="yellow", err=True)
+        click.secho(
+            "\n● Discovery Agent  (skipped via --no-discover)", fg="yellow", err=True
+        )
 
     # ── step 2: main agent ─────────────────────────────────────────────────────
     click.secho("\n● Main Agent", fg="cyan", bold=True, err=True)
@@ -194,7 +204,7 @@ def main(prompt, interactive, discover, max_steps, analyze):
     agent = Agent(
         messages=[
             {"role": "system", "content": _system_prompt(tools)},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         tools=tools,
         label="Main Agent",

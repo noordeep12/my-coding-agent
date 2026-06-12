@@ -1,4 +1,5 @@
 """Context handoff — structured state transfer between context windows."""
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -11,7 +12,9 @@ class ContextHandoff:
     prompt_tokens: int
     context_window: int
     content: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    created_at: str = field(
+        default_factory=lambda: datetime.now().isoformat(timespec="seconds")
+    )
     path: str = ""
 
     @property

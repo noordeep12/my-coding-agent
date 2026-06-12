@@ -65,19 +65,25 @@ def test_add_message_handles_missing_role(silent_logger):
 
 
 def test_routing_signal_joins_last_user_and_assistant(silent_logger):
-    agent = _make_agent(silent_logger, messages=[
-        {"role": "user", "content": "first task"},
-        {"role": "assistant", "content": "doing it"},
-    ])
+    agent = _make_agent(
+        silent_logger,
+        messages=[
+            {"role": "user", "content": "first task"},
+            {"role": "assistant", "content": "doing it"},
+        ],
+    )
     assert agent._routing_signal() == "first task doing it"
 
 
 def test_routing_signal_uses_most_recent_of_each_role(silent_logger):
-    agent = _make_agent(silent_logger, messages=[
-        {"role": "user", "content": "old"},
-        {"role": "user", "content": "new user"},
-        {"role": "assistant", "content": "new assistant"},
-    ])
+    agent = _make_agent(
+        silent_logger,
+        messages=[
+            {"role": "user", "content": "old"},
+            {"role": "user", "content": "new user"},
+            {"role": "assistant", "content": "new assistant"},
+        ],
+    )
     assert agent._routing_signal() == "new user new assistant"
 
 
@@ -87,10 +93,13 @@ def test_routing_signal_empty_when_no_messages(silent_logger):
 
 
 def test_routing_signal_skips_none_content(silent_logger):
-    agent = _make_agent(silent_logger, messages=[
-        {"role": "user", "content": None},
-        {"role": "assistant", "content": "only this"},
-    ])
+    agent = _make_agent(
+        silent_logger,
+        messages=[
+            {"role": "user", "content": None},
+            {"role": "assistant", "content": "only this"},
+        ],
+    )
     assert agent._routing_signal() == "only this"
 
 
@@ -99,7 +108,9 @@ def test_routing_signal_skips_none_content(silent_logger):
 
 def test_track_step_usage_records_last_prompt_tokens(silent_logger):
     agent = _make_agent(silent_logger)
-    resp = _Resp({"usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}})
+    resp = _Resp(
+        {"usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}}
+    )
     agent._track_step_usage(resp)
     assert agent.last_prompt_tokens == 120
 
@@ -145,7 +156,9 @@ def test_preflight_reset_triggers_continuation(silent_logger, mocker):
     agent = _make_agent(silent_logger, context_window=1000, last_prompt_tokens=800)
     # Stub the heavy reset path so no handoff/continuation network work happens.
     mocker.patch.object(
-        Agent, "_handle_context_reset", return_value=[{"role": "assistant", "content": "done"}]
+        Agent,
+        "_handle_context_reset",
+        return_value=[{"role": "assistant", "content": "done"}],
     )
     assert agent._context_preflight(max_steps=5, t_start=0.0) == "reset"
     assert agent._continuation_result == [{"role": "assistant", "content": "done"}]
@@ -183,11 +196,17 @@ def _stub_run_internals(agent, mocker):
 def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
-    resp = _Resp({
-        "choices": [{"message": {"role": "assistant", "content": "all done"},
-                     "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    })
+    resp = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "all done"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
     mocker.patch.object(agent, "chat_completion", return_value=resp)
     mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
 
@@ -198,11 +217,17 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
 def test_run_stops_at_max_steps(silent_logger, mocker):
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
-    resp = _Resp({
-        "choices": [{"message": {"role": "assistant", "content": "still going"},
-                     "finish_reason": "tool_calls"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    })
+    resp = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "still going"},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
     mocker.patch.object(agent, "chat_completion", return_value=resp)
     mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
 
@@ -214,11 +239,17 @@ def test_run_skips_step_on_empty_message(silent_logger, mocker):
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
     empty = _Resp({"choices": [], "usage": {}})
-    stop = _Resp({
-        "choices": [{"message": {"role": "assistant", "content": "done"},
-                     "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-    })
+    stop = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "done"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+    )
     chat = mocker.patch.object(agent, "chat_completion", side_effect=[empty, stop])
     mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
 
@@ -257,11 +288,13 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
         context_window=10000,
     )
     mocker.patch.object(
-        agent, "chat_completion",
+        agent,
+        "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
     )
     saved = mocker.patch(
-        "my_coding_agent.agent.ContextHandoff.save", return_value="/tmp/h.json")
+        "my_coding_agent.agent.ContextHandoff.save", return_value="/tmp/h.json"
+    )
     handoff = agent._generate_handoff(step_num=2, prompt_tokens=8000)
     assert handoff.content == "handoff summary"
     assert handoff.step_num == 2
@@ -320,8 +353,10 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
 def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     agent = _make_agent(
         silent_logger,
-        messages=[{"role": "system", "content": "sys"},
-                  {"role": "user", "content": "u"}],
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "u"},
+        ],
         api_url="http://x",
         api_key="k",
         model="m",

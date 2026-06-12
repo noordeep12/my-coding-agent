@@ -21,14 +21,18 @@ from my_coding_agent.tools import ToolsRegistry
 def test_git_returns_stripped_stdout(module, mocker):
     mocker.patch(
         f"{module.__name__}.subprocess.run",
-        return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="main\n", stderr=""),
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="main\n", stderr=""
+        ),
     )
     assert module._git("rev-parse", "--abbrev-ref", "HEAD") == "main"
 
 
 @pytest.mark.parametrize("module", [wf_main, discovery, session_analyzer])
 def test_git_returns_empty_on_oserror(module, mocker):
-    mocker.patch(f"{module.__name__}.subprocess.run", side_effect=FileNotFoundError("no git"))
+    mocker.patch(
+        f"{module.__name__}.subprocess.run", side_effect=FileNotFoundError("no git")
+    )
     assert module._git("status") == ""
 
 
@@ -53,8 +57,13 @@ def test_system_prompt_includes_workspace_and_tools(mocker):
     mocker.patch("workflows.main.Path.exists", return_value=False)
 
     tools = [
-        {"function": {"name": "bash", "description": "run a command",
-                      "parameters": {"properties": {"command": {}}}}},
+        {
+            "function": {
+                "name": "bash",
+                "description": "run a command",
+                "parameters": {"properties": {"command": {}}},
+            }
+        },
     ]
     prompt = wf_main._system_prompt(tools)
     assert "/fake/ws" in prompt
@@ -79,6 +88,7 @@ def test_most_recent_session_picks_newest(tmp_path, mocker):
         (d / "session_data.json").write_text("{}")
     # Make `new` strictly more recent.
     import os
+
     os.utime(old / "session_data.json", (1000, 1000))
     os.utime(new / "session_data.json", (2000, 2000))
     assert session_analyzer._most_recent_session() == "new_session"
@@ -95,7 +105,9 @@ def test_delegate_returns_subagent_report(mocker):
     ]
     mocker.patch("my_coding_agent.agent.Agent", return_value=fake_agent)
 
-    reg = ToolsRegistry(tools=[{"function": {"name": "delegate"}}, {"function": {"name": "bash"}}])
+    reg = ToolsRegistry(
+        tools=[{"function": {"name": "delegate"}}, {"function": {"name": "bash"}}]
+    )
     out = reg.delegate(task="explore x", context="paths here")
 
     assert out == "the report"
@@ -104,7 +116,9 @@ def test_delegate_returns_subagent_report(mocker):
 
 def test_delegate_handles_no_report(mocker):
     fake_agent = mocker.Mock()
-    fake_agent.run.return_value = [{"role": "user", "content": "task"}]  # no assistant content
+    fake_agent.run.return_value = [
+        {"role": "user", "content": "task"}
+    ]  # no assistant content
     mocker.patch("my_coding_agent.agent.Agent", return_value=fake_agent)
 
     reg = ToolsRegistry(tools=[{"function": {"name": "delegate"}}])

@@ -31,8 +31,9 @@ def _capture_stderr(monkeypatch):
 def test_print_banner_contains_labels_and_values(monkeypatch):
     buf = _capture_stderr(monkeypatch)
     monkeypatch.setattr(lg, "_git_branch", lambda: "main")
-    tools = [{"function": {"name": "bash",
-                           "parameters": {"properties": {"command": {}}}}}]
+    tools = [
+        {"function": {"name": "bash", "parameters": {"properties": {"command": {}}}}}
+    ]
     lg.print_banner(
         label="Coder",
         model="qwen-test",
@@ -42,12 +43,12 @@ def test_print_banner_contains_labels_and_values(monkeypatch):
         session_id="abc123",
     )
     out = _plain(buf.getvalue())
-    assert "CODER" in out                 # label upper-cased in the title
-    assert "qwen-test" in out             # model value
-    assert "abc123" in out                # session id
-    assert "131,072" in out               # context window formatted with commas
+    assert "CODER" in out  # label upper-cased in the title
+    assert "qwen-test" in out  # model value
+    assert "abc123" in out  # session id
+    assert "131,072" in out  # context window formatted with commas
     assert "MODEL" in out and "BRANCH" in out  # info-row labels
-    assert "bash(command)" in out         # tool signature row
+    assert "bash(command)" in out  # tool signature row
 
 
 def test_print_banner_no_tools_omits_tool_section(monkeypatch):
@@ -55,8 +56,8 @@ def test_print_banner_no_tools_omits_tool_section(monkeypatch):
     monkeypatch.setattr(lg, "_git_branch", lambda: "main")
     lg.print_banner(label="A", model="m", tools=[], context_window=None)
     out = _plain(buf.getvalue())
-    assert "TOOLS" in out          # the metric label still appears
-    assert "unknown" in out        # context_window None → "unknown"
+    assert "TOOLS" in out  # the metric label still appears
+    assert "unknown" in out  # context_window None → "unknown"
 
 
 def test_print_banner_long_tool_signature_is_truncated(monkeypatch):
@@ -74,8 +75,11 @@ def test_print_banner_long_tool_signature_is_truncated(monkeypatch):
 
 def test_summary_style_rows_have_consistent_width():
     s = lg._SummaryStyle()
-    rows = [_plain(s.empty_row()), _plain(s.title_row("HELLO")),
-            _plain(s.metric_row1("STEPS", "1 / 5"))]
+    rows = [
+        _plain(s.empty_row()),
+        _plain(s.title_row("HELLO")),
+        _plain(s.metric_row1("STEPS", "1 / 5")),
+    ]
     widths = {len(r) for r in rows}
     assert len(widths) == 1  # every box row is the same visible width
 
@@ -236,7 +240,8 @@ def test_context_resets_section_no_handoffs():
 def test_context_resets_section_with_handoffs():
     s = lg._SummaryStyle()
     rows = lg._context_resets_section(
-        s, [_handoff(), _handoff(3)], context_window=10000)
+        s, [_handoff(), _handoff(3)], context_window=10000
+    )
     joined = _plain("".join(rows))
     assert "CONTEXT RESETS" in joined
     assert "step 2" in joined

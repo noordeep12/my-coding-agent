@@ -2,10 +2,11 @@ import inspect
 import json
 import re
 import subprocess
-import html2text
-import httpx
 from pathlib import Path
 from typing import Any, Callable
+
+import html2text
+import httpx
 
 
 def _parse_tags_section(docstring: str) -> list[str]:
@@ -23,7 +24,7 @@ def _strip_tags_section(docstring: str) -> str:
     return re.sub(r"\s*\bTags:\s*\n\s*.+", "", docstring, flags=re.DOTALL).strip()
 
 
-def _parse_args_section(docstring: str) -> dict[str, str]:
+def _parse_args_section(docstring: str) -> dict[str, str]:  # noqa: C901
     """Extract {param: description} from a Google-style Args: section."""
     if not docstring:
         return {}
@@ -61,7 +62,7 @@ def _parse_args_section(docstring: str) -> dict[str, str]:
 
 
 def _strip_args_section(docstring: str) -> str:
-    """Return the docstring with the Args: and Tags: sections removed (used as top-level description)."""
+    """Return the docstring with the Args: and Tags: sections removed."""
     cleaned = re.sub(r"\s*\bArgs:\s*\n.*", "", docstring, flags=re.DOTALL)
     cleaned = re.sub(r"\s*\bTags:\s*\n\s*.+", "", cleaned, flags=re.DOTALL)
     return cleaned.strip()
@@ -99,9 +100,9 @@ def function_to_json(func: Callable[..., Any]) -> dict:
         if param.name in param_descriptions:
             entry["description"] = param_descriptions[param.name]
         parameters[param.name] = entry
-        if (
-            param.default is inspect.Parameter.empty
-            and param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        if param.default is inspect.Parameter.empty and param.kind not in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
         ):
             required.append(param.name)
 
@@ -131,27 +132,35 @@ ARTIFACT_THRESHOLD = 8_000
 
 
 class ToolsRegistry:
-
-    def __init__(self, artifacts: dict | None = None, tools: list | None = None, base_dir: str | None = None):
+    def __init__(
+        self,
+        artifacts: dict | None = None,
+        tools: list | None = None,
+        base_dir: str | None = None,
+    ):
         self._artifacts = artifacts if artifacts is not None else {}
         self._tools = tools if tools is not None else []
-        # Workspace root that read_file/write_file must stay within. Defaults to the
-        # current working directory; override per deployment if a different root applies.
-        self._base_dir = Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
+        # Workspace root that read_file/write_file must stay within. Defaults
+        # to the current working directory; override per deployment if a
+        # different root applies.
+        self._base_dir = (
+            Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
+        )
 
     def _resolve_in_base(self, file_path: str) -> Path:
-        """Resolve file_path against the workspace base and reject anything that escapes it.
+        """Resolve file_path against the workspace base, rejecting any escape.
 
-        Relative paths are resolved under the base; absolute paths are allowed only when
-        they fall inside the base. Raises ValueError on path traversal.
+        Relative paths are resolved under the base; absolute paths are allowed
+        only when they fall inside the base. Raises ValueError on path traversal.
         """
         candidate = Path(file_path)
         target = candidate if candidate.is_absolute() else self._base_dir / candidate
         target = target.resolve()
         if not target.is_relative_to(self._base_dir):
             raise ValueError(
-                f"Path traversal detected: '{file_path}' resolves outside the workspace "
-                f"base '{self._base_dir}'. Use a path inside the workspace."
+                f"Path traversal detected: '{file_path}' resolves outside "
+                f"the workspace base '{self._base_dir}'. "
+                "Use a path inside the workspace."
             )
         return target
 
@@ -177,34 +186,37 @@ class ToolsRegistry:
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
-            return json.dumps({
-                "stdout":    "",
-                "stderr":    f"Error: command timed out after {timeout}s",
-                "exit_code": -1,
-                "ok":        False,
-            })
+            return json.dumps(
+                {
+                    "stdout": "",
+                    "stderr": f"Error: command timed out after {timeout}s",
+                    "exit_code": -1,
+                    "ok": False,
+                }
+            )
         stdout = result.stdout.rstrip()
         stderr = result.stderr.rstrip()
         full = {
-            "stdout":    stdout,
-            "stderr":    stderr,
+            "stdout": stdout,
+            "stderr": stderr,
             "exit_code": result.returncode,
-            "ok":        result.returncode == 0,
+            "ok": result.returncode == 0,
         }
         if len(stdout) + len(stderr) > ARTIFACT_THRESHOLD:
             return None, full  # dispatcher will generate an LLM summary
         return json.dumps(full)
 
     def read_tool_artifact(self, tool_call_id: str) -> str:
-        """Return the full stored output for a previous tool call identified by tool_call_id.
-        Use this when a bash or read_file result was summarized and you need the complete content.
+        """Return the full stored output for a previous tool call by its id.
+        Use this when a bash or read_file result was summarized and you need
+        the complete content.
 
         Tags:
             artifact, output, result, retrieve
 
         Args:
-            tool_call_id: The tool_call_id from a previous call whose output was summarized.
-                Example: 'call_abc123'
+            tool_call_id: The tool_call_id from a previous call whose output
+                was summarized. Example: 'call_abc123'
         """
         artifact = self._artifacts.get(tool_call_id)
         if artifact is None:
@@ -213,27 +225,34 @@ class ToolsRegistry:
 
     def delegate(self, task: str, context: str) -> str:
         """Delegate a focused exploration or research task to a subagent.
-        Provide 'context' with the relevant background the subagent needs (file paths,
-        goal of the main task, key names/symbols). The subagent starts fresh with only
-        that context, reads files, runs targeted bash commands, and returns a structured report.
-        Use when understanding a file or codebase section would crowd the main context.
+        Provide 'context' with the relevant background the subagent needs (file
+        paths, goal of the main task, key names/symbols). The subagent starts
+        fresh with only that context, reads files, runs targeted bash commands,
+        and returns a structured report. Use when understanding a file or
+        codebase section would crowd the main context.
 
         Tags:
-            delegate, subagent, explore, analyze, file, code, read, understand, investigate
+        delegate, subagent, explore, analyze, file, code, read, understand, investigate
 
         Args:
-            task: What the subagent should do. Example: 'Read llm.py and explain how before_tool_call hooks work'
-            context: Relevant background from the main agent. Include file paths, goal, and key names.
-                Example: 'We are adding a hook to the agent loop. Relevant files: agent.py, llm.py at /abs/path/'
+            task: What the subagent should do. Example: 'Read llm.py and explain
+                how before_tool_call hooks work'
+            context: Relevant background from the main agent. Include file paths,
+                goal, and key names. Example: 'We are adding a hook to the agent
+                loop. Relevant files: agent.py, llm.py at /abs/path/'
         """
-        from my_coding_agent.agent import Agent  # lazy import — avoids circular dependency
-        from my_coding_agent.llm import OMLX_API_URL, OMLX_API_KEY, OMLX_MODEL
+        from my_coding_agent.agent import (
+            Agent,  # lazy import — avoids circular dependency
+        )
+        from my_coding_agent.llm import OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
         system_prompt = (
-            "You are a focused code exploration subagent. You receive a task and context from the main agent. "
-            "Read files, run targeted bash commands, understand what is asked, and write a clear structured report. "
-            "Do NOT modify any files. Be concise — the main agent only needs the key findings."
+            "You are a focused code exploration subagent. You receive a task "
+            "and context from the main agent. Read files, run targeted bash "
+            "commands, understand what is asked, and write a clear structured "
+            "report. Do NOT modify any files. Be concise — the main agent only "
+            "needs the key findings."
         )
         agent = Agent(
             api_url=OMLX_API_URL,
@@ -294,8 +313,9 @@ class ToolsRegistry:
 
     @staticmethod
     def read_article(url: str, timeout: float = 15.0) -> str:
-        """Fetch a web page and return its content as clean markdown (max ~6 000 tokens).
-        Use when the user provides a URL or link to an article, blog post, or documentation page.
+        """Fetch a web page and return its content as clean markdown.
+        Returns at most ~6 000 tokens. Use when the user provides a URL or link
+        to an article, blog post, or documentation page.
 
         Tags:
             web, url, article, fetch, http, browse, documentation, link
@@ -319,7 +339,10 @@ class ToolsRegistry:
             h.body_width = 0
             text = h.handle(resp.text)
             if len(text) > MAX_CHARS:
-                text = text[:MAX_CHARS] + f"\n\n[...truncated — article exceeds {MAX_CHARS} chars]"
+                text = (
+                    text[:MAX_CHARS]
+                    + f"\n\n[...truncated — article exceeds {MAX_CHARS} chars]"
+                )
             return text
         except httpx.HTTPStatusError as e:
             return f"Error: HTTP {e.response.status_code} fetching {url}"

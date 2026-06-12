@@ -5,7 +5,7 @@ from httpx import Response
 
 
 def extract_message(resp: Response) -> dict:
-    """Return the message dict from a chat completion httpx response. Always returns a dict."""
+    """Return the message dict from a chat completion response (always a dict)."""
     choices = resp.json().get("choices") or []
     return (choices[0].get("message") or {}) if choices else {}
 
@@ -18,7 +18,7 @@ def extract_finish_reason(resp: Response) -> str:
 
 
 def extract_usage(resp: Response) -> dict:
-    """Return token usage dict from a chat completion httpx response. Always returns a dict."""
+    """Return token usage dict from a chat completion response (always a dict)."""
     return resp.json().get("usage") or {}
 
 

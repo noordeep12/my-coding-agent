@@ -5,7 +5,6 @@ deterministic, and independent — never hitting a real LLM server or network.
 """
 
 import logging
-from types import SimpleNamespace
 
 import pytest
 
@@ -34,7 +33,7 @@ def silent_logger():
     logger = logging.getLogger("test-silent")
     logger.addHandler(logging.NullHandler())
     logger.propagate = False
-    # The package uses custom level methods (tool/api/llm); stub them so calls are no-ops.
+    # The package uses custom level methods (tool/api/llm); stub them as no-ops.
     for name in ("tool", "api", "llm"):
         if not hasattr(logger, name):
             setattr(logger, name, lambda *a, **k: None)

@@ -5,7 +5,6 @@ the continuation seed message, and persistence to an isolated tmp_path
 workspace so no real .my_coding_agent/ directory is touched.
 """
 
-
 from my_coding_agent.handoff import ContextHandoff
 
 
@@ -65,7 +64,9 @@ def test_save_filename_slugifies_label_and_pads_step(tmp_path):
 def test_save_content_includes_metrics_and_body(tmp_path):
     h = _handoff(prompt_tokens=750, context_window=1000, content="the body text")
     path = h.save(workspace=str(tmp_path))
-    text = (tmp_path / ".my_coding_agent" / "handoffs" / path.split("/")[-1]).read_text()
+    text = (
+        tmp_path / ".my_coding_agent" / "handoffs" / path.split("/")[-1]
+    ).read_text()
     assert "# Context Handoff" in text
     assert "750 / 1,000 (75.0%)" in text
     assert "the body text" in text
