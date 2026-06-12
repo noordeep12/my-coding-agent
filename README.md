@@ -72,3 +72,11 @@ uv run python workflows/main.py --help
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) for dependency management
 - Running local LLM server (MLX Server, Ollama, etc.)
+
+## Documentation
+
+Build the API reference locally:
+
+```bash
+uv run sphinx-build -W -b html docs docs/_build/html
+```

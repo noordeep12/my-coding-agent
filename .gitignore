@@ -24,6 +24,9 @@ wheels/
 htmlcov/
 .pytest_cache/
 
+# Sphinx docs build output
+docs/_build/
+
 .my_coding_agent/handoffs/
 .my_coding_agent/
 .claude/
