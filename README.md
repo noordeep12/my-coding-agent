@@ -35,11 +35,14 @@ uv run python workflows/main.py
 # Custom prompt
 uv run python workflows/main.py --prompt "Your task here"
 
-# Interactive paste mode (Ctrl+D to end)
+# Interactive paste mode (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel)
 uv run python workflows/main.py --interactive
 
 # Skip discovery stage
 uv run python workflows/main.py --no-discover
+
+# Also run the Session Analyzer after the Main Agent completes
+uv run python workflows/main.py --analyze
 
 # Help
 uv run python workflows/main.py --help
@@ -50,9 +53,10 @@ uv run python workflows/main.py --help
 | Option | Default | Description |
 |---|---|---|
 | `--prompt`, `-p` | default commit-and-push task | Task for the Main Agent |
-| `--interactive`, `-i` | `False` | Read the task prompt interactively from stdin (paste freely, Ctrl+D to submit) |
+| `--interactive`, `-i` | `False` | Read the task prompt interactively from stdin (paste freely; Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel) |
 | `--discover` / `--no-discover` | `--discover` (enabled) | Run the Discovery Agent before the Main Agent |
 | `--max-steps` | `20` | Maximum agent loop steps for the Main Agent |
+| `--analyze` / `--no-analyze`, `-a` / `-A` | `--no-analyze` (disabled) | Run the Session Analyzer Agent after the Main Agent completes |
 
 ## Configuration
 

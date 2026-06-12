@@ -129,7 +129,8 @@ def _read_interactive_prompt() -> str:
     default=False,
     is_flag=True,
     show_default=True,
-    help="Read the task prompt interactively from stdin (paste freely, Ctrl+D to submit).",
+    help="Read the task prompt interactively from stdin (paste freely; "
+         "Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel).",
 )
 @click.option(
     "--discover/--no-discover", "-d/-D",
