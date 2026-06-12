@@ -126,14 +126,14 @@ def _read_interactive_prompt() -> str:
 )
 @click.option(
     "--interactive", "-i",
-    default=True,
+    default=False,
     is_flag=True,
     show_default=True,
     help="Read the task prompt interactively from stdin (paste freely, Ctrl+D to submit).",
 )
 @click.option(
     "--discover/--no-discover", "-d/-D",
-    default=False,
+    default=True,
     show_default=True,
     help="Run the Discovery Agent before the Main Agent.",
 )
