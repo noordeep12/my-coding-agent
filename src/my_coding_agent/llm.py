@@ -2,8 +2,8 @@ import httpx
 import inspect
 import json
 import os
+import re
 import subprocess
-import time
 
 from dotenv import load_dotenv
 from .logger import get_logger
@@ -169,7 +169,6 @@ class LLM:
             return all_tools
 
         # Phase 2: LLM fallback — only reached when zero tag matches found anywhere.
-        import re as _re
         all_names = [t["function"]["name"] for t in all_tools]
         routing_prompt = (
             f"You are a tool router. Given the message below, return a JSON array of tool names "
@@ -186,8 +185,8 @@ class LLM:
             routed_names = None
             for attempt in [
                 lambda c: json.loads(c.strip()),
-                lambda c: json.loads(_re.search(r"\[.*\]", c, _re.DOTALL).group()),
-                lambda c: json.loads(_re.sub(r"```(?:json)?\s*|\s*```", "", c).strip()),
+                lambda c: json.loads(re.search(r"\[.*\]", c, re.DOTALL).group()),
+                lambda c: json.loads(re.sub(r"```(?:json)?\s*|\s*```", "", c).strip()),
             ]:
                 try:
                     routed_names = attempt(content)
