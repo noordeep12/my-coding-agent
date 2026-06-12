@@ -36,20 +36,34 @@ _LEVEL_COLORS: dict[str, str] = {
 }
 
 
-def _register_custom_levels() -> None:
+def _register_level_names() -> None:
+    """Map the custom level numbers to names (does not mutate ``logging.Logger``)."""
     for name, number in _CUSTOM_LEVELS.items():
         logging.addLevelName(number, name)
 
-        def _make_method(lvl: int):
-            def method(self, msg, *args, **kwargs):
-                if self.isEnabledFor(lvl):
-                    self._log(lvl, msg, args, **kwargs)
-            return method
 
-        setattr(logging.Logger, name.lower(), _make_method(number))
+_register_level_names()
 
 
-_register_custom_levels()
+class _PackageLogger(logging.Logger):
+    """Logger subclass that adds the project's TOOL/API/LLM convenience methods.
+
+    Defining these methods on a subclass (used only for the package's own named
+    loggers) avoids monkeypatching the global ``logging.Logger`` class, so a host
+    application's loggers are unaffected. See CONTRIBUTE.md §31.
+    """
+
+    def tool(self, msg: object, *args: object, **kwargs: object) -> None:
+        if self.isEnabledFor(TOOL):
+            self._log(TOOL, msg, args, **kwargs)
+
+    def api(self, msg: object, *args: object, **kwargs: object) -> None:
+        if self.isEnabledFor(API):
+            self._log(API, msg, args, **kwargs)
+
+    def llm(self, msg: object, *args: object, **kwargs: object) -> None:
+        if self.isEnabledFor(LLM):
+            self._log(LLM, msg, args, **kwargs)
 
 
 # ── Formatter ─────────────────────────────────────────────────────────────────
@@ -133,8 +147,10 @@ def attach_session_log(path) -> "_SessionLogHandle":
 
     original  = sys.stderr
     sys.stderr = _TeeStream(original, plain_file, colored_file)
-    # Root logger defaults to WARNING — lower it so all levels reach the TeeStream.
-    logging.getLogger().setLevel(logging.DEBUG)
+    # NOTE: We do NOT lower the ROOT logger level here (that would override the
+    # host application's logging — CONTRIBUTE.md §31). The package's own loggers
+    # are created at DEBUG by ``get_logger``, so every level still reaches the
+    # TeeStream via their handlers.
     return (original, plain_file, colored_file)
 
 
@@ -148,7 +164,14 @@ def detach_session_log(handle) -> None:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
-def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
+def get_logger(name: str, level: int = logging.DEBUG) -> _PackageLogger:
+    """Return the package's named logger, carrying the TOOL/API/LLM methods.
+
+    The logger is created as a ``_PackageLogger`` (only for this name) so the
+    custom level methods are available without mutating the global
+    ``logging.Logger`` class. Only the package's own named logger is configured;
+    the root logger is left untouched (CONTRIBUTE.md §31).
+    """
     formatter = ColoredFormatter(
         "{color}{asctime} | {levelname} | {message}{reset}",
         style="{",
@@ -157,11 +180,33 @@ def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
     handler = DynamicStderrHandler()
     handler.setFormatter(formatter)
 
-    logger = logging.getLogger(name)
+    logger = _get_package_logger(name)
     logger.handlers[:] = []
     logger.addHandler(handler)
     logger.setLevel(level)
     return logger
+
+
+def _get_package_logger(name: str) -> _PackageLogger:
+    """Fetch ``name`` as a ``_PackageLogger`` without changing the global class.
+
+    ``logging.setLoggerClass`` is swapped only for the duration of the lookup so
+    no other logger in the interpreter is affected. If the logger already exists
+    under a different class (e.g. created before this call), its custom methods
+    are bound on the instance as a fallback.
+    """
+    previous = logging.getLoggerClass()
+    logging.setLoggerClass(_PackageLogger)
+    try:
+        logger = logging.getLogger(name)
+    finally:
+        logging.setLoggerClass(previous)
+    if not isinstance(logger, _PackageLogger):
+        # Pre-existing plain Logger under this name — bind methods on the instance.
+        logger.tool = _PackageLogger.tool.__get__(logger)   # type: ignore[attr-defined]
+        logger.api = _PackageLogger.api.__get__(logger)     # type: ignore[attr-defined]
+        logger.llm = _PackageLogger.llm.__get__(logger)     # type: ignore[attr-defined]
+    return logger  # type: ignore[return-value]
 
 
 # ── Git helper ────────────────────────────────────────────────────────────────
