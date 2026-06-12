@@ -37,6 +37,18 @@ _HTTP_BACKOFF = 0.5
 _TRANSIENT_HTTP_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout)
 
 
+def _search_bracketed(text: str) -> str:
+    """Return the first ``[...]`` span in text, or raise ValueError if absent.
+
+    Used as a JSON-array extraction strategy; raising on no-match lets the caller's
+    try/except fall through to the next strategy.
+    """
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    if match is None:
+        raise ValueError("no bracketed array found")
+    return match.group()
+
+
 class LLM:
     def __init__(
         self,
@@ -77,8 +89,12 @@ class LLM:
         self._session_log_path: str | None = None  # set by Agent after session dir is created
         self.tool_artifacts: dict = {}
         self.llm_calls: list[dict] = []  # one entry per chat_completion call, in order
-        self._before_hook = before_tool_call or (lambda name, args: args)
-        self._after_hook = after_tool_call or (lambda name, args, result: result)
+        self._before_hook: Callable[[str, dict], dict | None] = (
+            before_tool_call or (lambda name, args: args)
+        )
+        self._after_hook: Callable[[str, dict, str], str] = (
+            after_tool_call or (lambda name, args, result: result)
+        )
 
     def setup_session(self) -> None:
         """Create the httpx client and apply auth headers and the timeout.
@@ -97,7 +113,7 @@ class LLM:
         )
         self.session.timeout = self.timeout
 
-    def _request_with_retry(self, method: str, url: str, **kwargs) -> Response:
+    def _request_with_retry(self, method: str, url: str, **kwargs: Any) -> Response:
         """Issue an HTTP request, retrying transient connection/timeout failures with backoff.
 
         Non-transient errors (HTTP protocol errors, etc.) are not retried. Raises the last
@@ -117,6 +133,9 @@ class LLM:
                     method, url, attempt + 1, _HTTP_RETRIES, exc, backoff,
                 )
                 time.sleep(backoff)
+        # The loop runs at least once (_HTTP_RETRIES >= 1), so reaching here means a
+        # transient error was caught and last_exc is set. assert proves this to mypy.
+        assert last_exc is not None
         raise last_exc
 
     def available_models(self) -> list[str]:
@@ -295,7 +314,7 @@ class LLM:
             routed_names = None
             for attempt in [
                 lambda c: json.loads(c.strip()),
-                lambda c: json.loads(re.search(r"\[.*\]", c, re.DOTALL).group()),
+                lambda c: json.loads(_search_bracketed(c)),
                 lambda c: json.loads(re.sub(r"```(?:json)?\s*|\s*```", "", c).strip()),
             ]:
                 try:
@@ -414,6 +433,8 @@ class LLM:
             self.logger.warning("skip %s — malformed tool call: missing 'function.name'", tool_call_id)
             return tool_call_id, None, None, "Error: malformed tool call — missing 'function.name'"
 
+        # func_name is truthy here, which is only possible when func_block is truthy.
+        assert func_block is not None
         try:
             args = parse_tool_args(func_block.get("arguments", {}))
         except json.JSONDecodeError as exc:
@@ -493,7 +514,7 @@ class LLM:
         return result, is_artifact, is_truncated
 
     def _correct_args(
-        self, func_name: str, args: dict, exc: Exception, sig, tool_call: dict, tool_call_id: str, attempt: int
+        self, func_name: str, args: dict, exc: Exception, sig: inspect.Signature, tool_call: dict, tool_call_id: str, attempt: int
     ) -> dict | None:
         """Ask the LLM to fix wrong args after a TypeError. Returns corrected args or None on failure."""
         correction_messages = list(getattr(self, "messages", [])) + [
@@ -558,6 +579,10 @@ class LLM:
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
                 return err, "error", {"name": func_name, "args": args, "ok": False, "error": str(exc), "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"}
 
+        # Unreachable: the final iteration always returns (success, or an error result
+        # once retries are exhausted). Present so mypy can prove the function returns.
+        raise AssertionError("invoke_tool retry loop exited without returning")
+
     def execute_tool_calls(
         self, message: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -578,6 +603,9 @@ class LLM:
                 messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": error, "status": "error"})
                 records.append({"name": func_name or "<unknown>", "args": {}, "ok": False, "error": error, "tool_call_id": tool_call_id, "artifact": False, "truncated": False, "status": "error"})
                 continue
+
+            # error is None here, so parse_tool_call gave a valid func_name and args.
+            assert func_name is not None and args is not None
 
             # Run the before_tool_call hook, which can modify args or return None to skip the call.
             args = self.before_tool_call(tool_call_id, func_name, args)

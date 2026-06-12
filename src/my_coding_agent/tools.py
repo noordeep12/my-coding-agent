@@ -5,6 +5,7 @@ import subprocess
 import html2text
 import httpx
 from pathlib import Path
+from typing import Any, Callable
 
 
 def _parse_tags_section(docstring: str) -> list[str]:
@@ -66,7 +67,7 @@ def _strip_args_section(docstring: str) -> str:
     return cleaned.strip()
 
 
-def function_to_json(func) -> dict:
+def function_to_json(func: Callable[..., Any]) -> dict:
     """Convert a Python function into an OpenAI-compatible tool definition dict."""
     type_map = {
         str: "string",
@@ -119,7 +120,7 @@ def function_to_json(func) -> dict:
     }
 
 
-def tool(func) -> dict:
+def tool(func: Callable[..., Any]) -> dict:
     """Decorator/converter: turn a Python function into an LLM tool definition."""
     return function_to_json(func)
 
@@ -182,13 +183,15 @@ class ToolsRegistry:
                 "exit_code": -1,
                 "ok":        False,
             })
+        stdout = result.stdout.rstrip()
+        stderr = result.stderr.rstrip()
         full = {
-            "stdout":    result.stdout.rstrip(),
-            "stderr":    result.stderr.rstrip(),
+            "stdout":    stdout,
+            "stderr":    stderr,
             "exit_code": result.returncode,
             "ok":        result.returncode == 0,
         }
-        if len(full["stdout"]) + len(full["stderr"]) > ARTIFACT_THRESHOLD:
+        if len(stdout) + len(stderr) > ARTIFACT_THRESHOLD:
             return None, full  # dispatcher will generate an LLM summary
         return json.dumps(full)
 
@@ -246,7 +249,8 @@ class ToolsRegistry:
         messages = agent.run(max_steps=5)
         for msg in reversed(messages):
             if msg.get("role") == "assistant" and msg.get("content"):
-                return msg["content"]
+                content: str = msg["content"]
+                return content
         return "(subagent produced no report)"
 
     def read_file(self, file_path: str) -> str:

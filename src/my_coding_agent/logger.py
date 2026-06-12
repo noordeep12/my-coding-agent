@@ -6,8 +6,9 @@ import uuid
 import logging
 import subprocess
 from datetime import datetime
+from typing import Any, TextIO
 
-from colorama import Fore, Back, Style
+from colorama import Fore, Back, Style  # type: ignore[import-untyped]
 from rich.console import Console
 from rich.markdown import Markdown
 
@@ -53,22 +54,22 @@ class _PackageLogger(logging.Logger):
     application's loggers are unaffected. See CONTRIBUTE.md §31.
     """
 
-    def tool(self, msg: object, *args: object, **kwargs: object) -> None:
+    def tool(self, msg: object, *args: object, **kwargs: Any) -> None:
         if self.isEnabledFor(TOOL):
             self._log(TOOL, msg, args, **kwargs)
 
-    def api(self, msg: object, *args: object, **kwargs: object) -> None:
+    def api(self, msg: object, *args: object, **kwargs: Any) -> None:
         if self.isEnabledFor(API):
             self._log(API, msg, args, **kwargs)
 
-    def llm(self, msg: object, *args: object, **kwargs: object) -> None:
+    def llm(self, msg: object, *args: object, **kwargs: Any) -> None:
         if self.isEnabledFor(LLM):
             self._log(LLM, msg, args, **kwargs)
 
 
 # ── Formatter ─────────────────────────────────────────────────────────────────
 class ColoredFormatter(logging.Formatter):
-    def format(self, record) -> str:
+    def format(self, record: logging.LogRecord) -> str:
         color = _LEVEL_COLORS.get(record.levelname, "")
         record.color = color
         record.reset = Style.RESET_ALL
@@ -79,15 +80,15 @@ class ColoredFormatter(logging.Formatter):
 class DynamicStderrHandler(logging.StreamHandler):
     """StreamHandler that always writes to the current sys.stderr, not a captured reference."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         logging.Handler.__init__(self)
 
     @property
-    def stream(self):
+    def stream(self) -> TextIO:
         return sys.stderr
 
     @stream.setter
-    def stream(self, value):
+    def stream(self, value: TextIO) -> None:
         pass  # ignore — always use live sys.stderr
 
 
@@ -98,7 +99,9 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 class _TeeStream:
     """Wraps the original stderr and tees every write to two extra files."""
 
-    def __init__(self, original, plain_file, colored_file):
+    def __init__(
+        self, original: TextIO, plain_file: TextIO, colored_file: TextIO
+    ) -> None:
         self._orig    = original
         self._plain   = plain_file
         self._colored = colored_file
@@ -115,7 +118,7 @@ class _TeeStream:
         self._colored.flush()
         self._plain.flush()
 
-    def fileno(self):
+    def fileno(self) -> int:
         return self._orig.fileno()
 
     # ── attributes that print() / logging / colorama check ──────────────────
@@ -130,12 +133,17 @@ class _TeeStream:
     def errors(self) -> str:
         return getattr(self._orig, "errors", "replace")
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._orig, name)
 
 
 # ── Session file log helpers ───────────────────────────────────────────────────
-def attach_session_log(path) -> "_SessionLogHandle":
+# Opaque handle returned by attach_session_log and consumed by detach_session_log:
+# (original stderr, plain log file, colored log file).
+_SessionLogHandle = tuple[TextIO, TextIO, TextIO]
+
+
+def attach_session_log(path: str | os.PathLike[str]) -> _SessionLogHandle:
     """Replace sys.stderr with a TeeStream that also writes to plain + colored log files."""
     import pathlib
     plain_path   = pathlib.Path(path)
@@ -154,7 +162,7 @@ def attach_session_log(path) -> "_SessionLogHandle":
     return (original, plain_file, colored_file)
 
 
-def detach_session_log(handle) -> None:
+def detach_session_log(handle: _SessionLogHandle) -> None:
     """Restore sys.stderr and close the log files."""
     original, plain_file, colored_file = handle
     sys.stderr.flush()
@@ -231,12 +239,12 @@ def print_banner(
     session_id: str | None = None,
 ) -> None:
     W = 68  # visible inner width (between the two ║)
-    R = Style.RESET_ALL
-    BORDER = Fore.CYAN + Style.BRIGHT
-    LABEL  = Fore.CYAN + Style.BRIGHT
-    VALUE  = Fore.WHITE + Style.BRIGHT
-    LOGO_C = Fore.CYAN + Style.BRIGHT
-    TITLE_C = Fore.GREEN + Style.BRIGHT
+    R: str = Style.RESET_ALL
+    BORDER: str = Fore.CYAN + Style.BRIGHT
+    LABEL: str = Fore.CYAN + Style.BRIGHT
+    VALUE: str = Fore.WHITE + Style.BRIGHT
+    LOGO_C: str = Fore.CYAN + Style.BRIGHT
+    TITLE_C: str = Fore.GREEN + Style.BRIGHT
 
     ascii_logo = [
         r"  ██████╗ ██████╗ ██████╗ ███████╗",
@@ -348,13 +356,13 @@ class _SummaryStyle:
 
     def __init__(self) -> None:
         self.W = _SUMMARY_W
-        self.R = Style.RESET_ALL
-        self.BORDER = Fore.CYAN + Style.BRIGHT
-        self.LABEL = Fore.CYAN + Style.BRIGHT
-        self.VALUE = Fore.WHITE + Style.BRIGHT
-        self.OK = Fore.GREEN
-        self.FAIL = Fore.RED
-        self.WARN = Fore.YELLOW + Style.BRIGHT
+        self.R: str = Style.RESET_ALL
+        self.BORDER: str = Fore.CYAN + Style.BRIGHT
+        self.LABEL: str = Fore.CYAN + Style.BRIGHT
+        self.VALUE: str = Fore.WHITE + Style.BRIGHT
+        self.OK: str = Fore.GREEN
+        self.FAIL: str = Fore.RED
+        self.WARN: str = Fore.YELLOW + Style.BRIGHT
         self.ansi_re = _ANSI
         self.top = self.BORDER + "╔" + "═" * self.W + "╗" + self.R
         self.bottom = self.BORDER + "╚" + "═" * self.W + "╝" + self.R
@@ -467,7 +475,7 @@ def _token_chart_rows(s: _SummaryStyle, llm_calls: list | None) -> list[str]:
     usage = llm_calls or []
     if len(usage) < 1:
         return [s.metric_row1("TOKEN CHART", "no data")]
-    import plotext as plt
+    import plotext as plt  # type: ignore[import-untyped]
 
     _KIND_LABEL = {
         "router":     "router",
