@@ -15,7 +15,10 @@ workflows/main.py           ← CLI entry point
     ├── llm.py              ← LLM HTTP client + tool execution
     ├── tools.py            ← Tool registry and decorator
     ├── handoff.py          ← Context reset / handoff state transfer
-    ├── logger.py           ← Custom logger, rich terminal output, TeeStream
+    ├── logger/             ← Logging, session-log capture, terminal UI (package)
+    │   ├── logging_core.py ← Custom levels + ColoredFormatter + DynamicStderrHandler
+    │   ├── session_log.py  ← TeeStream + attach/detach_session_log
+    │   └── terminal_ui.py  ← print_banner + print_run_summary renderers
     └── utils.py            ← Thin response parsing helpers
 ```
 
@@ -76,12 +79,14 @@ A plain class whose methods are the tools the LLM can call:
 
 The `@tool` decorator (actually `function_to_json`) converts any `ToolsRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings for parameter descriptions and routing `Tags`.
 
-### `Logger` (`logger.py`)
+### `Logger` (`logger/` package)
 
-- Custom log levels: `TOOL` (15), `API` (25), `LLM` (35) between `DEBUG` and `INFO`.
-- `DynamicStderrHandler` always writes to the live `sys.stderr`, so it follows the TeeStream replacement.
-- `attach_session_log(path)` replaces `sys.stderr` with a `_TeeStream` that simultaneously writes to the original stderr, a plain log file, and an ANSI-colored log file under `.my_coding_agent/<session_id>/`.
-- `print_banner` and `print_run_summary` render rich box-drawn terminal UIs including a `plotext` token consumption chart.
+Three independent concerns are split into focused submodules; the package
+`__init__.py` re-exports the historical flat surface, so `from my_coding_agent.logger import get_logger, print_banner, ...` keeps working unchanged.
+
+- **`logging_core.py`** — custom log levels `TOOL` (15), `API` (25), `LLM` (35) between `DEBUG` and `INFO`; the `ColoredFormatter`; the `DynamicStderrHandler` that always writes to the live `sys.stderr` (so it follows the TeeStream replacement); and the `get_logger` factory.
+- **`session_log.py`** — `attach_session_log(path)` replaces `sys.stderr` with a `_TeeStream` that simultaneously writes to the original stderr, a plain log file, and an ANSI-colored log file under `.my_coding_agent/<session_id>/`; `detach_session_log` restores it.
+- **`terminal_ui.py`** — `print_banner` and `print_run_summary` render rich box-drawn terminal UIs including a `plotext` token consumption chart, plus the shared `_git_branch` helper.
 
 ---
 
