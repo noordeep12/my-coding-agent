@@ -5,21 +5,21 @@
 `my-coding-agent` is a hand-rolled Python agent harness. There are no external agent frameworks — the entire agentic loop, tool dispatch, context management, and session persistence are implemented from scratch in ~1,000 lines across a small number of modules.
 
 ```
-workflows/main.py           ← CLI entry point
+src/my_coding_agent/
+├── workflows/main.py       ← CLI entry point
 │
 ├── agents/discovery.py     ← Discovery Agent (codebase mapping)
 ├── agents/session_analyzer.py  ← Session Analyzer Agent (post-run reporting)
 │
-└── src/my_coding_agent/
-    ├── agent.py            ← Agent loop (extends LLM)
-    ├── llm.py              ← LLM HTTP client + tool execution
-    ├── tools.py            ← Tool registry and decorator
-    ├── handoff.py          ← Context reset / handoff state transfer
-    ├── logger/             ← Logging, session-log capture, terminal UI (package)
-    │   ├── logging_core.py ← Custom levels + ColoredFormatter + DynamicStderrHandler
-    │   ├── session_log.py  ← TeeStream + attach/detach_session_log
-    │   └── terminal_ui.py  ← print_banner + print_run_summary renderers
-    └── utils.py            ← Thin response parsing helpers
+├── agent.py                ← Agent loop (extends LLM)
+├── llm.py                  ← LLM HTTP client + tool execution
+├── tools.py                ← Tool registry and decorator
+├── handoff.py              ← Context reset / handoff state transfer
+├── logger/                 ← Logging, session-log capture, terminal UI (package)
+│   ├── logging_core.py     ← Custom levels + ColoredFormatter + DynamicStderrHandler
+│   ├── session_log.py      ← TeeStream + attach/detach_session_log
+│   └── terminal_ui.py      ← print_banner + print_run_summary renderers
+└── utils.py                ← Thin response parsing helpers
 ```
 
 ---
@@ -90,7 +90,7 @@ Three independent concerns are split into focused submodules; the package
 
 ---
 
-## Workflow Pipeline (`workflows/main.py`)
+## Workflow Pipeline (`src/my_coding_agent/workflows/main.py`)
 
 ```
 CLI (Click)

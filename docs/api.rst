@@ -47,3 +47,23 @@ Exceptions
 .. automodule:: my_coding_agent.exceptions
    :members:
    :show-inheritance:
+
+
+Workflows
+---------
+
+.. automodule:: my_coding_agent.workflows.main
+   :members:
+   :show-inheritance:
+
+
+Agents
+------
+
+.. automodule:: my_coding_agent.agents.discovery
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.agents.session_analyzer
+   :members:
+   :show-inheritance:

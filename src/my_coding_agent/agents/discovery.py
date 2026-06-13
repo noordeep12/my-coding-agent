@@ -4,12 +4,14 @@ Discovery Agent
 Explores the workspace and writes a stable context document to
 .my_coding_agent/discovery.md for use as a system-prompt prefix in future runs.
 
-Usage (standalone):
-    uv run python agents/discovery.py
-    uv run python agents/discovery.py --force   # overwrite existing
+Usage (standalone)::
 
-Importable:
-    from agents.discovery import run_discovery
+    uv run python -m my_coding_agent.agents.discovery
+    uv run python -m my_coding_agent.agents.discovery --force   # overwrite existing
+
+Importable::
+
+    from my_coding_agent.agents.discovery import run_discovery
     run_discovery(force=True)
 """
 
@@ -134,7 +136,7 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     type=click.IntRange(1, 100),
     help="Max agent loop steps.",
 )
-def cli(force, max_steps):
+def cli(force: bool, max_steps: int) -> None:
     """Run the Discovery Agent.
 
     Explores the workspace and writes a stable context document to

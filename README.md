@@ -23,29 +23,29 @@ ollama serve
 
 # Install dependencies and run
 uv sync
-uv run python workflows/main.py
+uv run my-coding-agent
 ```
 
 ## CLI Usage
 
 ```bash
 # Full pipeline (Discovery + Main Agent, discovery enabled by default)
-uv run python workflows/main.py
+uv run my-coding-agent
 
 # Custom prompt
-uv run python workflows/main.py --prompt "Your task here"
+uv run my-coding-agent --prompt "Your task here"
 
 # Interactive paste mode (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel)
-uv run python workflows/main.py --interactive
+uv run my-coding-agent --interactive
 
 # Skip discovery stage
-uv run python workflows/main.py --no-discover
+uv run my-coding-agent --no-discover
 
 # Also run the Session Analyzer after the Main Agent completes
-uv run python workflows/main.py --analyze
+uv run my-coding-agent --analyze
 
 # Help
-uv run python workflows/main.py --help
+uv run my-coding-agent --help
 ```
 
 ### CLI Options
