@@ -18,7 +18,8 @@ src/my_coding_agent/
 ├── logger/                 ← Logging, session-log capture, terminal UI (package)
 │   ├── logging_core.py     ← Custom levels + ColoredFormatter + DynamicStderrHandler
 │   ├── session_log.py      ← TeeStream + attach/detach_session_log
-│   └── terminal_ui.py      ← print_banner + print_run_summary renderers
+│   ├── banner.py           ← print_banner renderer + shared _git_branch
+│   └── summary.py          ← print_run_summary renderer (+ token chart)
 └── utils.py                ← Thin response parsing helpers
 ```
 
@@ -86,7 +87,8 @@ Three independent concerns are split into focused submodules; the package
 
 - **`logging_core.py`** — custom log levels `TOOL` (15), `API` (25), `LLM` (35) between `DEBUG` and `INFO`; the `ColoredFormatter`; the `DynamicStderrHandler` that always writes to the live `sys.stderr` (so it follows the TeeStream replacement); and the `get_logger` factory.
 - **`session_log.py`** — `attach_session_log(path)` replaces `sys.stderr` with a `_TeeStream` that simultaneously writes to the original stderr, a plain log file, and an ANSI-colored log file under `.my_coding_agent/<session_id>/`; `detach_session_log` restores it.
-- **`terminal_ui.py`** — `print_banner` and `print_run_summary` render rich box-drawn terminal UIs including a `plotext` token consumption chart, plus the shared `_git_branch` helper.
+- **`banner.py`** — `print_banner` renders the rich box-drawn startup banner (ASCII logo + run-metadata panel), plus the shared `_git_branch` helper used by both renderers.
+- **`summary.py`** — `print_run_summary` renders the rich box-drawn end-of-run summary including a `plotext` token consumption chart, tool-call and context-reset sections; imports `_git_branch` from `banner`.
 
 ---
 
