@@ -11,7 +11,7 @@ src/my_coding_agent/
 ├── agents/discovery.py     ← Discovery Agent (codebase mapping)
 ├── agents/session_analyzer.py  ← Session Analyzer Agent (post-run reporting)
 │
-├── agent.py                ← Agent loop (extends LLM; delegates routing + execution)
+├── agent.py                ← Agent loop (holds an LLM client; delegates routing + execution)
 ├── llm.py                  ← LLM HTTP client (pure client)
 ├── routing.py              ← ToolRouter (two-phase tool selection)
 ├── tool_execution.py       ← ToolExecutor (tool dispatch + artifacts)
@@ -55,7 +55,7 @@ Holds the LLM client AND owns the `tool_artifacts` store (execution state). Runs
 
 ### `Agent` (`agent.py`)
 
-Extends `LLM` and, in `__init__`, builds a `ToolRouter(self)` and `ToolExecutor(self)` to which it delegates routing and execution. Runs the main agentic loop in `run(max_steps)`.
+Holds an `LLM` client via composition (`self.llm`) — it is **not** a subclass of `LLM`. In `__init__` it builds that client and the `ToolRouter(self.llm)` / `ToolExecutor(self.llm)` collaborators (all sharing the one client instance) to which it delegates routing and execution. Every client read goes through `self.llm.*` (`chat_completion`, `context_window`, `llm_calls`, `model`, `api_url`/`api_key`, the `_before_hook`/`_after_hook` hooks); agent-loop state (`messages`, `tools`, `step_num`, `tool_records`, `last_prompt_tokens`, …) stays on the agent. Runs the main agentic loop in `run(max_steps)`.
 
 Each step:
 1. **Context pre-flight check** — computes `prompt_tokens / context_window`. If ≥ threshold (default 75%), triggers a context handoff (see below). If ≥ 100%, hard stops.
