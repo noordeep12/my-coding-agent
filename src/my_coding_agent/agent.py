@@ -23,6 +23,8 @@ from .logger import (
     print_banner,
     print_run_summary,
 )
+from .routing import ToolRouter
+from .tool_execution import ToolExecutor
 from .utils import extract_finish_reason, extract_message, extract_usage
 
 _HANDOFF_PROMPT = (
@@ -88,6 +90,10 @@ class Agent(LLM):
             after_tool_call: Optional post-dispatch hook (see ``LLM``).
         """
         super().__init__(api_url, api_key, model, before_tool_call, after_tool_call)
+        # Routing and execution are collaborators that hold this client (still an
+        # LLM in this phase); the inheritance→composition flip is a later phase.
+        self._router = ToolRouter(self)
+        self._executor = ToolExecutor(self)
         self.label = label
         self.messages = messages or []
         self.tools = tools or []
@@ -200,9 +206,11 @@ class Agent(LLM):
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, indent=2))
         self.logger.info("Session data saved → %s", out)
-        if self.tool_artifacts:
+        if self._executor.tool_artifacts:
             artifacts_out = out.parent / "tool_artifacts.json"
-            artifacts_out.write_text(json.dumps(self.tool_artifacts, indent=2))
+            artifacts_out.write_text(
+                json.dumps(self._executor.tool_artifacts, indent=2)
+            )
             self.logger.info("Tool artifacts saved → %s", artifacts_out)
 
     def _spawn_continuation(
@@ -408,7 +416,9 @@ class Agent(LLM):
                 )
 
                 # Route: pick the relevant subset of tools for this step's context.
-                routed_tools = self.route_tools(self._routing_signal(), self.tools)
+                routed_tools = self._router.route_tools(
+                    self._routing_signal(), self.tools
+                )
                 resp = self.chat_completion(self.messages, tools=routed_tools)
                 message = extract_message(resp)
                 if not message:
@@ -420,7 +430,9 @@ class Agent(LLM):
                 self.add_message(message)
 
                 # Execute tool calls and add results back to messages
-                tool_messages, records = self.execute_tool_calls(message)
+                tool_messages, records = self._executor.execute_tool_calls(
+                    message, self.messages, self.tools
+                )
                 self.tool_records.extend(records)
                 for tool_message in tool_messages or []:
                     self.add_message(tool_message)

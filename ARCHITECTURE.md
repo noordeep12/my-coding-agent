@@ -11,8 +11,10 @@ src/my_coding_agent/
 ├── agents/discovery.py     ← Discovery Agent (codebase mapping)
 ├── agents/session_analyzer.py  ← Session Analyzer Agent (post-run reporting)
 │
-├── agent.py                ← Agent loop (extends LLM)
-├── llm.py                  ← LLM HTTP client + tool execution
+├── agent.py                ← Agent loop (extends LLM; delegates routing + execution)
+├── llm.py                  ← LLM HTTP client (pure client)
+├── routing.py              ← ToolRouter (two-phase tool selection)
+├── tool_execution.py       ← ToolExecutor (tool dispatch + artifacts)
 ├── tools.py                ← Tool registry and decorator
 ├── handoff.py              ← Context reset / handoff state transfer
 ├── logger/                 ← Logging, session-log capture, terminal UI (package)
@@ -29,29 +31,41 @@ src/my_coding_agent/
 
 ### `LLM` (`llm.py`)
 
-The base class. Owns the `httpx` session, calls `/v1/chat/completions`, and tracks every call in `self.llm_calls`. Key responsibilities:
+The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, and tracks every call in `self.llm_calls`. Construction performs no network I/O — the model's context window is probed lazily on first access to `context_window`. Key responsibilities:
 
 - **`chat_completion(messages, tools, kind)`** — single POST to the LLM server; records token usage per call tagged by `kind` (`main`, `handoff`, `tool_router`, `tool_output_summarizer`, `tool_arg_correction`).
-- **`route_tools(message, all_tools)`** — two-phase tool selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included.
-- **`execute_tool_calls(message)`** — iterates tool call requests in an LLM response, dispatches each through `invoke_tool`, collects results back as `role: tool` messages.
+- **`available_models` / `context_window`** — fetch the model list and resolve/cache the context window (128k fallback when unreachable).
+- **`_request_with_retry`** — retries transient connection/timeout failures with backoff.
+- **Hooks** — `before_tool_call` and `after_tool_call` callbacks are stored on the client (`_before_hook`/`_after_hook`); the `ToolExecutor` reads them when wrapping each dispatch.
+
+Tool routing and tool execution are **not** on `LLM` — they live in the `ToolRouter` and `ToolExecutor` collaborators, each of which holds an `LLM` as its `client`.
+
+### `ToolRouter` (`routing.py`)
+
+Holds the LLM client and selects the relevant tool subset for a message via **`route_tools(message, all_tools)`** — two-phase selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback (`client.chat_completion(..., kind="tool_router")`) if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included.
+
+### `ToolExecutor` (`tool_execution.py`)
+
+Holds the LLM client AND owns the `tool_artifacts` store (execution state). Runs every tool call requested in an LLM response:
+
+- **`execute_tool_calls(message, conversation, tools)`** — iterates tool-call requests, dispatches each through `invoke_tool`, collects results back as `role: tool` messages. The `conversation` and `tools` are passed in explicitly (not read off the client) so the executor stays decoupled from the agent loop's state.
 - **`invoke_tool(...)`** — calls the tool function with up to `_MAX_ARG_RETRIES` retries; on `TypeError` it asks the LLM to correct the arguments (`tool_arg_correction` call) before retrying. Recoverable exceptions are returned as error strings; non-recoverable ones re-raise.
 - **Artifact separation** — when a tool returns a `(None, dict)` tuple (bash output or file content above `ARTIFACT_THRESHOLD`), the full dict is stored in `self.tool_artifacts[tool_call_id]` and an LLM-generated summary is sent back to the model instead. The full artifact is retrievable via the `read_tool_artifact` tool.
-- **Arg aliases** — a static map remaps common model hallucinations (e.g. `bash(path=)` → `bash(command=)`) before dispatch.
-- **Hooks** — `before_tool_call` and `after_tool_call` are user-injectable callbacks that wrap every tool dispatch.
+- **Arg aliases** — a static map remaps common model hallucinations (e.g. `bash(path=)` → `bash(command=)`) before dispatch; unknown kwargs are stripped to the tool's signature.
 
 ### `Agent` (`agent.py`)
 
-Extends `LLM`. Runs the main agentic loop in `run(max_steps)`.
+Extends `LLM` and, in `__init__`, builds a `ToolRouter(self)` and `ToolExecutor(self)` to which it delegates routing and execution. Runs the main agentic loop in `run(max_steps)`.
 
 Each step:
 1. **Context pre-flight check** — computes `prompt_tokens / context_window`. If ≥ threshold (default 75%), triggers a context handoff (see below). If ≥ 100%, hard stops.
-2. **Tool routing** — calls `route_tools` to select the relevant subset of tools for this step.
+2. **Tool routing** — calls `self._router.route_tools(signal, self.tools)` to select the relevant subset of tools for this step.
 3. **LLM call** — `chat_completion(messages, routed_tools)`.
-4. **Tool dispatch** — `execute_tool_calls(message)` appends tool result messages.
+4. **Tool dispatch** — `self._executor.execute_tool_calls(message, self.messages, self.tools)` appends tool result messages.
 5. **Token tracking** — updates `last_prompt_tokens` for the next step's context check.
 6. **Finish check** — stops on `finish_reason` of `stop`/`exit`/`quit` or when `step_num >= max_steps`.
 
-After the loop: saves `session_data.json`, prints the run summary, detaches the session log.
+After the loop: saves `session_data.json` (including `self._executor.tool_artifacts`), prints the run summary, detaches the session log.
 
 ### Context Handoff (`handoff.py` + `agent.py`)
 

@@ -12,6 +12,8 @@ import json
 import pytest
 
 from my_coding_agent.agent import Agent
+from my_coding_agent.routing import ToolRouter
+from my_coding_agent.tool_execution import ToolExecutor
 
 # --- helpers -----------------------------------------------------------------
 
@@ -34,6 +36,11 @@ def _make_agent(silent_logger, **overrides):
     agent.llm_calls = []
     agent.elapsed_seconds = 0.0
     agent._continuation_result = []
+    # Collaborators that __init__ would normally build; __init__ is skipped here.
+    agent._router = ToolRouter(agent)
+    agent._router.logger = silent_logger
+    agent._executor = ToolExecutor(agent)
+    agent._executor.logger = silent_logger
     for key, value in overrides.items():
         setattr(agent, key, value)
     return agent
@@ -186,7 +193,9 @@ def test_preflight_estimates_tokens_when_no_last_prompt(silent_logger):
 
 def _stub_run_internals(agent, mocker):
     """Neutralize the I/O-heavy parts of run() so the loop logic can be tested."""
-    mocker.patch.object(agent, "route_tools", side_effect=lambda signal, tools: tools)
+    mocker.patch.object(
+        agent._router, "route_tools", side_effect=lambda signal, tools: tools
+    )
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
     # Banner is emitted at the start of run() (not __init__) — stub its output.
@@ -214,7 +223,7 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
         }
     )
     mocker.patch.object(agent, "chat_completion", return_value=resp)
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=5)
     assert agent.stop_reason == "stop"
@@ -235,7 +244,7 @@ def test_run_stops_at_max_steps(silent_logger, mocker):
         }
     )
     mocker.patch.object(agent, "chat_completion", return_value=resp)
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=1)
     assert agent.stop_reason == "max_steps"
@@ -263,7 +272,7 @@ def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
         }
     )
     chat = mocker.patch.object(agent, "chat_completion", return_value=resp)
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=max_steps)
 
@@ -288,7 +297,7 @@ def test_run_skips_step_on_empty_message(silent_logger, mocker):
         }
     )
     chat = mocker.patch.object(agent, "chat_completion", side_effect=[empty, stop])
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=5)
     # First call returned empty (step skipped), second returned a stop.
@@ -373,7 +382,6 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
         model="m",
         session_id="sess9",
         started_at="2026-06-12",
-        tool_artifacts={},
     )
     mocker.patch("my_coding_agent.agent.Path", lambda *a: tmp_path.joinpath(*a))
     agent._save_session_data(max_steps=5)
