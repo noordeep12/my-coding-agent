@@ -32,7 +32,7 @@ uv run my-coding-agent
 # Full pipeline (Discovery + Main Agent, discovery enabled by default)
 uv run my-coding-agent
 
-# Custom prompt
+# Custom prompt:
 uv run my-coding-agent --prompt "Your task here"
 
 # Interactive paste mode (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel)
