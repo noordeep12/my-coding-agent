@@ -31,6 +31,9 @@ jobs:
       - name: Security (bandit)
         run: uv run bandit -r src/ -ll
 
+      - name: Secret scan (detect-secrets)
+        run: uv run detect-secrets scan --baseline .secrets.baseline
+
       - name: Dependency audit (pip-audit)
         run: uv run pip-audit
 
