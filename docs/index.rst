@@ -1,39 +1,23 @@
 my-coding-agent
 ===============
 
-A minimal Python agent framework for running LLM-powered coding agents against
-local LLM servers. The public API re-exports the agent loop, the LLM client, the
-decorator-based tool registry, the context-handoff state object, and the
-exception hierarchy.
-
-For installation, CLI usage, configuration, and contributing, see the
-`project README <https://github.com/noordeep12/my-coding-agent/blob/main/README.md>`_.
+A CLI tool that runs LLM-powered coding agents against a local LLM server.
+The Main Agent always runs. Discovery (``--discover``) and Session Analyzer
+(``--analyze``) are opt-in and disabled by default.
 
 .. toctree::
    :maxdepth: 2
+   :caption: User Guide
+
+   readme
+   architecture
+   contribute
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
 
    api
-
-
-Quickstart
-----------
-
-.. code-block:: python
-
-   from my_coding_agent import Agent, tool
-
-   @tool
-   def add(a: int, b: int) -> int:
-       """Add two integers.
-
-       Args:
-           a: First addend.
-           b: Second addend.
-
-       Returns:
-           The sum of ``a`` and ``b``.
-       """
-       return a + b
 
 
 Indices

@@ -15,6 +15,7 @@ release = _pkg_version("my-coding-agent")
 version = release
 
 extensions = [
+    "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
@@ -25,5 +26,10 @@ autodoc_member_order = "bysource"
 
 templates_path: list[str] = []
 exclude_patterns = ["_build"]
+
+# Suppress cross-reference warnings for relative .md links inside included
+# files (e.g. README.md linking to ARCHITECTURE.md). The files exist on disk;
+# they are not Sphinx cross-references.
+suppress_warnings = ["myst.xref_missing"]
 
 html_theme = "alabaster"
