@@ -30,3 +30,8 @@ repos:
         entry: python3 -c "import sys, re; s=open(sys.argv[1]).readline().rstrip(chr(10)); ok=bool(re.match(r'^(feat|fix|refactor|docs|test|chore|perf|ci)(\([a-z0-9/-]+\))?: .+', s)); print(chr(10).join(['Commit subject does not follow Conventional Commits format.', 'Expected: type(scope): description', f'Got: {s}'])) if not ok else None; sys.exit(0 if ok else 1)"
         language: system
         stages: [commit-msg]
+      - id: commit-refs-footer
+        name: commit message must include a Refs: footer
+        entry: python3 -c "import sys; body=open(sys.argv[1]).read(); ok=any(line.startswith('Refs: ') for line in body.splitlines()); print(chr(10).join(['Commit message is missing a Refs: footer.', 'Add a line such as:', '  Refs: https://github.com/users/noordeep12/projects/1', '  Refs: #<issue-number>'])) if not ok else None; sys.exit(0 if ok else 1)"
+        language: system
+        stages: [commit-msg]
