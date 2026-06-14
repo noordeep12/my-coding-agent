@@ -6,6 +6,9 @@ local LLM servers. The public API re-exports the agent loop, the LLM client, the
 decorator-based tool registry, the context-handoff state object, and the
 exception hierarchy.
 
+For installation, CLI usage, configuration, and contributing, see the
+`project README <https://github.com/noordeep12/my-coding-agent/blob/main/README.md>`_.
+
 .. toctree::
    :maxdepth: 2
 

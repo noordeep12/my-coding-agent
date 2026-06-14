@@ -111,7 +111,7 @@ Three independent concerns are split into focused submodules; the package
 ```
 CLI (Click)
   │
-  ├── 1. Discovery Agent (optional, --discover)
+  ├── 1. Discovery Agent (opt-in, default off; --discover)
   │       Explores workspace → writes .my_coding_agent/discovery.md
   │
   ├── 2. Main Agent

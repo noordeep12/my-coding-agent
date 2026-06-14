@@ -143,9 +143,9 @@ def _read_interactive_prompt() -> str:
 @click.option(
     "--discover/--no-discover",
     "-d/-D",
-    default=True,
+    default=False,
     show_default=True,
-    help="Run the Discovery Agent before the Main Agent.",
+    help="Run the Discovery Agent before the Main Agent (opt-in).",
 )
 @click.option(
     "--max-steps",
@@ -173,15 +173,15 @@ def main(
 
     \b
     Steps executed:
-      1. Discovery Agent  — maps the workspace (skip with --no-discover)
-      2. Main Agent       — executes the requested task
+      1. Main Agent       — executes the requested task
+      2. Discovery Agent  — maps the workspace first (opt-in with --discover)
       3. Session Analyzer — reviews the session and writes a report (--analyze)
 
     \b
     Examples:
       uv run my-coding-agent
       uv run my-coding-agent -p "write tests for llm.py"
-      uv run my-coding-agent --no-discover
+      uv run my-coding-agent --discover   # map the workspace first
       uv run my-coding-agent -i          # paste a multi-line prompt
       uv run my-coding-agent --analyze   # also run session analysis
     """
