@@ -25,3 +25,8 @@ repos:
         entry: python3 -c "import sys; s=open(sys.argv[1]).readline().rstrip(chr(10)); n=len(s); print(chr(10).join([f'Commit subject is {n} chars, max 72 allowed.', s])) if n > 72 else None; sys.exit(1 if n > 72 else 0)"
         language: system
         stages: [commit-msg]
+      - id: commit-subject-format
+        name: commit subject must follow Conventional Commits format
+        entry: python3 -c "import sys, re; s=open(sys.argv[1]).readline().rstrip(chr(10)); ok=bool(re.match(r'^(feat|fix|refactor|docs|test|chore|perf|ci)(\([a-z0-9/-]+\))?: .+', s)); print(chr(10).join(['Commit subject does not follow Conventional Commits format.', 'Expected: type(scope): description', f'Got: {s}'])) if not ok else None; sys.exit(0 if ok else 1)"
+        language: system
+        stages: [commit-msg]
