@@ -9,6 +9,8 @@ import logging
 import pytest
 
 from my_coding_agent.llm import LLM
+from my_coding_agent.routing import ToolRouter
+from my_coding_agent.tool_execution import ToolExecutor
 
 
 class _FakeResponse:
@@ -52,3 +54,28 @@ def bare_llm(silent_logger):
     llm = LLM()
     llm.logger = silent_logger
     return llm
+
+
+@pytest.fixture
+def bare_router(bare_llm, silent_logger):
+    """A ToolRouter wrapping a bare LLM client, both with silent loggers.
+
+    Network-free: phase-2 routing calls ``client.chat_completion``, which tests
+    patch directly on ``bare_llm`` so no request reaches a real server.
+    """
+    router = ToolRouter(bare_llm)
+    router.logger = silent_logger
+    return router
+
+
+@pytest.fixture
+def bare_executor(bare_llm, silent_logger):
+    """A ToolExecutor wrapping a bare LLM client, both with silent loggers.
+
+    Network-free: the argument-correction and artifact-summarization calls go
+    through ``client.chat_completion``, which tests patch on ``bare_llm``. The
+    executor owns ``tool_artifacts`` (execution state).
+    """
+    executor = ToolExecutor(bare_llm)
+    executor.logger = silent_logger
+    return executor

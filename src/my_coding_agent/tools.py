@@ -141,7 +141,8 @@ def tool(func: Callable[..., Any]) -> dict:
 
 
 # Single source of truth for the large-tool-output boundary (chars). bash output
-# above this triggers artifact separation; llm.MAX_TOOL_OUTPUT_CHARS aliases this.
+# above this triggers artifact separation; tool_execution.MAX_TOOL_OUTPUT_CHARS
+# aliases this.
 ARTIFACT_THRESHOLD = 8_000
 
 

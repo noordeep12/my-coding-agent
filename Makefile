@@ -1,12 +1,12 @@
 .PHONY: lint format typecheck security test check
 
 lint:
-	uv run ruff check src agents workflows
-	uv run ruff format --check src agents workflows
+	uv run ruff check src
+	uv run ruff format --check src
 
 format:
-	uv run ruff format src agents workflows
-	uv run ruff check --fix src agents workflows
+	uv run ruff format src
+	uv run ruff check --fix src
 
 typecheck:
 	uv run mypy src

@@ -4,9 +4,10 @@ Main workflow
 =============
 Discovery Agent → Main Agent
 
-Run:
-    uv run python workflows/main.py [OPTIONS]
-    uv run python workflows/main.py --help
+Run::
+
+    uv run my-coding-agent [OPTIONS]
+    uv run my-coding-agent --help
 """
 
 import inspect
@@ -15,14 +16,15 @@ import subprocess
 from pathlib import Path
 
 import click
-from agents.discovery import run_discovery
-from agents.session_analyzer import run_analysis
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 
 from my_coding_agent import Agent, ToolsRegistry, __version__, tool
+from my_coding_agent.agents.discovery import run_discovery
+from my_coding_agent.agents.session_analyzer import run_analysis
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -89,12 +91,12 @@ def _read_interactive_prompt() -> str:
     kb = KeyBindings()
 
     @kb.add(Keys.ControlC)
-    def _cancel(event):
+    def _cancel(event: KeyPressEvent) -> None:
         event.app.exit(result="")
 
     @kb.add(Keys.Escape, Keys.ControlM)  # Escape then Enter
     @kb.add("escape", "enter")
-    def _submit_esc_enter(event):
+    def _submit_esc_enter(event: KeyPressEvent) -> None:
         event.current_buffer.validate_and_handle()
 
     session: PromptSession = PromptSession(
@@ -113,7 +115,7 @@ def _read_interactive_prompt() -> str:
     )
     click.echo("─" * 60)
     try:
-        text = session.prompt("❯ ")
+        text: str = session.prompt("❯ ")
     except (EOFError, KeyboardInterrupt):
         text = ""
     click.echo("─" * 60)
@@ -160,7 +162,13 @@ def _read_interactive_prompt() -> str:
     help="Run the Session Analyzer Agent after the Main Agent completes.",
 )
 @click.version_option(version=__version__, prog_name="my-coding-agent")
-def main(prompt, interactive, discover, max_steps, analyze):
+def main(
+    prompt: str | None,
+    interactive: bool,
+    discover: bool,
+    max_steps: int,
+    analyze: bool,
+) -> None:
     """Run the full coding-agent workflow.
 
     \b
@@ -171,11 +179,11 @@ def main(prompt, interactive, discover, max_steps, analyze):
 
     \b
     Examples:
-      uv run python workflows/main.py
-      uv run python workflows/main.py -p "write tests for llm.py"
-      uv run python workflows/main.py --no-discover
-      uv run python workflows/main.py -i          # paste a multi-line prompt
-      uv run python workflows/main.py --analyze   # also run session analysis
+      uv run my-coding-agent
+      uv run my-coding-agent -p "write tests for llm.py"
+      uv run my-coding-agent --no-discover
+      uv run my-coding-agent -i          # paste a multi-line prompt
+      uv run my-coding-agent --analyze   # also run session analysis
     """
     # ── resolve prompt ─────────────────────────────────────────────────────────
     if interactive:
