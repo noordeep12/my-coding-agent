@@ -41,8 +41,8 @@ Tool execution
    :show-inheritance:
 
 
-Tools
------
+Tool definition
+----------------
 
 .. automodule:: my_coding_agent.tools
    :members:
