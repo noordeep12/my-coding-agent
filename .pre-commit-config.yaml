@@ -35,3 +35,9 @@ repos:
         entry: python3 -c "import sys; body=open(sys.argv[1]).read(); ok=any(line.startswith('Refs: ') for line in body.splitlines()); print(chr(10).join(['Commit message is missing a Refs: footer.', 'Add a line such as:', '  Refs: https://github.com/users/noordeep12/projects/1', '  Refs: #<issue-number>'])) if not ok else None; sys.exit(0 if ok else 1)"
         language: system
         stages: [commit-msg]
+      - id: pytest
+        name: run test suite
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
