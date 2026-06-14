@@ -10,7 +10,6 @@ The Main Agent always runs. Discovery (``--discover``) and Session Analyzer
    :caption: User Guide
 
    readme
-   architecture
 
 .. toctree::
    :maxdepth: 2
