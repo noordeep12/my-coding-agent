@@ -13,7 +13,7 @@ src/my_coding_agent/
 │
 ├── agent.py                ← Agent loop (holds an LLM client; delegates routing + execution)
 ├── llm.py                  ← LLM HTTP client (pure client)
-├── routing.py              ← ToolRouter (two-phase tool selection)
+├── tool_routing.py         ← ToolRouter (two-phase tool selection)
 ├── tool_execution.py       ← ToolExecutor (tool dispatch + artifacts)
 ├── tools.py                ← Tool registry and decorator
 ├── handoff.py              ← Context reset / handoff state transfer
@@ -40,7 +40,7 @@ The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, an
 
 Tool routing and tool execution are **not** on `LLM` — they live in the `ToolRouter` and `ToolExecutor` collaborators, each of which holds an `LLM` as its `client`.
 
-### `ToolRouter` (`routing.py`)
+### `ToolRouter` (`tool_routing.py`)
 
 Holds the LLM client and selects the relevant tool subset for a message via **`route_tools(message, all_tools)`** — two-phase selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback (`client.chat_completion(..., kind="tool_router")`) if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included.
 

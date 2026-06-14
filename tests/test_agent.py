@@ -15,8 +15,8 @@ import pytest
 
 from my_coding_agent.agent import Agent
 from my_coding_agent.llm import LLM
-from my_coding_agent.routing import ToolRouter
 from my_coding_agent.tool_execution import ToolExecutor
+from my_coding_agent.tool_routing import ToolRouter
 
 # --- helpers -----------------------------------------------------------------
 

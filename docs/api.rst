@@ -28,7 +28,7 @@ LLM client
 Tool routing
 ------------
 
-.. automodule:: my_coding_agent.routing
+.. automodule:: my_coding_agent.tool_routing
    :members:
    :show-inheritance:
 
