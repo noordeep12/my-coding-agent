@@ -9,10 +9,10 @@ the network-touching ``Agent`` so nothing hits a real LLM or runs real git.
 import subprocess
 
 import pytest
-from agents import discovery, session_analyzer
-from workflows import main as wf_main
 
+from my_coding_agent.agents import discovery, session_analyzer
 from my_coding_agent.tools import ToolsRegistry
+from my_coding_agent.workflows import main as wf_main
 
 # --- _git wrappers (identical helper across the three modules) ----------------
 
@@ -51,10 +51,10 @@ def test_all_tools_returns_public_tool_defs():
 
 
 def test_system_prompt_includes_workspace_and_tools(mocker):
-    mocker.patch("workflows.main._git", return_value="clean")
-    mocker.patch("workflows.main.os.getcwd", return_value="/fake/ws")
-    mocker.patch("workflows.main.os.listdir", return_value=["a.py"])
-    mocker.patch("workflows.main.Path.exists", return_value=False)
+    mocker.patch("my_coding_agent.workflows.main._git", return_value="clean")
+    mocker.patch("my_coding_agent.workflows.main.os.getcwd", return_value="/fake/ws")
+    mocker.patch("my_coding_agent.workflows.main.os.listdir", return_value=["a.py"])
+    mocker.patch("my_coding_agent.workflows.main.Path.exists", return_value=False)
 
     tools = [
         {

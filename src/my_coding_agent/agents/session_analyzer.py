@@ -2,15 +2,17 @@
 Session Analyzer Agent
 -----------------------
 Analyzes a completed agent session to identify failure modes, successful patterns,
-and recommend harness improvements. Outputs a report to:
-  .my_coding_agent/<session-id>/session_analysis.md
+and recommend harness improvements. Outputs a report to
+``.my_coding_agent/<session-id>/session_analysis.md``.
 
-Usage (standalone):
-    uv run python agents/session_analyzer.py --session-id <id>
-    uv run python agents/session_analyzer.py   # auto-picks most recent session
+Usage (standalone)::
 
-Importable:
-    from agents.session_analyzer import run_analysis
+    uv run python -m my_coding_agent.agents.session_analyzer --session-id <id>
+    uv run python -m my_coding_agent.agents.session_analyzer   # most recent session
+
+Importable::
+
+    from my_coding_agent.agents.session_analyzer import run_analysis
     run_analysis(session_id="ff2a5270d0d0")
 """
 
@@ -265,7 +267,7 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
     type=click.IntRange(1, 100),
     help="Max agent loop steps.",
 )
-def cli(session_id, max_steps):
+def cli(session_id: str | None, max_steps: int) -> None:
     """Run the Session Analyzer Agent.
 
     Reads a completed session's data, analyzes failure modes and patterns,

@@ -1,10 +1,10 @@
 """Agentic loop built on top of the LLM client.
 
-Defines ``Agent``, which extends ``LLM`` to run the step-by-step reason-act loop:
-per-step context pre-flight checks, tool routing, model calls, tool dispatch, and
-token accounting. When the context window fills, it performs a structured handoff
-and spawns a fresh continuation agent. After the run it persists session data and
-prints the run summary.
+Defines ``Agent``, which holds an ``LLM`` client (composition) to run the
+step-by-step reason-act loop: per-step context pre-flight checks, tool routing,
+model calls, tool dispatch, and token accounting. When the context window fills,
+it performs a structured handoff and spawns a fresh continuation agent. After the
+run it persists session data and prints the run summary.
 """
 
 import json
@@ -23,6 +23,8 @@ from .logger import (
     print_banner,
     print_run_summary,
 )
+from .tool_execution import ToolExecutor
+from .tool_routing import ToolRouter
 from .utils import extract_finish_reason, extract_message, extract_usage
 
 _HANDOFF_PROMPT = (
@@ -41,14 +43,15 @@ _HANDOFF_PROMPT = (
 )
 
 
-class Agent(LLM):
-    """Run the main agentic loop over the LLM client.
+class Agent:
+    """Run the main agentic loop over a held ``LLM`` client.
 
-    Extend ``LLM`` to drive a bounded reason-act loop in ``run(max_steps)``. Each
-    step checks context usage (handing off to a fresh continuation agent when the
-    window nears full), routes the relevant tool subset, calls the model, dispatches
-    any tool calls, and tracks token usage. On completion it saves session data,
-    prints the run summary, and detaches the session log.
+    Hold an ``LLM`` client (``self.llm``) via composition and drive a bounded
+    reason-act loop in ``run(max_steps)``. Each step checks context usage (handing
+    off to a fresh continuation agent when the window nears full), routes the
+    relevant tool subset, calls the model, dispatches any tool calls, and tracks
+    token usage. On completion it saves session data, prints the run summary, and
+    detaches the session log.
     """
 
     # Messages from a continuation agent when a context reset fires mid-run.
@@ -68,8 +71,8 @@ class Agent(LLM):
     ) -> None:
         """Initialize the agent and open a session log (no network I/O).
 
-        Extend ``LLM`` (whose context-window probe is deferred), assign a fresh
-        session id, redirect stderr into per-session log files via
+        Build the held ``LLM`` client (whose context-window probe is deferred),
+        assign a fresh session id, redirect stderr into per-session log files via
         ``attach_session_log``, and initialize run statistics. Construction
         performs no network call; the startup banner is printed at the start of
         ``run`` once the real context window is known.
@@ -87,7 +90,11 @@ class Agent(LLM):
             before_tool_call: Optional pre-dispatch hook (see ``LLM``).
             after_tool_call: Optional post-dispatch hook (see ``LLM``).
         """
-        super().__init__(api_url, api_key, model, before_tool_call, after_tool_call)
+        # Hold the LLM client via composition (no longer subclass it). The
+        # routing/execution collaborators hold this same client instance.
+        self.llm = LLM(api_url, api_key, model, before_tool_call, after_tool_call)
+        self._router = ToolRouter(self.llm)
+        self._executor = ToolExecutor(self.llm)
         self.label = label
         self.messages = messages or []
         self.tools = tools or []
@@ -96,7 +103,9 @@ class Agent(LLM):
         self.session_id = uuid.uuid4().hex[:12]
         self.started_at = datetime.now().isoformat(timespec="seconds")
         _log_path = Path(".my_coding_agent") / self.session_id / "stderr.log"
-        self._session_log_path = str(_log_path)
+        # The executor reads the session-log path off the client to hint where
+        # full truncated output lives; set it on the held client.
+        self.llm._session_log_path = str(_log_path)
         self._session_log_handler = attach_session_log(_log_path)
         # run stats — reset at the start of each run()
         self.step_num = 0
@@ -128,13 +137,13 @@ class Agent(LLM):
             {"role": "user", "content": _HANDOFF_PROMPT}
         ]
         self.logger.info("Generating context handoff summary...")
-        resp = self.chat_completion(handoff_messages, tools=[], kind="handoff")
+        resp = self.llm.chat_completion(handoff_messages, tools=[], kind="handoff")
         content = extract_message(resp).get("content", "") or ""
         handoff = ContextHandoff(
             agent_label=self.label,
             step_num=step_num,
             prompt_tokens=prompt_tokens,
-            context_window=self.context_window,
+            context_window=self.llm.context_window,
             content=content,
         )
         path = handoff.save()
@@ -147,7 +156,7 @@ class Agent(LLM):
             if msg.get("role") == "assistant" and msg.get("content"):
                 last_message = msg["content"]
                 break
-        calls = self.llm_calls
+        calls = self.llm.llm_calls
         print_run_summary(
             steps=self.step_num,
             max_steps=max_steps,
@@ -156,14 +165,14 @@ class Agent(LLM):
             completion_tokens=sum(c["completion"] for c in calls),
             total_tokens=sum(c["total"] for c in calls),
             last_prompt_tokens=self.last_prompt_tokens,
-            context_window=self.context_window,
+            context_window=self.llm.context_window,
             elapsed_seconds=self.elapsed_seconds,
             tool_records=self.tool_records,
             handoff_records=self.handoff_records,
             agent_name=self.label,
             last_message=last_message,
             llm_calls=calls,
-            model=self.model,
+            model=self.llm.model,
             session_id=self.session_id,
             started_at=self.started_at,
             tools=self.tools,
@@ -178,31 +187,33 @@ class Agent(LLM):
         data = {
             "session_id": self.session_id,
             "agent_label": self.label,
-            "model": self.model,
+            "model": self.llm.model,
             "started_at": self.started_at,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "steps": self.step_num,
             "max_steps": max_steps,
             "stop_reason": self.stop_reason,
             "total_usage": {
-                "prompt_tokens": sum(c["prompt"] for c in self.llm_calls),
-                "completion_tokens": sum(c["completion"] for c in self.llm_calls),
-                "total_tokens": sum(c["total"] for c in self.llm_calls),
+                "prompt_tokens": sum(c["prompt"] for c in self.llm.llm_calls),
+                "completion_tokens": sum(c["completion"] for c in self.llm.llm_calls),
+                "total_tokens": sum(c["total"] for c in self.llm.llm_calls),
             },
-            "context_window": self.context_window,
+            "context_window": self.llm.context_window,
             "context_reset_threshold": self.context_reset_threshold,
             "tool_records": self.tool_records,
             "handoff_records": self.handoff_records,
-            "llm_calls": self.llm_calls,
+            "llm_calls": self.llm.llm_calls,
             "last_message": last_message,
         }
         out = Path(".my_coding_agent") / self.session_id / "session_data.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, indent=2))
         self.logger.info("Session data saved → %s", out)
-        if self.tool_artifacts:
+        if self._executor.tool_artifacts:
             artifacts_out = out.parent / "tool_artifacts.json"
-            artifacts_out.write_text(json.dumps(self.tool_artifacts, indent=2))
+            artifacts_out.write_text(
+                json.dumps(self._executor.tool_artifacts, indent=2)
+            )
             self.logger.info("Tool artifacts saved → %s", artifacts_out)
 
     def _spawn_continuation(
@@ -211,15 +222,15 @@ class Agent(LLM):
         """Finish the run in a fresh agent seeded with system prompt + handoff."""
         system_messages = [m for m in self.messages if m.get("role") == "system"]
         continuation = Agent(
-            api_url=self.api_url,
-            api_key=self.api_key,
-            model=self.model,
+            api_url=self.llm.api_url,
+            api_key=self.llm.api_key,
+            model=self.llm.model,
             messages=system_messages + [handoff.to_user_message()],
             tools=self.tools,
             label=f"{self.label} (cont.)",
             context_reset_threshold=self.context_reset_threshold,
-            before_tool_call=self._before_hook,
-            after_tool_call=self._after_hook,
+            before_tool_call=self.llm._before_hook,
+            after_tool_call=self.llm._after_hook,
         )
         remaining_steps = max_steps - self.step_num
         return continuation.run(max_steps=max(remaining_steps, 1))
@@ -235,10 +246,10 @@ class Agent(LLM):
             messages are stashed in ``self._continuation_result`` for the caller
             to return; ``"ok"`` if there is room to proceed.
         """
-        if not self.context_window:
+        if not self.llm.context_window:
             return "ok"
         ctx_tokens = self.last_prompt_tokens or len(json.dumps(self.messages)) // 2
-        ctx_pct = ctx_tokens / self.context_window
+        ctx_pct = ctx_tokens / self.llm.context_window
 
         if ctx_pct >= 1.0:
             # Hard stop — context fully exhausted, no room to generate handoff.
@@ -246,7 +257,7 @@ class Agent(LLM):
             self.logger.warning(
                 "Context limit reached: %d / %d tokens (%.1f%%). Stopping.",
                 ctx_tokens,
-                self.context_window,
+                self.llm.context_window,
                 ctx_pct * 100,
             )
             return "stop"
@@ -262,7 +273,7 @@ class Agent(LLM):
                 "Context at %.1f%% (%d / %d tokens) — reset at %.0f%%.",
                 ctx_pct * 100,
                 ctx_tokens,
-                self.context_window,
+                self.llm.context_window,
                 self.context_reset_threshold * 100,
             )
         return "ok"
@@ -276,7 +287,7 @@ class Agent(LLM):
             "Generating handoff and spawning continuation.",
             ctx_pct * 100,
             ctx_tokens,
-            self.context_window,
+            self.llm.context_window,
         )
         handoff = self._generate_handoff(self.step_num, ctx_tokens)
         self.handoff_records.append(
@@ -289,7 +300,7 @@ class Agent(LLM):
                 "reason": (
                     f"prompt_tokens {ctx_tokens:,} >= "
                     f"{self.context_reset_threshold * 100:.0f}% "
-                    f"of {self.context_window:,}"
+                    f"of {self.llm.context_window:,}"
                 ),
             }
         )
@@ -327,7 +338,7 @@ class Agent(LLM):
         step_completion = usage.get("completion_tokens", 0)
         step_total = usage.get("total_tokens", 0)
         self.last_prompt_tokens = step_prompt
-        ctx = self.context_window
+        ctx = self.llm.context_window
         ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
         self.logger.info(
             "Step %d tokens — prompt: %d, completion: %d, total: %d%s",
@@ -361,7 +372,7 @@ class Agent(LLM):
         self.stop_reason = "max_steps"
         self.tool_records = []
         self.handoff_records = []
-        self.llm_calls = []
+        self.llm.llm_calls = []
         self.last_prompt_tokens = (
             0  # prompt tokens from the last main-step call (used for context % check)
         )
@@ -372,9 +383,9 @@ class Agent(LLM):
         # network-free: reading context_window now resolves the real value.
         print_banner(
             label=self.label,
-            model=self.model,
+            model=self.llm.model,
             tools=self.tools,
-            context_window=self.context_window,
+            context_window=self.llm.context_window,
             n_messages=len(self.messages),
             context_reset_threshold=self.context_reset_threshold,
             session_id=self.session_id,
@@ -408,8 +419,10 @@ class Agent(LLM):
                 )
 
                 # Route: pick the relevant subset of tools for this step's context.
-                routed_tools = self.route_tools(self._routing_signal(), self.tools)
-                resp = self.chat_completion(self.messages, tools=routed_tools)
+                routed_tools = self._router.route_tools(
+                    self._routing_signal(), self.tools
+                )
+                resp = self.llm.chat_completion(self.messages, tools=routed_tools)
                 message = extract_message(resp)
                 if not message:
                     self.logger.error(
@@ -420,7 +433,9 @@ class Agent(LLM):
                 self.add_message(message)
 
                 # Execute tool calls and add results back to messages
-                tool_messages, records = self.execute_tool_calls(message)
+                tool_messages, records = self._executor.execute_tool_calls(
+                    message, self.messages, self.tools
+                )
                 self.tool_records.extend(records)
                 for tool_message in tool_messages or []:
                     self.add_message(tool_message)

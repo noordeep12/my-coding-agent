@@ -8,8 +8,10 @@ This package splits three independent concerns into focused modules (CONTRIBUTE.
   ``DynamicStderrHandler``, and the ``get_logger`` factory.
 - ``session_log`` — the ``_TeeStream`` and ``attach_session_log`` /
   ``detach_session_log`` helpers that fan stderr to plain + colored log files.
-- ``terminal_ui`` — the box-drawn ``print_banner`` and ``print_run_summary``
-  renderers (plus the shared ``_git_branch`` helper).
+- ``banner`` — the box-drawn ``print_banner`` renderer plus the shared
+  ``_git_branch`` helper.
+- ``summary`` — the box-drawn ``print_run_summary`` renderer and its
+  row/section/chart sub-helpers.
 """
 
 # This package is a re-export facade: every import below is a deliberate
@@ -19,6 +21,10 @@ This package splits three independent concerns into focused modules (CONTRIBUTE.
 
 import sys  # re-exported so tests may patch ``logger.sys``
 
+from .banner import (
+    _git_branch,
+    print_banner,
+)
 from .logging_core import (
     _CUSTOM_LEVELS,
     _LEVEL_COLORS,
@@ -39,9 +45,8 @@ from .session_log import (
     attach_session_log,
     detach_session_log,
 )
-from .terminal_ui import (
+from .summary import (
     _context_resets_section,
-    _git_branch,
     _handoff_rows,
     _markdown_rows,
     _SummaryStyle,
@@ -49,7 +54,6 @@ from .terminal_ui import (
     _tool_call_rows,
     _tool_calls_section,
     _tool_count_label,
-    print_banner,
     print_run_summary,
 )
 

@@ -23,10 +23,10 @@ dependencies = [
 ]
 
 [project.scripts]
-my-coding-agent = "workflows.main:main"
+my-coding-agent = "my_coding_agent.workflows.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/my_coding_agent", "agents", "workflows"]
+packages = ["src/my_coding_agent"]
 
 [dependency-groups]
 dev = [
@@ -44,7 +44,7 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-src = ["src", "agents", "workflows"]
+src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "C901"]
@@ -71,8 +71,7 @@ exclude_dirs = ["tests", ".venv"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Coverage gate per CONTRIBUTE.md §30: 85% minimum. Measured over the library
-# package (src/my_coding_agent); the agents/workflows app entrypoints are not in
-# the gated scope (they are thin glue exercised end-to-end, not unit-gated here).
+# package (src/my_coding_agent).
 addopts = "--cov=my_coding_agent --cov-branch --cov-report=term-missing --cov-fail-under=85"
 
 [tool.coverage.run]

@@ -1,18 +1,19 @@
-"""Tests for the network-touching and dispatch logic of LLM.
+"""Tests for the network-touching client and dispatch-collaborator logic.
 
 Every test keeps the suite network-free (CONTRIBUTE.md §30): the HTTP layer is
 mocked at ``_request_with_retry`` or ``chat_completion``, never reaching a real
-server. These cover ``available_models``, ``chat_completion`` accounting,
-``route_tools`` phase-2, output validation/summarization, tool dispatch, the
-arg-correction loop, and the full ``execute_tool_calls`` flow (§42: behavior is
-asserted, not merely executed).
+server. These cover the client (``available_models``, ``chat_completion``
+accounting), the router's phase-2 fallback (``ToolRouter`` via ``bare_router``),
+and the executor's output validation/summarization, tool dispatch, arg-correction
+loop, and full ``execute_tool_calls`` flow (``ToolExecutor`` via
+``bare_executor``) — §42: behavior is asserted, not merely executed.
 """
 
 import json
 
 import pytest
 
-from my_coding_agent.llm import MAX_TOOL_OUTPUT_CHARS
+from my_coding_agent.tool_execution import MAX_TOOL_OUTPUT_CHARS
 from my_coding_agent.tools import ToolsRegistry
 
 
@@ -191,7 +192,7 @@ def _tool(name, tags=None):
     return {"function": {"name": name}, "tags": tags or []}
 
 
-def test_route_tools_phase2_selects_llm_choice_plus_baseline(bare_llm, mocker):
+def test_route_tools_phase2_selects_llm_choice_plus_baseline(bare_router, mocker):
     tools = [
         _tool("bash"),
         _tool("read_file"),
@@ -200,16 +201,16 @@ def test_route_tools_phase2_selects_llm_choice_plus_baseline(bare_llm, mocker):
     ]
     # Message matches no tag anywhere → phase-2 LLM fallback runs.
     mocker.patch.object(
-        bare_llm,
+        bare_router.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": '["read_article"]'}}]}),
     )
-    selected = {t["function"]["name"] for t in bare_llm.route_tools("xyzzy", tools)}
+    selected = {t["function"]["name"] for t in bare_router.route_tools("xyzzy", tools)}
     assert "read_article" in selected
     assert {"bash", "read_file", "read_tool_artifact"} <= selected
 
 
-def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_llm, mocker):
+def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_router, mocker):
     tools = [
         _tool("bash"),
         _tool("read_file"),
@@ -217,15 +218,15 @@ def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_llm, mocker):
         _tool("read_article", tags=["web"]),
     ]
     mocker.patch.object(
-        bare_llm,
+        bare_router.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "not an array"}}]}),
     )
-    selected = bare_llm.route_tools("xyzzy", tools)
+    selected = bare_router.route_tools("xyzzy", tools)
     assert selected == tools  # unparseable → keep all tools
 
 
-def test_route_tools_phase2_extracts_array_from_prose(bare_llm, mocker):
+def test_route_tools_phase2_extracts_array_from_prose(bare_router, mocker):
     tools = [
         _tool("bash"),
         _tool("read_file"),
@@ -233,7 +234,7 @@ def test_route_tools_phase2_extracts_array_from_prose(bare_llm, mocker):
         _tool("read_article", tags=["web"]),
     ]
     mocker.patch.object(
-        bare_llm,
+        bare_router.client,
         "chat_completion",
         return_value=_Resp(
             {
@@ -247,59 +248,65 @@ def test_route_tools_phase2_extracts_array_from_prose(bare_llm, mocker):
             }
         ),
     )
-    selected = {t["function"]["name"] for t in bare_llm.route_tools("xyzzy", tools)}
+    selected = {t["function"]["name"] for t in bare_router.route_tools("xyzzy", tools)}
     assert "read_article" in selected
 
 
 # --- _validate_tool_output ---------------------------------------------------
 
 
-def test_validate_tool_output_empty_returns_placeholder(bare_llm):
-    bare_llm._session_log_path = None
-    out = bare_llm._validate_tool_output("   ", "bash")
+def test_validate_tool_output_empty_returns_placeholder(bare_executor):
+    bare_executor.client._session_log_path = None
+    out = bare_executor._validate_tool_output("   ", "bash")
     assert out == "(tool returned empty output)"
 
 
-def test_validate_tool_output_truncates_oversized(bare_llm):
-    bare_llm._session_log_path = "/tmp/log"
+def test_validate_tool_output_truncates_oversized(bare_executor):
+    bare_executor.client._session_log_path = "/tmp/log"
     big = "y" * (MAX_TOOL_OUTPUT_CHARS + 50)
-    out = bare_llm._validate_tool_output(big, "read_file")
+    out = bare_executor._validate_tool_output(big, "read_file")
     assert "[output truncated" in out
     assert "/tmp/log" in out
 
 
-def test_validate_tool_output_summary_not_truncated(bare_llm):
-    bare_llm._session_log_path = None
+def test_validate_tool_output_summary_not_truncated(bare_executor):
+    bare_executor.client._session_log_path = None
     big = "z" * (MAX_TOOL_OUTPUT_CHARS + 50)
-    assert bare_llm._validate_tool_output(big, "bash", is_summary=True) == big
+    assert bare_executor._validate_tool_output(big, "bash", is_summary=True) == big
 
 
 # --- _summarize_artifact -----------------------------------------------------
 
 
-def test_summarize_artifact_uses_llm_summary(bare_llm, mocker):
+def test_summarize_artifact_uses_llm_summary(bare_executor, mocker):
     mocker.patch.object(
-        bare_llm,
+        bare_executor.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "all good"}}]}),
     )
-    out = bare_llm._summarize_artifact({"exit_code": 0, "ok": True}, "bash", "call_1")
+    out = bare_executor._summarize_artifact(
+        {"exit_code": 0, "ok": True}, "bash", "call_1"
+    )
     assert out.startswith("all good")
     assert 'read_tool_artifact(tool_call_id="call_1")' in out
 
 
-def test_summarize_artifact_falls_back_on_llm_failure_bash(bare_llm, mocker):
-    mocker.patch.object(bare_llm, "chat_completion", side_effect=RuntimeError("boom"))
-    out = bare_llm._summarize_artifact(
+def test_summarize_artifact_falls_back_on_llm_failure_bash(bare_executor, mocker):
+    mocker.patch.object(
+        bare_executor.client, "chat_completion", side_effect=RuntimeError("boom")
+    )
+    out = bare_executor._summarize_artifact(
         {"exit_code": 2, "ok": False, "stdout": "abc", "stderr": ""}, "bash", "c1"
     )
     head = json.loads(out.split("\n[Full output")[0])
     assert head == {"exit_code": 2, "ok": False, "stdout_chars": 3, "stderr_chars": 0}
 
 
-def test_summarize_artifact_falls_back_on_llm_failure_file(bare_llm, mocker):
-    mocker.patch.object(bare_llm, "chat_completion", side_effect=RuntimeError("boom"))
-    out = bare_llm._summarize_artifact(
+def test_summarize_artifact_falls_back_on_llm_failure_file(bare_executor, mocker):
+    mocker.patch.object(
+        bare_executor.client, "chat_completion", side_effect=RuntimeError("boom")
+    )
+    out = bare_executor._summarize_artifact(
         {"content": "...", "file_path": "/a.txt", "size": 99}, "read_file", "c2"
     )
     head = json.loads(out.split("\n[Full output")[0])
@@ -309,12 +316,12 @@ def test_summarize_artifact_falls_back_on_llm_failure_file(bare_llm, mocker):
 # --- _dispatch_tool ----------------------------------------------------------
 
 
-def test_dispatch_tool_plain_string_result(bare_llm, tmp_path):
-    bare_llm._session_log_path = None
+def test_dispatch_tool_plain_string_result(bare_executor, tmp_path):
+    bare_executor.client._session_log_path = None
     f = tmp_path / "f.txt"
     f.write_text("data")
     reg = ToolsRegistry(base_dir=str(tmp_path))
-    result, is_artifact, is_truncated = bare_llm._dispatch_tool(
+    result, is_artifact, is_truncated = bare_executor._dispatch_tool(
         reg, "read_file", {"file_path": str(f)}, "c1"
     )
     assert result == "data"
@@ -322,10 +329,10 @@ def test_dispatch_tool_plain_string_result(bare_llm, tmp_path):
     assert is_truncated is False
 
 
-def test_dispatch_tool_artifact_tuple_is_summarized(bare_llm, mocker):
-    bare_llm._session_log_path = None
+def test_dispatch_tool_artifact_tuple_is_summarized(bare_executor, mocker):
+    bare_executor.client._session_log_path = None
     mocker.patch.object(
-        bare_llm,
+        bare_executor.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "summary"}}]}),
     )
@@ -334,65 +341,67 @@ def test_dispatch_tool_artifact_tuple_is_summarized(bare_llm, mocker):
         def big(self):
             return None, {"exit_code": 0, "ok": True, "stdout": "x", "stderr": ""}
 
-    result, is_artifact, _ = bare_llm._dispatch_tool(_Reg(), "big", {}, "c1")
+    result, is_artifact, _ = bare_executor._dispatch_tool(_Reg(), "big", {}, "c1")
     assert is_artifact is True
     assert "summary" in result
-    assert bare_llm.tool_artifacts["c1"]["exit_code"] == 0
+    assert bare_executor.tool_artifacts["c1"]["exit_code"] == 0
 
 
 # --- invoke_tool -------------------------------------------------------------
 
 
-def test_invoke_tool_success(bare_llm, tmp_path):
-    bare_llm._session_log_path = None
+def test_invoke_tool_success(bare_executor, tmp_path):
+    bare_executor.client._session_log_path = None
     f = tmp_path / "f.txt"
     f.write_text("hello")
     reg = ToolsRegistry(base_dir=str(tmp_path))
-    result, status, record = bare_llm.invoke_tool(
-        "c1", "read_file", {"file_path": str(f)}, reg, {}
+    result, status, record = bare_executor.invoke_tool(
+        "c1", "read_file", {"file_path": str(f)}, reg, {}, [], []
     )
     assert result == "hello"
     assert status == "success"
     assert record["ok"] is True
 
 
-def test_invoke_tool_unknown_tool_returns_error(bare_llm):
+def test_invoke_tool_unknown_tool_returns_error(bare_executor):
     reg = ToolsRegistry()
-    result, status, record = bare_llm.invoke_tool("c1", "does_not_exist", {}, reg, {})
+    result, status, record = bare_executor.invoke_tool(
+        "c1", "does_not_exist", {}, reg, {}, [], []
+    )
     assert status == "error"
     assert "not found" in result
     assert record["ok"] is False
 
 
-def test_invoke_tool_recoverable_exception_returns_error(bare_llm):
+def test_invoke_tool_recoverable_exception_returns_error(bare_executor):
     """read_file traversal raises PathTraversalError (a ValueError), recoverable."""
-    bare_llm._session_log_path = None
+    bare_executor.client._session_log_path = None
     reg = ToolsRegistry()  # base_dir = cwd
-    result, status, record = bare_llm.invoke_tool(
-        "c1", "read_file", {"file_path": "../../../etc/passwd"}, reg, {}
+    result, status, record = bare_executor.invoke_tool(
+        "c1", "read_file", {"file_path": "../../../etc/passwd"}, reg, {}, [], []
     )
     assert status == "error"
     assert "PathTraversalError" in result
     assert record["ok"] is False
 
 
-def test_invoke_tool_non_recoverable_exception_reraises(bare_llm):
+def test_invoke_tool_non_recoverable_exception_reraises(bare_executor):
     """A registry whose tool raises a non-recoverable error (KeyError) re-raises."""
-    bare_llm._session_log_path = None
+    bare_executor.client._session_log_path = None
 
     class _Reg(ToolsRegistry):
         def read_file(self, file_path: str) -> str:  # same signature as the real tool
             raise KeyError("fatal")
 
     with pytest.raises(KeyError):
-        bare_llm.invoke_tool("c1", "read_file", {"file_path": "x"}, _Reg(), {})
+        bare_executor.invoke_tool(
+            "c1", "read_file", {"file_path": "x"}, _Reg(), {}, [], []
+        )
 
 
-def test_invoke_tool_corrects_wrong_args_then_succeeds(bare_llm, mocker):
+def test_invoke_tool_corrects_wrong_args_then_succeeds(bare_executor, mocker):
     """First dispatch raises TypeError; correction fixes args; the retry succeeds."""
-    bare_llm._session_log_path = None
-    bare_llm.messages = []
-    bare_llm.tools = []
+    bare_executor.client._session_log_path = None
     calls = {"n": 0}
 
     class _Reg(ToolsRegistry):
@@ -402,9 +411,11 @@ def test_invoke_tool_corrects_wrong_args_then_succeeds(bare_llm, mocker):
                 raise TypeError("unexpected keyword argument 'wrong'")
             return f"read {file_path}"
 
-    mocker.patch.object(bare_llm, "_correct_args", return_value={"file_path": "ok"})
-    result, status, _ = bare_llm.invoke_tool(
-        "c1", "read_file", {"wrong": "x"}, _Reg(), {}
+    mocker.patch.object(
+        bare_executor, "_correct_args", return_value={"file_path": "ok"}
+    )
+    result, status, _ = bare_executor.invoke_tool(
+        "c1", "read_file", {"wrong": "x"}, _Reg(), {}, [], []
     )
     assert status == "success"
     assert result == "read ok"
@@ -413,13 +424,11 @@ def test_invoke_tool_corrects_wrong_args_then_succeeds(bare_llm, mocker):
 # --- execute_tool_calls (full flow) ------------------------------------------
 
 
-def test_execute_tool_calls_success_flow(bare_llm):
+def test_execute_tool_calls_success_flow(bare_executor):
     """A valid read_file call inside the workspace dispatches and records success."""
-    bare_llm._session_log_path = None
-    bare_llm.tools = []
-    bare_llm.tool_artifacts = {}
-    bare_llm._before_hook = lambda name, args: args
-    bare_llm._after_hook = lambda name, args, result: result
+    bare_executor.client._session_log_path = None
+    bare_executor.client._before_hook = lambda name, args: args
+    bare_executor.client._after_hook = lambda name, args, result: result
     # Read a file that exists under the cwd (the registry's default base_dir).
     message = {
         "tool_calls": [
@@ -433,19 +442,17 @@ def test_execute_tool_calls_success_flow(bare_llm):
             }
         ]
     }
-    messages, records = bare_llm.execute_tool_calls(message)
+    messages, records = bare_executor.execute_tool_calls(message, [], [])
     assert len(messages) == 1
     assert records[0]["name"] == "read_file"
     assert records[0]["ok"] is True
     assert "[project]" in messages[0]["content"]
 
 
-def test_execute_tool_calls_skips_on_before_hook_none(bare_llm):
-    bare_llm._session_log_path = None
-    bare_llm.tools = []
-    bare_llm.tool_artifacts = {}
-    bare_llm._before_hook = lambda name, args: None  # skip every call
-    bare_llm._after_hook = lambda name, args, result: result
+def test_execute_tool_calls_skips_on_before_hook_none(bare_executor):
+    bare_executor.client._session_log_path = None
+    bare_executor.client._before_hook = lambda name, args: None  # skip every call
+    bare_executor.client._after_hook = lambda name, args, result: result
     message = {
         "tool_calls": [
             {
@@ -455,75 +462,144 @@ def test_execute_tool_calls_skips_on_before_hook_none(bare_llm):
             }
         ]
     }
-    messages, records = bare_llm.execute_tool_calls(message)
+    messages, records = bare_executor.execute_tool_calls(message, [], [])
     assert messages[0]["status"] == "skipped"
     assert records[0]["status"] == "skipped"
 
 
-def test_execute_tool_calls_parse_error_recorded(bare_llm):
-    bare_llm._session_log_path = None
-    bare_llm.tools = []
-    bare_llm.tool_artifacts = {}
+def test_execute_tool_calls_parse_error_recorded(bare_executor):
+    bare_executor.client._session_log_path = None
     message = {"tool_calls": [{"id": "c1", "function": {"name": "bash"}}]}  # no type
-    messages, records = bare_llm.execute_tool_calls(message)
+    messages, records = bare_executor.execute_tool_calls(message, [], [])
     assert messages[0]["status"] == "error"
     assert records[0]["ok"] is False
 
 
-def test_execute_tool_calls_empty_returns_empty(bare_llm):
-    bare_llm._session_log_path = None
-    bare_llm.tools = []
-    bare_llm.tool_artifacts = {}
-    messages, records = bare_llm.execute_tool_calls({"tool_calls": []})
+def test_execute_tool_calls_empty_returns_empty(bare_executor):
+    bare_executor.client._session_log_path = None
+    messages, records = bare_executor.execute_tool_calls({"tool_calls": []}, [], [])
     assert messages == []
     assert records == []
+
+
+def test_execute_tool_calls_uses_passed_conversation_and_tools(bare_executor, mocker):
+    """Regression (§18): execute_tool_calls threads the *passed-in* conversation
+    and tools into the arg-correction call — not any attribute on the client.
+
+    The client carries decoy ``messages``/``tools`` attributes that, if read,
+    would surface in the correction request. We assert the correction's
+    chat_completion sees the explicit args instead.
+    """
+    bare_executor.client._session_log_path = None
+    bare_executor.client._before_hook = lambda name, args: args
+    bare_executor.client._after_hook = lambda name, args, result: result
+    # Decoys: present on the client but must NOT be used by the executor.
+    bare_executor.client.messages = [{"role": "system", "content": "DECOY"}]
+    bare_executor.client.tools = [_tool("decoy_tool")]
+
+    conversation = [{"role": "user", "content": "EXPLICIT"}]
+    tools = [_tool("explicit_tool")]
+
+    # Force a TypeError on first dispatch so the correction path runs once, then
+    # let the corrected args succeed.
+    calls = {"n": 0}
+
+    class _Reg(ToolsRegistry):
+        def read_file(self, file_path: str) -> str:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TypeError("unexpected keyword argument 'wrong'")
+            return f"read {file_path}"
+
+    mocker.patch(
+        "my_coding_agent.tool_execution.ToolsRegistry",
+        return_value=_Reg(base_dir="."),
+    )
+    correction = mocker.patch.object(
+        bare_executor.client,
+        "chat_completion",
+        return_value=_Resp(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": json.dumps(
+                                            {"file_path": "pyproject.toml"}
+                                        ),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+    )
+    message = {
+        "tool_calls": [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": json.dumps({"wrong": "x"}),
+                },
+            }
+        ]
+    }
+    bare_executor.execute_tool_calls(message, conversation, tools)
+
+    # The correction call must carry the explicit conversation + tools, never the
+    # client decoys.
+    sent_messages = correction.call_args.args[0]
+    assert sent_messages[0] == {"role": "user", "content": "EXPLICIT"}
+    assert correction.call_args.kwargs["tools"] == tools
+    assert {"role": "system", "content": "DECOY"} not in sent_messages
 
 
 # --- _correct_args -----------------------------------------------------------
 
 
-def test_correct_args_returns_parsed_corrected_call(bare_llm, mocker):
-    bare_llm.messages = []
-    bare_llm.tools = []
+def test_correct_args_returns_parsed_corrected_call(bare_executor, mocker):
     fixed = {
         "function": {"name": "read_file", "arguments": json.dumps({"file_path": "/ok"})}
     }
     mocker.patch.object(
-        bare_llm,
+        bare_executor.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": [fixed]}}]}),
     )
-    out = bare_llm._correct_args(
-        "read_file", {"bad": 1}, TypeError("boom"), "(sig)", {}, "c1", attempt=0
+    out = bare_executor._correct_args(
+        "read_file", {"bad": 1}, TypeError("boom"), "(sig)", {}, "c1", 0, [], []
     )
     assert out == {"file_path": "/ok"}
 
 
-def test_correct_args_returns_none_when_model_skips_tool(bare_llm, mocker):
-    bare_llm.messages = []
-    bare_llm.tools = []
+def test_correct_args_returns_none_when_model_skips_tool(bare_executor, mocker):
     mocker.patch.object(
-        bare_llm,
+        bare_executor.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": []}}]}),
     )
-    out = bare_llm._correct_args(
-        "read_file", {}, TypeError("boom"), "(sig)", {}, "c1", attempt=0
+    out = bare_executor._correct_args(
+        "read_file", {}, TypeError("boom"), "(sig)", {}, "c1", 0, [], []
     )
     assert out is None
 
 
-def test_correct_args_returns_none_on_unparseable_args(bare_llm, mocker):
-    bare_llm.messages = []
-    bare_llm.tools = []
+def test_correct_args_returns_none_on_unparseable_args(bare_executor, mocker):
     bad_call = {"function": {"name": "read_file", "arguments": "{not json}"}}
     mocker.patch.object(
-        bare_llm,
+        bare_executor.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": [bad_call]}}]}),
     )
-    out = bare_llm._correct_args(
-        "read_file", {}, TypeError("boom"), "(sig)", {}, "c1", attempt=0
+    out = bare_executor._correct_args(
+        "read_file", {}, TypeError("boom"), "(sig)", {}, "c1", 0, [], []
     )
     assert out is None
 
@@ -531,36 +607,36 @@ def test_correct_args_returns_none_on_unparseable_args(bare_llm, mocker):
 # --- _validate_tool_output bash non-JSON warning -----------------------------
 
 
-def test_validate_tool_output_warns_on_non_json_bash(bare_llm):
-    bare_llm._session_log_path = None
+def test_validate_tool_output_warns_on_non_json_bash(bare_executor):
+    bare_executor.client._session_log_path = None
     # Non-JSON bash output passes through unchanged (the warning is a side effect).
-    out = bare_llm._validate_tool_output("plain text not json", "bash")
+    out = bare_executor._validate_tool_output("plain text not json", "bash")
     assert out == "plain text not json"
 
 
 # --- before_tool_call / after_tool_call --------------------------------------
 
 
-def test_before_tool_call_applies_alias_and_hook(bare_llm):
-    bare_llm._before_hook = lambda name, args: args
-    out = bare_llm.before_tool_call("c1", "bash", {"path": "ls"})
+def test_before_tool_call_applies_alias_and_hook(bare_executor):
+    bare_executor.client._before_hook = lambda name, args: args
+    out = bare_executor.before_tool_call("c1", "bash", {"path": "ls"})
     assert out == {"command": "ls"}  # alias path→command applied
 
 
-def test_before_tool_call_hook_can_skip(bare_llm):
-    bare_llm._before_hook = lambda name, args: None
-    assert bare_llm.before_tool_call("c1", "bash", {"command": "ls"}) is None
+def test_before_tool_call_hook_can_skip(bare_executor):
+    bare_executor.client._before_hook = lambda name, args: None
+    assert bare_executor.before_tool_call("c1", "bash", {"command": "ls"}) is None
 
 
-def test_after_tool_call_applies_hook(bare_llm):
-    bare_llm._after_hook = lambda name, args, result: result.upper()
-    assert bare_llm.after_tool_call("c1", "bash", {}, "ok") == "OK"
+def test_after_tool_call_applies_hook(bare_executor):
+    bare_executor.client._after_hook = lambda name, args, result: result.upper()
+    assert bare_executor.after_tool_call("c1", "bash", {}, "ok") == "OK"
 
 
-def test_after_tool_call_swallows_hook_exception(bare_llm):
+def test_after_tool_call_swallows_hook_exception(bare_executor):
     def _raises(name, args, result):
         raise RuntimeError("hook broke")
 
-    bare_llm._after_hook = _raises
+    bare_executor.client._after_hook = _raises
     # On hook failure the original result is returned unchanged.
-    assert bare_llm.after_tool_call("c1", "bash", {}, "original") == "original"
+    assert bare_executor.after_tool_call("c1", "bash", {}, "original") == "original"

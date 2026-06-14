@@ -1,10 +1,12 @@
 """Tests for the Agent loop and its helper methods.
 
-The agent's ``__init__`` performs a network round-trip (it extends ``LLM`` which
-probes ``/models``) and attaches a session log. To keep these unit tests
-network-free, deterministic, and fast (CONTRIBUTE.md §30), the agent is built
-WITHOUT ``__init__`` via ``object.__new__`` — only the attributes the methods
-under test actually read are attached.
+The agent now holds an ``LLM`` client via composition (``self.llm``); its
+``__init__`` builds that client and attaches a session log. To keep these unit
+tests network-free, deterministic, and fast (CONTRIBUTE.md §30), the agent is
+built WITHOUT ``__init__`` via ``object.__new__`` — only the attributes the
+methods under test actually read are attached, including a bare ``self.llm`` stub
+exposing the client state the loop reads (``model``, ``context_window``,
+``llm_calls``, hooks, ``chat_completion``).
 """
 
 import json
@@ -12,28 +14,51 @@ import json
 import pytest
 
 from my_coding_agent.agent import Agent
+from my_coding_agent.llm import LLM
+from my_coding_agent.tool_execution import ToolExecutor
+from my_coding_agent.tool_routing import ToolRouter
 
 # --- helpers -----------------------------------------------------------------
 
 
 def _make_agent(silent_logger, **overrides):
-    """Construct an Agent without running __init__ (no network, no session log)."""
+    """Construct an Agent without running __init__ (no network, no session log).
+
+    The agent holds an ``LLM`` client (``agent.llm``) via composition; build a
+    bare client (``LLM.__init__`` is network-free) and set the client-side state
+    the loop reads (``model``, ``context_window``, ``llm_calls``). ``model`` /
+    ``context_window`` / ``llm_calls`` overrides are routed onto the held client,
+    so callers keep passing them as before.
+    """
     agent = object.__new__(Agent)
     agent.logger = silent_logger
     agent.messages = []
     agent.tools = []
     agent.label = "Test Agent"
-    agent.model = "test-model"
-    agent.context_window = 1000
     agent.context_reset_threshold = 0.75
     agent.last_prompt_tokens = 0
     agent.step_num = 0
     agent.stop_reason = "max_steps"
     agent.tool_records = []
     agent.handoff_records = []
-    agent.llm_calls = []
     agent.elapsed_seconds = 0.0
     agent._continuation_result = []
+    # Held LLM client (composition). LLM.__init__ is network-free; swap in the
+    # silent logger and set the state the agent loop reads off the client.
+    agent.llm = LLM()
+    agent.llm.logger = silent_logger
+    agent.llm.model = "test-model"
+    agent.llm.context_window = 1000
+    agent.llm.llm_calls = []
+    # Client-side state historically passed as agent kwargs; route onto the client.
+    for client_attr in ("model", "context_window", "llm_calls"):
+        if client_attr in overrides:
+            setattr(agent.llm, client_attr, overrides.pop(client_attr))
+    # Collaborators that __init__ would normally build; __init__ is skipped here.
+    agent._router = ToolRouter(agent.llm)
+    agent._router.logger = silent_logger
+    agent._executor = ToolExecutor(agent.llm)
+    agent._executor.logger = silent_logger
     for key, value in overrides.items():
         setattr(agent, key, value)
     return agent
@@ -186,7 +211,9 @@ def test_preflight_estimates_tokens_when_no_last_prompt(silent_logger):
 
 def _stub_run_internals(agent, mocker):
     """Neutralize the I/O-heavy parts of run() so the loop logic can be tested."""
-    mocker.patch.object(agent, "route_tools", side_effect=lambda signal, tools: tools)
+    mocker.patch.object(
+        agent._router, "route_tools", side_effect=lambda signal, tools: tools
+    )
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
     # Banner is emitted at the start of run() (not __init__) — stub its output.
@@ -213,8 +240,8 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         }
     )
-    mocker.patch.object(agent, "chat_completion", return_value=resp)
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=5)
     assert agent.stop_reason == "stop"
@@ -234,8 +261,8 @@ def test_run_stops_at_max_steps(silent_logger, mocker):
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         }
     )
-    mocker.patch.object(agent, "chat_completion", return_value=resp)
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=1)
     assert agent.stop_reason == "max_steps"
@@ -262,8 +289,8 @@ def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         }
     )
-    chat = mocker.patch.object(agent, "chat_completion", return_value=resp)
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    chat = mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=max_steps)
 
@@ -287,8 +314,8 @@ def test_run_skips_step_on_empty_message(silent_logger, mocker):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
     )
-    chat = mocker.patch.object(agent, "chat_completion", side_effect=[empty, stop])
-    mocker.patch.object(agent, "execute_tool_calls", return_value=([], []))
+    chat = mocker.patch.object(agent.llm, "chat_completion", side_effect=[empty, stop])
+    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
 
     agent.run(max_steps=5)
     # First call returned empty (step skipped), second returned a stop.
@@ -308,11 +335,11 @@ def test_run_returns_continuation_result_on_reset(silent_logger, mocker):
         return "reset"
 
     mocker.patch.object(agent, "_context_preflight", side_effect=_fake_preflight)
-    mocker.patch.object(agent, "chat_completion")  # must not be reached
+    mocker.patch.object(agent.llm, "chat_completion")  # must not be reached
 
     result = agent.run(max_steps=5)
     assert result == cont
-    agent.chat_completion.assert_not_called()
+    agent.llm.chat_completion.assert_not_called()
 
 
 # --- _generate_handoff -------------------------------------------------------
@@ -325,7 +352,7 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
         context_window=10000,
     )
     mocker.patch.object(
-        agent,
+        agent.llm,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
     )
@@ -373,7 +400,6 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
         model="m",
         session_id="sess9",
         started_at="2026-06-12",
-        tool_artifacts={},
     )
     mocker.patch("my_coding_agent.agent.Path", lambda *a: tmp_path.joinpath(*a))
     agent._save_session_data(max_steps=5)
@@ -394,13 +420,14 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "u"},
         ],
-        api_url="http://x",
-        api_key="k",
         model="m",
         context_reset_threshold=0.75,
-        _before_hook=lambda n, a: a,
-        _after_hook=lambda n, a, r: r,
     )
+    # The continuation is built from client-side state read off the held client.
+    agent.llm.api_url = "http://x"
+    agent.llm.api_key = "k"
+    agent.llm._before_hook = lambda n, a: a
+    agent.llm._after_hook = lambda n, a, r: r
     handoff = mocker.Mock()
     handoff.to_user_message.return_value = {"role": "user", "content": "HANDOFF"}
     fake_cont = mocker.Mock()
@@ -413,3 +440,17 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     seeded = cont_cls.call_args.kwargs["messages"]
     assert seeded[0] == {"role": "system", "content": "sys"}
     assert seeded[1] == {"role": "user", "content": "HANDOFF"}
+
+
+# --- composition contract (Phase 4) ------------------------------------------
+
+
+def test_agent_holds_llm_by_composition_not_inheritance(silent_logger):
+    """Phase 4: Agent holds an LLM client via composition, not subclassing.
+
+    The agent exposes its client as ``self.llm`` and is no longer an ``LLM``
+    instance, so client state (e.g. ``llm_calls``) lives on the held client.
+    """
+    agent = _make_agent(silent_logger)
+    assert isinstance(agent.llm, LLM)
+    assert not isinstance(agent, LLM)
