@@ -18,6 +18,7 @@ src/my_coding_agent/
 ├── tools.py                ← Tool registry and decorator
 ├── handoff.py              ← Context reset / handoff state transfer
 ├── logger/                 ← Logging, session-log capture, terminal UI (package)
+│   ├── __init__.py         ← Re-export facade (get_logger, print_banner, attach/detach_session_log, …)
 │   ├── logging_core.py     ← Custom levels + ColoredFormatter + DynamicStderrHandler
 │   ├── session_log.py      ← TeeStream + attach/detach_session_log
 │   ├── banner.py           ← print_banner renderer + shared _git_branch
