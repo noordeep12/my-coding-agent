@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Enforce presence of a Refs: footer in commit messages."""
+
 import sys
 
 body = open(sys.argv[1]).read()

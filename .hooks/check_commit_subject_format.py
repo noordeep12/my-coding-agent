@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Enforce Conventional Commits subject format: type(scope): description."""
+
 import re
 import sys
 
