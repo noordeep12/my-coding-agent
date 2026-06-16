@@ -34,7 +34,7 @@ class _Resp:
 
 
 def test_setup_session_applies_auth_and_timeout(bare_llm):
-    bare_llm.api_key = "secret-token"
+    bare_llm.api_key = "secret-token"  # pragma: allowlist secret
     bare_llm.timeout = 12.5
     bare_llm.setup_session()
     assert bare_llm.session.headers["Authorization"] == "Bearer secret-token"
