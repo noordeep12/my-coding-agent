@@ -30,6 +30,6 @@ exclude_patterns = ["_build"]
 # Suppress cross-reference warnings for relative .md links inside included
 # files (e.g. README.md linking to ARCHITECTURE.md). The files exist on disk;
 # they are not Sphinx cross-references.
-suppress_warnings = ["myst.xref_missing"]
+suppress_warnings = ["myst.xref_missing", "myst.header"]
 
-html_theme = "alabaster"
+html_theme = "furo"

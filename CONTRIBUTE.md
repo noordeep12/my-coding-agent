@@ -1,7 +1,7 @@
-# Contributing Guidelines
+# Contribute
 
-# Mindset
-## 1. Core Engineering Mindset
+## Mindset
+### 1. Core Engineering Mindset
 - Think as a **creator**, not a user.
 - Always start with **WHY**: why does this system exist, and what problem does it solve?
 - Then understand **HOW** it works internally and across systems.
@@ -10,7 +10,7 @@
 
 ---
 
-## 2. Problem Understanding (Before Coding)
+### 2. Problem Understanding (Before Coding)
 Before implementation:
 - What exact problem are we solving?
 - Why does this problem exist?
@@ -22,7 +22,7 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 3. Scope Control
+### 3. Scope Control
 - Keep changes small and focused.
 - Avoid unrelated refactoring.
 - Prefer incremental improvements over large rewrites.
@@ -30,7 +30,7 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 4. Complexity Control
+### 4. Complexity Control
 - Minimize cognitive load in code.
 - If code is hard to understand quickly, it is too complex.
 - Prefer simple, explicit logic over clever implementations.
@@ -38,7 +38,7 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 5. Modularity & Information Hiding
+### 5. Modularity & Information Hiding
 - Design systems as independent modules.
 - Each module must have a single responsibility.
 - Hide internal complexity behind simple interfaces.
@@ -46,7 +46,7 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 6. Change Isolation
+### 6. Change Isolation
 - Prefer changes contained in a single file.
 - Multi-file changes must be justified.
 - Reduce cross-module coupling.
@@ -54,14 +54,14 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 7. Dependencies
+### 7. Dependencies
 - Minimize dependencies between components.
 - Avoid circular dependencies completely.
 - Prefer shallow dependency graphs.
 
 ---
 
-## 8. Abstraction Rules
+### 8. Abstraction Rules
 - Abstraction exists to reduce complexity, not increase it.
 - Create abstractions only when multiple real use cases exist.
 - Avoid pass-through methods.
@@ -69,21 +69,21 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 9. Defaults & Edge Cases
+### 9. Defaults & Edge Cases
 - Design APIs so common cases are simple by default.
 - Handle common edge cases internally where appropriate.
 - Reduce special-case handling at call sites.
 
 ---
 
-## 10. Data & State Management
+### 10. Data & State Management
 - Keep state local when possible.
 - Minimize variable usage scope.
 - Avoid spreading state across many components.
 
 ---
 
-## 11. Error Handling & Fail-Fast
+### 11. Error Handling & Fail-Fast
 - Fail-fast: detect and fail early when something is invalid.
 - Do not ignore errors silently.
 - Handle errors close to source when possible.
@@ -92,7 +92,7 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 12. Reliability Thinking
+### 12. Reliability Thinking
 - Systems must work correctly even when things go wrong.
 - Expect hardware failures, software bugs, and human mistakes.
 - Design for fault tolerance and recovery.
@@ -100,7 +100,7 @@ Do not start implementation without clarity on problem + assumptions.
 
 ---
 
-## 13. Scalability Thinking
+### 13. Scalability Thinking
 When designing scalable systems:
 - Define load parameters (requests/sec, reads/writes, concurrency).
 - Identify performance bottlenecks (p50, p95, p99 latency).
@@ -109,7 +109,7 @@ When designing scalable systems:
 
 ---
 
-## 14. Maintainability
+### 14. Maintainability
 - Reduce long-term complexity.
 - Favor designs that are easy to modify and debug.
 - Hide backend complexity behind clean interfaces.
@@ -117,7 +117,7 @@ When designing scalable systems:
 
 ---
 
-## 15. Systems Thinking (Why / How)
+### 15. Systems Thinking (Why / How)
 - Always ask WHY a system is designed this way.
 - Understand HOW systems work internally (e.g. network, storage, APIs).
 - Know common system design patterns.
@@ -125,14 +125,14 @@ When designing scalable systems:
 
 ---
 
-## 16. Code Readability Rule
+### 16. Code Readability Rule
 - Code must be understandable without jumping across multiple files.
 - If understanding requires tracing many layers, the design is too complex.
 - Prefer local reasoning over distributed reasoning.
 
 ---
 
-## 17. Code Review Standards
+### 17. Code Review Standards
 All changes are reviewed for:
 - Correctness
 - Simplicity
@@ -143,7 +143,7 @@ All changes are reviewed for:
 
 ---
 
-## 18. Testing Requirements
+### 18. Testing Requirements
 - Every feature must include tests.
 - Bug fixes must include a regression test.
 - Cover edge cases, not just happy paths.
@@ -151,7 +151,7 @@ All changes are reviewed for:
 
 ---
 
-## 19. Observability
+### 19. Observability
 Production systems must be observable:
 - Logs for debugging
 - Metrics for performance and health
@@ -161,13 +161,13 @@ If it runs in production, its behavior must be explainable.
 
 ---
 
-## 20. Ownership
+### 20. Ownership
 - You own your code after deployment.
 - If it breaks, you are responsible for fixing it.
 
 ---
 
-## 21. Security Baseline
+### 21. Security Baseline
 - Validate all external inputs.
 - Assume all external data is untrusted.
 - Never expose secrets in logs or errors.
@@ -175,7 +175,7 @@ If it runs in production, its behavior must be explainable.
 
 ---
 
-## 22. Study & Learning Principles
+### 22. Study & Learning Principles
 - Close material and summarize concepts from memory.
 - Explain concepts simply (What / Why / How / Limits).
 - Compare similar systems (e.g. replication vs partitioning).
@@ -184,7 +184,7 @@ If it runs in production, its behavior must be explainable.
 
 ---
 
-## 23. System Design Thinking Examples
+### 23. System Design Thinking Examples
 - APIs exist for interoperability, reuse, and abstraction.
 - Reliability = system continues working under faults.
 - Scalability = ability to handle increasing load efficiently.
@@ -196,15 +196,15 @@ Examples:
 
 ---
 
-## 24. Key Principle
+### 24. Key Principle
 Good engineering is about reducing complexity while increasing capability.
 Bad engineering is hiding complexity without control.
 
 ---
 
-# Python Development Standards
+## Python Development Standards
 
-## 25. Project Structure
+### 25. Project Structure
 
 Use `src/` layout — prevents accidental imports of development code at test time.
 
@@ -229,7 +229,7 @@ my-library/
 
 ---
 
-## 26. Tooling Requirements
+### 26. Tooling Requirements
 
 | Tool | Purpose | Command |
 |------|---------|---------|
@@ -244,9 +244,9 @@ Run `make test && make lint` before every commit.
 
 ---
 
-## 27. Code Quality Rules
+### 27. Code Quality Rules
 
-### Type Hints
+#### Type Hints
 - All public API functions must have type hints — no exceptions.
 - Use modern syntax: `list[str]`, `dict[str, int]`, `str | None` (Python 3.10+).
 - Include `py.typed` marker to signal typed package to downstream users.
@@ -259,7 +259,7 @@ def process(items: list[str], timeout: int | None = None) -> dict[str, int]: ...
 def process(items, timeout=None): ...
 ```
 
-### Anti-Patterns to Avoid
+#### Anti-Patterns to Avoid
 
 ```python
 # Bad: mutable default argument (shared across all calls — a classic bug)
@@ -289,7 +289,7 @@ process(data, True, False, True)
 process(data, validate=True, cache=False, strict=True)
 ```
 
-### Pythonic Idioms
+#### Pythonic Idioms
 
 ```python
 # Iteration — never use range(len(...))
@@ -315,7 +315,7 @@ result = "".join(str(x) for x in items)
 
 ---
 
-## 28. Naming Conventions
+### 28. Naming Conventions
 
 ```python
 # Actions: use verbs
@@ -336,7 +336,7 @@ _internal_helper(), _cache
 
 ---
 
-## 29. Error Handling Standards
+### 29. Error Handling Standards
 
 Define a library-specific base exception. Give errors context and hints.
 
@@ -360,14 +360,14 @@ raise ValidationError(
 
 ---
 
-## 30. Testing Standards
+### 30. Testing Standards
 
-### Requirements
+#### Requirements
 - Coverage target: **85% minimum** (configured via `--cov-fail-under=85`).
 - Every public function needs tests; every bug fix needs a regression test.
 - Cover edge cases: empty input, boundary values, invalid input, error paths.
 
-### Test Properties
+#### Test Properties
 | Property | Rule |
 |----------|------|
 | Independent | No shared mutable state between tests |
@@ -375,7 +375,7 @@ raise ValidationError(
 | Fast | Unit tests must complete in < 100ms |
 | Focused | Test behavior, not implementation details |
 
-### Patterns
+#### Patterns
 
 ```python
 # Parametrize for multiple cases
@@ -399,7 +399,7 @@ def test_api_call(mocker):
 
 ---
 
-## 31. Logging Standards (Library Code)
+### 31. Logging Standards (Library Code)
 
 Library code must **never configure logging** — that is the application's job.
 
@@ -422,7 +422,7 @@ print("debug info")        # uncontrollable output
 
 ---
 
-## 32. Security Standards
+### 32. Security Standards
 
 ```python
 # SQL — always parameterized queries
@@ -445,7 +445,7 @@ Security checks run in CI on every PR: `bandit`, `pip-audit`, `detect-secrets`.
 
 ---
 
-## 33. Dependencies
+### 33. Dependencies
 
 ```toml
 # Good: minimum version constraint
@@ -463,7 +463,7 @@ Minimize dependencies. Every dependency is a supply chain risk and a maintenance
 
 ---
 
-## 34. Performance Guidelines
+### 34. Performance Guidelines
 
 Optimize only after profiling — never speculatively.
 
@@ -494,7 +494,7 @@ Algorithm improvements first → data structure improvements → implementation 
 
 ---
 
-## 35. Deprecation Pattern
+### 35. Deprecation Pattern
 
 ```python
 import warnings
@@ -514,7 +514,7 @@ Follow semantic versioning: deprecate in a MINOR release, remove in the next MAJ
 
 ---
 
-## 36. Red Flags in Python Code
+### 36. Red Flags in Python Code
 
 If you see any of these, stop and fix them before merging:
 
@@ -532,7 +532,7 @@ If you see any of these, stop and fix them before merging:
 
 ---
 
-## 37. API Design: The 90/10 Rule
+### 37. API Design: The 90/10 Rule
 
 Users employ ~10% of a library's functionality 90% of the time. Design accordingly:
 
@@ -562,7 +562,7 @@ raise ValueError(
 
 ---
 
-## 38. Code Complexity Control (McCabe)
+### 38. Code Complexity Control (McCabe)
 
 **McCabe complexity** counts the number of independent execution paths through a function. High complexity = hard to test, hard to understand, high bug risk.
 
@@ -603,7 +603,7 @@ if all([user.is_active, user.has_permission, not user.is_blocked]):
 
 ---
 
-## 39. Docstring Standards
+### 39. Docstring Standards
 
 **Write docstrings first, before implementing the function.** Writing the docstring forces you to clarify what the function should do. If you can't write a clear docstring, the design is not ready.
 
@@ -647,20 +647,20 @@ def my_decorator(func):
 
 ---
 
-## 40. Documentation as a Quality Gate
+### 40. Documentation as a Quality Gate
 
 Documentation is not optional — it is the difference between a library that gets used and one that gets ignored.
 
 - **Treat Sphinx warnings as errors** — run `sphinx-build -W` in CI; broken links and missing docstrings fail the build.
 - **Run docs build on every PR** — documentation issues are bugs; catch them before merge.
 - **Read your own docs** — after building, read through the API reference as if you were a new user. If you can't find something, fix the navigation.
-- The success test: a user can find information, understand usage, and implement functionality **without asking you questions**.
+- The success test: a user can find information, understand the problem, understand usage, and implement functionality **without asking you questions**.
 
 ---
 
-## 41. Security: Additional Patterns
+### 41. Security: Additional Patterns
 
-### Log Injection Prevention
+#### Log Injection Prevention
 
 f-strings preserve newlines — an attacker can forge log entries by injecting `\n` into user input.
 
@@ -672,7 +672,7 @@ logger.info(f"User {user_id} performed: {action}")
 logger.info("User %s performed: %s", user_id, action)
 ```
 
-### YAML Loading
+#### YAML Loading
 
 ```python
 # Bad: yaml.load() can execute arbitrary Python via YAML tags
@@ -682,7 +682,7 @@ data = yaml.load(user_content)
 data = yaml.safe_load(user_content)
 ```
 
-### Input Validation Order
+#### Input Validation Order
 
 Validate sequentially at every entry point — external inputs are untrusted by definition:
 
@@ -695,7 +695,7 @@ Validate sequentially at every entry point — external inputs are untrusted by 
 
 Use allowlists (specify what is valid) rather than denylists (block known bad patterns).
 
-### Secrets in Objects
+#### Secrets in Objects
 
 Override `__repr__` and `__str__` to prevent accidental secret exposure in logs and tracebacks:
 
@@ -722,7 +722,7 @@ def from_env(cls) -> "ApiClient":
     return cls(key)
 ```
 
-### Secure Temporary Files
+#### Secure Temporary Files
 
 ```python
 import tempfile
@@ -737,9 +737,9 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
 ---
 
-## 42. Testing: Coverage and Multi-Environment
+### 42. Testing: Coverage and Multi-Environment
 
-### Coverage: Quality over Quantity
+#### Coverage: Quality over Quantity
 
 High coverage percentage does not guarantee quality tests. You can execute code without asserting correct behavior — coverage shows *what* ran, not *whether it was correct*.
 
@@ -757,7 +757,7 @@ source = ["src/my_library"]
 omit = ["src/my_library/_vendor/*"]
 ```
 
-### Multi-Environment Testing with Tox
+#### Multi-Environment Testing with Tox
 
 Your local environment is one of thousands of environments your library will run in. Test against all supported Python versions and both minimum and latest dependency versions.
 
@@ -776,7 +776,7 @@ commands = pytest
 """
 ```
 
-### Mocking: Use Strategically, Not Excessively
+#### Mocking: Use Strategically, Not Excessively
 
 - The goal is **reliable, maintainable tests** — not maximum mock count.
 - Mock external dependencies (HTTP, databases, filesystems, clocks) that are slow, expensive, or unreliable.
@@ -792,7 +792,7 @@ commands = pytest
 
 ---
 
-## 43. Performance: Benchmark → Profile → Optimize
+### 43. Performance: Benchmark → Profile → Optimize
 
 The correct order is always:
 
@@ -819,9 +819,9 @@ Never optimize speculatively. Never rely on intuition about which code is slow.
 
 ---
 
-## 44. Versioning and Release Discipline
+### 44. Versioning and Release Discipline
 
-### Semantic Versioning Commitment
+#### Semantic Versioning Commitment
 
 SemVer is a **binding commitment** to users. Incorrect versioning erodes trust and breaks downstream applications.
 
@@ -834,7 +834,7 @@ SemVer is a **binding commitment** to users. Incorrect versioning erodes trust a
 - `0.y.z` signals unstable API — breaking changes are expected until `1.0.0`.
 - Pre-release labels (`-alpha.1`, `-beta.2`, `-rc.1`) are ignored by pip unless explicitly requested.
 
-### Dependency Security at Release Time
+#### Dependency Security at Release Time
 
 Run `pip-audit` before every release — don't ship with known vulnerable dependencies.
 
@@ -847,7 +847,7 @@ If you knowingly defer a vulnerability, **document it** with justification and a
 
 ---
 
-## 45. pyproject.toml: Why It Replaced setup.py
+### 45. pyproject.toml: Why It Replaced setup.py
 
 `setup.py` ran arbitrary Python code during installation — a security risk and a source of fragile bootstrapping bugs. `pyproject.toml` is declarative (states *what* the project needs, not *how* to build it), which is:
 
@@ -862,7 +862,7 @@ Key PEPs behind modern packaging:
 
 ---
 
-## 46. Commit Standards
+### 46. Commit Standards
 
 Use **Conventional Commits**: `type(scope): description`.
 

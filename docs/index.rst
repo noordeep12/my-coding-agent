@@ -1,25 +1,25 @@
 my-coding-agent
 ===============
 
-A CLI tool that runs LLM-powered coding agents against a local LLM server.
-The Main Agent always runs. Discovery (``--discover``) and Session Analyzer
-(``--analyze``) are opt-in and disabled by default.
+.. include:: readme.md
+   :parser: myst_parser.sphinx_
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: User Guide
+   :hidden:
 
    readme
 
 .. toctree::
-   :maxdepth: 2
-   :caption: API Reference
+   :maxdepth: 1
+   :caption: Developer Guide
+   :hidden:
 
    api
-
-
-Indices
--------
+   architecture
+   contribute
+   claude
 
 * :ref:`genindex`
 * :ref:`modindex`

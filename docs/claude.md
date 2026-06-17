@@ -1,0 +1,2 @@
+```{include} ../.claude/CLAUDE.md
+```
