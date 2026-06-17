@@ -32,6 +32,12 @@ repos:
         language: system
         stages: [commit-msg]
 
+      - id: commit-body-required
+        name: commit body must explain why
+        entry: python3 .hooks/check_commit_body.py
+        language: system
+        stages: [commit-msg]
+
       - id: commit-refs-footer
         name: "commit message must include a Refs: footer"
         entry: python3 .hooks/check_commit_refs_footer.py

@@ -1,12 +1,16 @@
-# <type>(<scope>): <description>   <-- subject: <=72 chars, imperative, present tense
+# <type>(<scope>): <description>   ← subject: ≤72 chars, imperative, present tense
 #   type: feat|fix|refactor|docs|test|chore|perf|ci
-#   (enforced by the commit-subject-length pre-commit hook)
+#   (enforced by commit-subject-length and commit-subject-format hooks)
 #
-# <blank line above this body>
-# Explain WHY this change is needed — the problem, not the mechanics.
-# Wrap body lines at ~72 chars.
+# <blank line>
+# WHY is this change needed? Write so any reader — future-self, collaborators,
+# AI agents, CI tooling — can understand the purpose in isolation.
+# Explain the problem, constraint, or decision. Not the mechanics.
+# Wrap lines at ~72 chars.
+# (enforced by commit-body-required hook)
 #
-# Footer: reference the GitHub Project Board item this commit addresses.
 # Refs: https://github.com/users/noordeep12/projects/1
+# (or Refs: #<issue-number>)
+# (enforced by commit-refs-footer hook)
 #
 # Enable this template locally:  git config commit.template .gitmessage

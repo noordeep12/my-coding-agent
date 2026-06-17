@@ -864,16 +864,31 @@ Key PEPs behind modern packaging:
 
 ### 46. Commit Standards
 
-Use **Conventional Commits**: `type(scope): description`.
+Every commit must answer four questions so any reader — future-self, collaborators,
+AI agents, CI tooling — can understand it in isolation without tracing code.
 
-- **Subject ≤ 72 characters**, imperative present tense. This is enforced
-  automatically by the `commit-subject-length` pre-commit hook
-  (`.pre-commit-config.yaml`, `commit-msg` stage) — an over-length subject fails
-  the commit.
-- **Types:** `feat` `fix` `refactor` `docs` `test` `chore` `perf` `ci`.
-- **Body** explains *why* the change is needed (the problem), not what changed.
-- **Footer** references the GitHub Project Board item the commit addresses:
-  `Refs: https://github.com/users/noordeep12/projects/1` (or `Refs: #<issue>`).
+| Question | Where | Enforced |
+|----------|-------|---------|
+| **What** changed | Subject: `type(scope): description` | `commit-subject-format`, `commit-subject-length` |
+| **Why** it was needed | Body: non-empty explanation of the problem | `commit-body-required` |
+| **For whom** it matters | Implicit in a complete body written for all readers | — (style, not a separate field) |
+| **Which issue** it addresses | Footer: `Refs: <url or #issue>` | `commit-refs-footer` |
+
+**Subject rules:**
+- Use **Conventional Commits**: `type(scope): description`
+- **≤ 72 characters**, imperative present tense
+- **Types:** `feat` `fix` `refactor` `docs` `test` `chore` `perf` `ci`
+
+**Body rules:**
+- Must be non-empty — explain the *problem or constraint* that motivated the change, not the mechanics
+- Write as if the reader has no other context: future-self after 6 months, a collaborator, an AI agent parsing history
+- Wrap lines at ~72 chars
+
+**Footer rules:**
+- Must include `Refs: https://github.com/users/noordeep12/projects/1` or `Refs: #<issue>`
+
+All four constraints are enforced locally by pre-commit hooks at `commit-msg` stage
+(`.pre-commit-config.yaml`). A commit missing any element is rejected before it lands.
 
 A commit-message template lives at the repository root (`.gitmessage`) and models
 this convention. Enable it locally:
