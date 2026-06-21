@@ -224,6 +224,9 @@ def _stub_run_internals(agent, mocker):
     mocker.patch("my_coding_agent.agent.Path.exists", return_value=True)
     agent._session_log_handler = (None, None, None)
     agent.session_id = "testsession"
+    # Observability recorder is read by run() (start/finish/record_handoff); stub
+    # it so the loop logic is exercised without writing events.jsonl.
+    agent.recorder = mocker.Mock()
 
 
 def test_run_stops_on_finish_reason_stop(silent_logger, mocker):

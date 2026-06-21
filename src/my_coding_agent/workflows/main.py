@@ -52,6 +52,10 @@ def _system_prompt(tools: list) -> str:
         "You are a helpful coding assistant. Use tools when needed. "
         "Use absolute paths when working with files. Running on macOS.\n\n"
         f"Available tools:\n{tool_docs}\n\n"
+        "Every tool returns a JSON object: "
+        '{"schema_version", "tool", "ok", "output", "error", "metadata"}. '
+        "Check `ok` to tell success from failure: when true, read `output`; when "
+        "false, read `error` (and `metadata`, e.g. `exit_code`) to recover.\n\n"
         "Workspace:\n"
         f"  path     : {os.getcwd()}\n"
         f"  contents : {os.listdir(os.getcwd())}\n"

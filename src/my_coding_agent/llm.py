@@ -85,6 +85,8 @@ class LLM:
         self._session_log_path: str | None = (
             None  # set by Agent after session dir is created
         )
+        # Optional observability recorder; set by Agent. None → no capture.
+        self._recorder: Any = None
         self.llm_calls: list[dict] = []  # one entry per chat_completion call, in order
         self._before_hook: Callable[[str, dict], dict | None] = before_tool_call or (
             lambda name, args: args
@@ -253,11 +255,13 @@ class LLM:
         body: dict = {"model": self.model, "messages": messages, "tools": tools or []}
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        _t0 = time.monotonic()
         resp = self._request_with_retry(
             "POST",
             self.api_url + "/chat/completions",
             json=body,
         )
+        _latency = time.monotonic() - _t0
         self.logger.api(
             "← %d (%d bytes)  [call #%d, kind=%s]",
             resp.status_code,
@@ -286,6 +290,19 @@ class LLM:
                 "total": usage.get("total_tokens", 0),
             }
         )
+        # Observability capture (separate from logging). The single choke point
+        # for every call kind: records latency, tokens, the input conversation
+        # snapshot, and the response. No-op when no recorder is attached.
+        if self._recorder is not None:
+            self._recorder.record_llm_call(
+                kind=kind,
+                call=call_num,
+                latency_s=_latency,
+                usage=usage,
+                messages=messages,
+                context_window=self.context_window,
+                response_data=data,
+            )
         self.logger.api(
             "call #%d [%s] usage — prompt: %s, completion: %s, total: %s",
             call_num,

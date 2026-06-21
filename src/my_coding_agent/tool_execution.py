@@ -10,6 +10,7 @@ artifacts with an LLM-generated summary returned to the model.
 
 import inspect
 import json
+import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +37,89 @@ _RECOVERABLE_EXCEPTIONS = (
 
 # Max retries for the inner arg-correction loop before falling back to error result.
 _MAX_ARG_RETRIES: int = 3
+
+_SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL | re.IGNORECASE)
+_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
+
+
+def _extract_summary(content: str) -> str:
+    """Return only the summary, dropping any model thinking/preamble.
+
+    Prefers the explicit ``<summary>...</summary>`` block the prompt asks for;
+    otherwise strips ``<think>...</think>`` reasoning blocks and returns the rest.
+    """
+    match = _SUMMARY_RE.search(content)
+    if match:
+        return match.group(1).strip()
+    return _THINK_RE.sub("", content).strip()
+
+
+# ── canonical tool-output schema ─────────────────────────────────────────────
+# Every tool result that reaches the agent — including auto-triggered paths
+# (artifact summaries, skips, parse/arg errors) — is normalized into this single
+# envelope so success/failure is uniform and machine-checkable, modeled on bash's
+# ``ok``/``exit_code``. ``output`` carries the raw payload (stdout / file content /
+# report / summary); tool-specific extras go in the flexible ``metadata`` bag.
+TOOL_SCHEMA_VERSION = 1
+_TOOL_RESULT_KEYS = ("schema_version", "tool", "ok", "output", "error", "metadata")
+_ERROR_PREFIX_RE = re.compile(r"^Error\b")
+
+
+def build_tool_result(
+    tool: str,
+    ok: bool,
+    output: str = "",
+    error: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a canonical tool-result envelope (the agent-facing contract)."""
+    return {
+        "schema_version": TOOL_SCHEMA_VERSION,
+        "tool": tool,
+        "ok": bool(ok),
+        "output": output if isinstance(output, str) else str(output),
+        "error": error,
+        "metadata": metadata or {},
+    }
+
+
+def validate_tool_result(result: Any) -> dict[str, Any]:
+    """Enforce the schema; raise ``ValueError`` if a result does not conform."""
+    if not isinstance(result, dict):
+        raise ValueError(f"tool result must be a dict, got {type(result).__name__}")
+    missing = [k for k in _TOOL_RESULT_KEYS if k not in result]
+    if missing:
+        raise ValueError(f"tool result missing keys: {missing}")
+    if not isinstance(result["ok"], bool):
+        raise ValueError("tool result 'ok' must be a bool")
+    if not isinstance(result["output"], str):
+        raise ValueError("tool result 'output' must be a str")
+    if result["error"] is not None and not isinstance(result["error"], str):
+        raise ValueError("tool result 'error' must be a str or None")
+    if not isinstance(result["metadata"], dict):
+        raise ValueError("tool result 'metadata' must be a dict")
+    return result
+
+
+def _maybe_json(text: Any) -> Any:
+    """Parse ``text`` as JSON, returning None when it is not JSON."""
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _structured_envelope(
+    tool: str, data: dict[str, Any], output: str, metadata: dict[str, Any]
+) -> dict[str, Any]:
+    """Build an envelope from a bash-style ``{ok, exit_code, stderr}`` result."""
+    ok = bool(data.get("ok", True))
+    for key in ("exit_code", "stderr"):
+        if key in data:
+            metadata[key] = data[key]
+    error = None if ok else (data.get("stderr") or "command failed")
+    return build_tool_result(tool, ok, output, error, metadata)
+
 
 # Known parameter aliases: maps wrong arg name → correct arg name per tool.
 # Handles recurring model hallucinations
@@ -115,13 +199,21 @@ class ToolExecutor:
     def _summarize_artifact(
         self, artifact: dict, func_name: str, tool_call_id: str
     ) -> str:
+        self.logger.tool(
+            "%s → %s: artifact %s chars (summarizing for model)",
+            tool_call_id,
+            func_name,
+            len(json.dumps(artifact)),
+        )
         prompt = (
             "/no_think\n"
             f"Summarize the following `{func_name}` tool output concisely "
             "for an AI coding agent. "
             "Include: exit status, key findings, any errors, and what the "
             "agent needs to know to continue its task. "
-            "Be factual and brief — 3 to 8 sentences max.\n\n"
+            "Be factual and brief — 3 to 8 sentences max.\n"
+            "Output ONLY the summary itself — no reasoning, analysis, planning, "
+            "or preamble. Wrap the summary in <summary>...</summary> tags.\n\n"
             f"Output:\n{json.dumps(artifact, indent=2)[:12_000]}"
         )
         try:
@@ -131,7 +223,7 @@ class ToolExecutor:
                 kind="tool_output_summarizer",
                 max_tokens=512,
             )
-            summary = extract_message(resp).get("content") or ""
+            summary = _extract_summary(extract_message(resp).get("content") or "")
         except Exception as exc:
             self.logger.warning("artifact summarization failed: %s", exc)
             if "content" in artifact:
@@ -151,7 +243,7 @@ class ToolExecutor:
                     }
                 )
         return summary.strip() + (
-            f"\n[Full output stored as artifact — use "
+            f"\n\n[Full output stored as artifact — use "
             f'read_tool_artifact(tool_call_id="{tool_call_id}") ONLY if the '
             "summary above is insufficient to proceed. "
             "Avoid calling it unless strictly necessary.]"
@@ -389,29 +481,18 @@ class ToolExecutor:
         tool_call: dict,
         conversation: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
-    ) -> tuple[str, str, dict]:
+    ) -> tuple[dict, str, dict]:
         """Dispatch func_name with arg-correction retries.
 
-        Returns (result, status, record).
+        Returns (result_envelope, status, record). The envelope is the canonical
+        tool-output schema (see :func:`build_tool_result`).
         """
         if not hasattr(registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
-            return (
-                err,
-                "error",
-                {
-                    "name": func_name,
-                    "args": args,
-                    "ok": False,
-                    "error": f"tool '{func_name}' not found",
-                    "tool_call_id": tool_call_id,
-                    "artifact": False,
-                    "truncated": False,
-                    "status": "error",
-                },
-            )
+            env = build_tool_result(func_name, False, "", err, {"reason": "not_found"})
+            return env, "error", self._error_record(func_name, args, tool_call_id, err)
 
         sig = inspect.signature(getattr(ToolsRegistry, func_name))
 
@@ -421,19 +502,22 @@ class ToolExecutor:
                     registry, func_name, args, tool_call_id
                 )
                 self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
-                return (
-                    result,
-                    "success",
-                    {
-                        "name": func_name,
-                        "args": args,
-                        "ok": True,
-                        "tool_call_id": tool_call_id,
-                        "artifact": is_artifact,
-                        "truncated": is_truncated,
-                        "status": "success",
-                    },
+                env = self._result_envelope(
+                    func_name, result, is_artifact, is_truncated, tool_call_id
                 )
+                status = "success" if env["ok"] else "error"
+                record = {
+                    "name": func_name,
+                    "args": args,
+                    "ok": env["ok"],
+                    "tool_call_id": tool_call_id,
+                    "artifact": is_artifact,
+                    "truncated": is_truncated,
+                    "status": status,
+                }
+                if not env["ok"]:
+                    record["error"] = env["error"] or "tool reported failure"
+                return env, status, record
 
             except (
                 TypeError
@@ -468,19 +552,15 @@ class ToolExecutor:
                         f"{attempt + 1} attempt(s): {wrong_args_exc}. "
                         f"Expected: {func_name}{sig}"
                     )
+                    env = build_tool_result(
+                        func_name, False, "", err, {"reason": "wrong_args"}
+                    )
                     return (
-                        err,
+                        env,
                         "error",
-                        {
-                            "name": func_name,
-                            "args": args,
-                            "ok": False,
-                            "error": str(wrong_args_exc),
-                            "tool_call_id": tool_call_id,
-                            "artifact": False,
-                            "truncated": False,
-                            "status": "error",
-                        },
+                        self._error_record(
+                            func_name, args, tool_call_id, str(wrong_args_exc)
+                        ),
                     )
                 args = corrected_args
 
@@ -497,24 +577,78 @@ class ToolExecutor:
                     raise
                 self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
+                env = build_tool_result(func_name, False, "", err, {"reason": "raised"})
                 return (
-                    err,
+                    env,
                     "error",
-                    {
-                        "name": func_name,
-                        "args": args,
-                        "ok": False,
-                        "error": str(exc),
-                        "tool_call_id": tool_call_id,
-                        "artifact": False,
-                        "truncated": False,
-                        "status": "error",
-                    },
+                    self._error_record(func_name, args, tool_call_id, str(exc)),
                 )
 
         # Unreachable: the final iteration always returns (success, or an error result
         # once retries are exhausted). Present so mypy can prove the function returns.
         raise AssertionError("invoke_tool retry loop exited without returning")
+
+    @staticmethod
+    def _error_record(
+        func_name: str, args: dict, tool_call_id: str, error: str
+    ) -> dict[str, Any]:
+        """Build a failure call-record (for session_data.json / observability)."""
+        return {
+            "name": func_name,
+            "args": args,
+            "ok": False,
+            "error": error,
+            "tool_call_id": tool_call_id,
+            "artifact": False,
+            "truncated": False,
+            "status": "error",
+        }
+
+    def _result_envelope(
+        self,
+        tool: str,
+        result: str,
+        is_artifact: bool,
+        is_truncated: bool,
+        tool_call_id: str,
+    ) -> dict[str, Any]:
+        """Normalize a tool's raw return into the canonical schema envelope.
+
+        Detects failure via structured returns (bash-family ``ok``/``exit_code``,
+        or the stored artifact for summarized bash output) and the ``Error…``
+        string convention the file/web tools use, defaulting to success otherwise.
+        """
+        metadata: dict[str, Any] = {}
+        if is_truncated:
+            metadata["truncated"] = True
+
+        # bash-family: structured JSON carrying its own ok/exit_code.
+        parsed = _maybe_json(result)
+        if isinstance(parsed, dict) and "ok" in parsed:
+            output = parsed.get("stdout", "")
+            return _structured_envelope(tool, parsed, output, metadata)
+
+        # bash large output: summarized; the outcome lives in the stored artifact.
+        if is_artifact:
+            metadata.update(
+                {"artifact": True, "summarized": True, "tool_call_id": tool_call_id}
+            )
+            artifact = self.tool_artifacts.get(tool_call_id)
+            if isinstance(artifact, dict):
+                return _structured_envelope(tool, artifact, result, metadata)
+            return build_tool_result(tool, True, result, None, metadata)
+
+        # error-string convention used by the file/web/artifact tools.
+        if isinstance(result, str) and _ERROR_PREFIX_RE.match(result):
+            return build_tool_result(tool, False, "", result, metadata)
+
+        # default: plain successful output.
+        return build_tool_result(tool, True, result, None, metadata)
+
+    def _finalize_result(self, env: dict[str, Any]) -> str:
+        """Validate the envelope and serialize it to the agent-facing JSON string."""
+        validate_tool_result(env)
+        return json.dumps(env, default=str)
 
     def execute_tool_calls(
         self,
@@ -545,11 +679,18 @@ class ToolExecutor:
             # before invoking any tools.
             tool_call_id, func_name, args, error = self.parse_tool_call(tool_call)
             if error:
+                env = build_tool_result(
+                    func_name or "<unknown>",
+                    False,
+                    "",
+                    error,
+                    {"reason": "parse_error"},
+                )
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call_id,
-                        "content": error,
+                        "content": self._finalize_result(env),
                         "status": "error",
                     }
                 )
@@ -574,11 +715,18 @@ class ToolExecutor:
             # None to skip the call.
             args = self.before_tool_call(tool_call_id, func_name, args)
             if args is None:
+                env = build_tool_result(
+                    func_name,
+                    False,
+                    "(tool call skipped)",
+                    "skipped",
+                    {"reason": "skipped"},
+                )
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call_id,
-                        "content": "(tool call skipped)",
+                        "content": self._finalize_result(env),
                         "status": "skipped",
                     }
                 )
@@ -599,7 +747,7 @@ class ToolExecutor:
             # Invoke the tool with retries for argument correction, and handle
             # any exceptions.
             self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
-            result, status, record = self.invoke_tool(
+            env, status, record = self.invoke_tool(
                 tool_call_id,
                 func_name,
                 args,
@@ -609,13 +757,15 @@ class ToolExecutor:
                 tools,
             )
 
-            # Post-process the result before sending it back to the LLM.
-            result = self.after_tool_call(tool_call_id, func_name, args, result)
+            # Serialize to the canonical schema, then post-process before the LLM.
+            content = self.after_tool_call(
+                tool_call_id, func_name, args, self._finalize_result(env)
+            )
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call_id,
-                    "content": result,
+                    "content": content,
                     "status": status,
                 }
             )

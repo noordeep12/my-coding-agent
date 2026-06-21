@@ -358,9 +358,63 @@ def test_invoke_tool_success(bare_executor, tmp_path):
     result, status, record = bare_executor.invoke_tool(
         "c1", "read_file", {"file_path": str(f)}, reg, {}, [], []
     )
-    assert result == "hello"
+    assert result["ok"] is True
+    assert result["output"] == "hello"
+    assert result["tool"] == "read_file"
     assert status == "success"
     assert record["ok"] is True
+
+
+def test_invoke_tool_bash_success_envelope(bare_executor):
+    """bash structured JSON maps into the schema with ok / exit_code metadata."""
+    bare_executor.client._session_log_path = None
+
+    class _Reg(ToolsRegistry):
+        def bash(self, command: str, timeout: int = 60):
+            return json.dumps(
+                {"stdout": "hi", "stderr": "", "exit_code": 0, "ok": True}
+            )
+
+    env, status, record = bare_executor.invoke_tool(
+        "c1", "bash", {"command": "echo hi"}, _Reg(), {}, [], []
+    )
+    assert env["ok"] is True
+    assert env["output"] == "hi"
+    assert env["metadata"]["exit_code"] == 0
+    assert status == "success"
+    assert record["ok"] is True
+
+
+def test_invoke_tool_bash_failure_envelope(bare_executor):
+    """A non-zero exit (returned as data, not raised) becomes a schema failure."""
+    bare_executor.client._session_log_path = None
+
+    class _Reg(ToolsRegistry):
+        def bash(self, command: str, timeout: int = 60):
+            return json.dumps(
+                {"stdout": "", "stderr": "boom", "exit_code": 1, "ok": False}
+            )
+
+    env, status, record = bare_executor.invoke_tool(
+        "c1", "bash", {"command": "false"}, _Reg(), {}, [], []
+    )
+    assert env["ok"] is False
+    assert env["error"] == "boom"
+    assert env["metadata"]["exit_code"] == 1
+    assert status == "error"
+    assert record["ok"] is False
+
+
+def test_invoke_tool_error_string_becomes_failure(bare_executor, tmp_path):
+    """A tool that returns an 'Error…' string (no exception) is flagged failure."""
+    bare_executor.client._session_log_path = None
+    reg = ToolsRegistry(base_dir=str(tmp_path))
+    env, status, _ = bare_executor.invoke_tool(
+        "c1", "read_file", {"file_path": str(tmp_path / "nope.txt")}, reg, {}, [], []
+    )
+    assert env["ok"] is False
+    assert "not found" in env["error"]
+    assert status == "error"
 
 
 def test_invoke_tool_unknown_tool_returns_error(bare_executor):
@@ -369,7 +423,8 @@ def test_invoke_tool_unknown_tool_returns_error(bare_executor):
         "c1", "does_not_exist", {}, reg, {}, [], []
     )
     assert status == "error"
-    assert "not found" in result
+    assert result["ok"] is False
+    assert "not found" in result["error"]
     assert record["ok"] is False
 
 
@@ -381,7 +436,8 @@ def test_invoke_tool_recoverable_exception_returns_error(bare_executor):
         "c1", "read_file", {"file_path": "../../../etc/passwd"}, reg, {}, [], []
     )
     assert status == "error"
-    assert "PathTraversalError" in result
+    assert result["ok"] is False
+    assert "PathTraversalError" in result["error"]
     assert record["ok"] is False
 
 
@@ -418,7 +474,7 @@ def test_invoke_tool_corrects_wrong_args_then_succeeds(bare_executor, mocker):
         "c1", "read_file", {"wrong": "x"}, _Reg(), {}, [], []
     )
     assert status == "success"
-    assert result == "read ok"
+    assert result["output"] == "read ok"
 
 
 # --- execute_tool_calls (full flow) ------------------------------------------
@@ -446,7 +502,11 @@ def test_execute_tool_calls_success_flow(bare_executor):
     assert len(messages) == 1
     assert records[0]["name"] == "read_file"
     assert records[0]["ok"] is True
-    assert "[project]" in messages[0]["content"]
+    # content is now the canonical schema envelope (JSON)
+    envelope = json.loads(messages[0]["content"])
+    assert envelope["ok"] is True
+    assert envelope["tool"] == "read_file"
+    assert "[project]" in envelope["output"]
 
 
 def test_execute_tool_calls_skips_on_before_hook_none(bare_executor):
