@@ -24,6 +24,7 @@ dependencies = [
 
 [project.scripts]
 my-coding-agent = "my_coding_agent.workflows.main:main"
+my-coding-agent-viewer = "my_coding_agent.observability.report:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/my_coding_agent"]
@@ -54,6 +55,11 @@ select = ["E", "F", "I", "C901"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+# report.py embeds an HTML/CSS/JS template as a string literal; wrapping its
+# markup lines to 88 cols would harm readability, not help it.
+"src/my_coding_agent/observability/report.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

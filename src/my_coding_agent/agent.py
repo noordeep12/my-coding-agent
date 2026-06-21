@@ -23,6 +23,8 @@ from .logger import (
     print_banner,
     print_run_summary,
 )
+from .observability import Recorder, current_session_id
+from .observability.recorder import current_recorder
 from .tool_execution import ToolExecutor
 from .tool_routing import ToolRouter
 from .utils import extract_finish_reason, extract_message, extract_usage
@@ -90,9 +92,23 @@ class Agent:
             before_tool_call: Optional pre-dispatch hook (see ``LLM``).
             after_tool_call: Optional post-dispatch hook (see ``LLM``).
         """
+        self.session_id = uuid.uuid4().hex[:12]
+        self.started_at = datetime.now().isoformat(timespec="seconds")
+        _session_dir = Path(".my_coding_agent") / self.session_id
+        # Observability recorder — a separate capture layer (the logger package is
+        # untouched). It reads the parent session id from the contextvar so a
+        # delegated subagent links back to its parent in the session tree.
+        self.recorder = Recorder(
+            self.session_id, _session_dir, parent_session_id=current_session_id.get()
+        )
+        # Default the tool hooks to the recorder when the caller passed none, so
+        # tool input/output and latency are captured with no extra wiring.
+        _before = before_tool_call or self.recorder.before_tool
+        _after = after_tool_call or self.recorder.after_tool
         # Hold the LLM client via composition (no longer subclass it). The
         # routing/execution collaborators hold this same client instance.
-        self.llm = LLM(api_url, api_key, model, before_tool_call, after_tool_call)
+        self.llm = LLM(api_url, api_key, model, _before, _after)
+        self.llm._recorder = self.recorder
         self._router = ToolRouter(self.llm)
         self._executor = ToolExecutor(self.llm)
         self.label = label
@@ -100,9 +116,7 @@ class Agent:
         self.tools = tools or []
         self.context_reset_threshold = context_reset_threshold
         self.logger = get_logger(self.__class__.__name__)
-        self.session_id = uuid.uuid4().hex[:12]
-        self.started_at = datetime.now().isoformat(timespec="seconds")
-        _log_path = Path(".my_coding_agent") / self.session_id / "stderr.log"
+        _log_path = _session_dir / "stderr.log"
         # The executor reads the session-log path off the client to hint where
         # full truncated output lives; set it on the held client.
         self.llm._session_log_path = str(_log_path)
@@ -304,6 +318,13 @@ class Agent:
                 ),
             }
         )
+        self.recorder.record_handoff(
+            self.step_num,
+            ctx_tokens,
+            ctx_pct * 100,
+            handoff.content,
+            handoff.path or "",
+        )
         self.stop_reason = "context_reset"
         self.elapsed_seconds = time.monotonic() - t_start
         self._save_session_data(max_steps)
@@ -378,6 +399,11 @@ class Agent:
         )
         self._continuation_result = []
         t_start = time.monotonic()
+        # Record the session start and publish our id so a delegated subagent
+        # links back to us as its parent. The token is reset in ``finally``.
+        self.recorder.start(self.label, self.llm.model, self.llm.context_window)
+        _ctx_token = current_session_id.set(self.session_id)
+        _rec_token = current_recorder.set(self.recorder)
 
         # Emit the startup banner here (not in __init__) so construction stays
         # network-free: reading context_window now resolves the real value.
@@ -463,4 +489,9 @@ class Agent:
                 self._save_session_data(max_steps)
                 self._print_summary(max_steps)
                 detach_session_log(self._session_log_handler)
+            self.recorder.finish(
+                self.stop_reason, self.step_num, round(self.elapsed_seconds, 3)
+            )
+            current_session_id.reset(_ctx_token)
+            current_recorder.reset(_rec_token)
         return self.messages

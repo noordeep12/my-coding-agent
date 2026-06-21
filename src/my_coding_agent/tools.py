@@ -18,6 +18,7 @@ import html2text
 import httpx
 
 from .exceptions import PathTraversalError, ToolDefinitionError
+from .observability.recorder import current_recorder
 
 
 def _parse_tags_section(docstring: str) -> list[str]:
@@ -303,6 +304,10 @@ class ToolsRegistry:
             label="SubAgent",
         )
         messages = agent.run(max_steps=5)
+        # Link this subagent to the delegate tool call in the parent's trace tree.
+        parent_recorder = current_recorder.get()
+        if parent_recorder is not None:
+            parent_recorder.note_delegate_child(agent.session_id)
         for msg in reversed(messages):
             if msg.get("role") == "assistant" and msg.get("content"):
                 content: str = msg["content"]

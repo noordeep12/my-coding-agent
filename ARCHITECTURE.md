@@ -23,6 +23,13 @@ src/my_coding_agent/
 │   ├── session_log.py      ← TeeStream + attach/detach_session_log
 │   ├── banner.py           ← print_banner renderer + shared _git_branch
 │   └── summary.py          ← print_run_summary renderer (+ token chart)
+├── observability/          ← Structured session capture + HTML tree viewer (package)
+│   ├── recorder.py         ← Recorder: append-as-you-go events.jsonl writer + contextvars
+│   ├── events.py           ← Typed schema (Session/LLMCall/ToolCall/Handoff/TreeNode)
+│   ├── reader.py           ← load_session(s) + derived analytical views
+│   ├── tree.py             ← build_trace_tree: reconstruct the hierarchical pipeline tree
+│   ├── pricing.py          ← Per-model token→USD table (defaults free for local models)
+│   └── report.py           ← Generates a self-contained HTML/JS viewer (no deps, offline)
 └── utils.py                ← Thin response parsing helpers
 ```
 
@@ -50,8 +57,9 @@ Holds the LLM client and selects the relevant tool subset for a message via **`r
 Holds the LLM client AND owns the `tool_artifacts` store (execution state). Runs every tool call requested in an LLM response:
 
 - **`execute_tool_calls(message, conversation, tools)`** — iterates tool-call requests, dispatches each through `invoke_tool`, collects results back as `role: tool` messages. The `conversation` and `tools` are passed in explicitly (not read off the client) so the executor stays decoupled from the agent loop's state.
-- **`invoke_tool(...)`** — calls the tool function with up to `_MAX_ARG_RETRIES` retries; on `TypeError` it asks the LLM to correct the arguments (`tool_arg_correction` call) before retrying. Recoverable exceptions are returned as error strings; non-recoverable ones re-raise.
-- **Artifact separation** — when a tool returns a `(None, dict)` tuple (bash output or file content above `ARTIFACT_THRESHOLD`), the full dict is stored in `self.tool_artifacts[tool_call_id]` and an LLM-generated summary is sent back to the model instead. The full artifact is retrievable via the `read_tool_artifact` tool.
+- **`invoke_tool(...)`** — calls the tool function with up to `_MAX_ARG_RETRIES` retries; on `TypeError` it asks the LLM to correct the arguments (`tool_arg_correction` call) before retrying. Recoverable exceptions become `ok:false` results; non-recoverable ones re-raise. It returns the canonical envelope (below), not a raw string.
+- **Canonical tool-output schema** — this is the single choke point that enforces a uniform contract on *every* result that reaches the agent (direct results, summarized artifacts, skips, parse/arg errors, raised exceptions). Each is normalized via `build_tool_result()` into one envelope — `{schema_version, tool, ok, output, error, metadata}`, modeled on bash's `ok`/`exit_code` — and checked with `validate_tool_result()` before being serialized to JSON for the model. `output` carries the raw payload (stdout / file content / report / summary); tool-specific extras (`exit_code`, `stderr`, `file_path`, `artifact`, `truncated`, `summarized`, …) live in the flexible `metadata` bag. Failure is detected from bash-style `ok`/`exit_code`, the stored artifact, the `Error…` string convention, or an exception, giving the agent **and** the viewer one consistent success/failure signal.
+- **Artifact separation** — when a tool returns a `(None, dict)` tuple (bash output above `ARTIFACT_THRESHOLD`), the full dict is stored in `self.tool_artifacts[tool_call_id]` and an LLM-generated summary (kind `tool_output_summarizer`) is sent back instead. The summarizer prompt asks the model to wrap its answer in `<summary>…</summary>`, which `_extract_summary` extracts (falling back to stripping `<think>` blocks) so reasoning never leaks into the result. The full artifact is retrievable via the `read_tool_artifact` tool.
 - **Arg aliases** — a static map remaps common model hallucinations (e.g. `bash(path=)` → `bash(command=)`) before dispatch; unknown kwargs are stripped to the tool's signature.
 
 ### `Agent` (`agent.py`)
@@ -84,12 +92,14 @@ A plain class whose methods are the tools the LLM can call:
 
 | Tool | Purpose |
 |---|---|
-| `bash(command)` | Runs a shell command; returns JSON `{stdout, stderr, exit_code, ok}` |
+| `bash(command)` | Runs a shell command; reports `stdout, stderr, exit_code, ok` |
 | `read_file(file_path)` | Reads a file; large files become artifacts |
 | `write_file(file_path, content)` | Writes a file, creating parent dirs |
 | `read_article(url)` | Fetches a URL and converts HTML → markdown |
 | `read_tool_artifact(tool_call_id)` | Retrieves a previously stored large output |
 | `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task with the given context; returns its final report |
+
+Each tool returns its natural value (a string, or bash's `{stdout, stderr, exit_code, ok}`); the **`ToolExecutor` normalizes all of them into the canonical tool-output envelope** (see above) before the agent sees them — bash's fields fold into `output`/`metadata`, plain strings become `output`. Tools therefore stay simple and need not know about the schema.
 
 `delegate` recursively spawns a child `Agent` (read-only, `max_steps=5`, the `delegate` tool itself removed from its toolset), so the main agent can offload focused exploration without crowding its own context.
 
@@ -104,6 +114,64 @@ Three independent concerns are split into focused submodules; the package
 - **`session_log.py`** — `attach_session_log(path)` replaces `sys.stderr` with a `_TeeStream` that simultaneously writes to the original stderr, a plain log file, and an ANSI-colored log file under `.my_coding_agent/<session_id>/`; `detach_session_log` restores it.
 - **`banner.py`** — `print_banner` renders the rich box-drawn startup banner (ASCII logo + run-metadata panel), plus the shared `_git_branch` helper used by both renderers.
 - **`summary.py`** — `print_run_summary` renders the rich box-drawn end-of-run summary including a `plotext` token consumption chart, tool-call and context-reset sections; imports `_git_branch` from `banner`.
+
+### `Observability` (`observability/` package)
+
+A separate **capture layer** plus a **viewer**, added so a run can be audited
+post-session without reading flat logs. It is independent of `logger/` (which is
+left untouched) and additive to the existing `session_data.json`.
+
+- **`recorder.py`** — the `Recorder` writes a per-session `events.jsonl`
+  (newline-delimited, flushed per row, so a crashed run still leaves a
+  diagnosable trail). Wired in at four points: a single **LLM choke point** in
+  `llm.chat_completion` (the `Agent` sets `self.llm._recorder`) records every call
+  kind with latency, tokens, the input conversation snapshot — kept for **all**
+  chat-completion kinds (including the ancillary `tool_router` /
+  `tool_output_summarizer` / `tool_arg_correction`) via `FULL_PAYLOAD_KINDS` so
+  each call's input/output is inspectable like the main call — and the
+  response; the existing **`before_tool_call`/`after_tool_call` hooks** (which the
+  `Agent` defaults to `Recorder.before_tool`/`after_tool`) capture each tool's
+  full untruncated I/O and latency; `ToolRouter._finish_route` calls
+  `record_router` with the **selected tool subset** per step; and `record_handoff`
+  captures context-reset events. Two `ContextVar`s set in `Agent.run`
+  (`current_session_id`, `current_recorder`) let a delegated subagent record its
+  `parent_session_id` and let `delegate` attach the spawned child's id to its tool
+  call (`note_delegate_child`) for an exact parent→child link.
+- **`events.py`** — the reader-side typed schema (`Session`, `LLMCall`,
+  `ToolCall`, `Handoff`) plus `TreeNode`, the node type for the trace tree.
+- **`reader.py`** — `load_session` / `load_sessions_by_id` / `load_all_sessions`
+  parse `events.jsonl` (joining `ok`/`status` back from `session_data.json`) and
+  derive views: context-growth series, message diffs, cost/latency bottlenecks,
+  loop/duplicate detection, and extracted code blocks.
+- **`tree.py`** — `build_trace_tree` reconstructs the hierarchical-by-step
+  pipeline tree from the event timeline: `Agent` → steps → `Agent._context_preflight`
+  / `ToolRouter.route_tools` / `LLM.chat_completion` (its reasoning/content fold
+  into `output`) / one `ToolExecutor.invoke_tool: <name>` per tool call, nesting
+  delegated subagents under their `delegate` ToolExecutor. **Titles are the real
+  `Class.method` executed** (so the tree reads as the call stack), and the
+  **ancillary LLM calls are nested as their own `LLM.chat_completion` nodes** —
+  the routing fallback under `ToolRouter.route_tools`, and
+  `ToolExecutor._summarize_artifact` / `._correct_args` under their tool — each
+  with full input/output, but excluded from the agent's context-window accounting
+  since they run on their own ephemeral conversation. Each node carries
+  `status`/`message`/`input`/`output` metadata; a tool is flagged **failure** (red
+  error logo) when it raises *or* its result envelope reports `ok:false`
+  (`_result_failed`), so bash-style failures show like any other. `annotate_context`
+  adds a per-node context-window bar (`ctx`: history + tokens added/removed +
+  owning agent name/id, re-anchored to each call's exact `prompt_tokens`).
+- **`pricing.py`** — an editable `{model: (in_$, out_$)}` table; local models
+  resolve to `$0.00`.
+- **`report.py`** — `write_report` renders the sessions (via `reader`/`tree`) into
+  a single self-contained `.my_coding_agent/viewer.html`: inline CSS + vanilla JS
+  with the trace data embedded as JSON (the `</script>` close is escaped), so it
+  works offline with no server and no dependencies. The page is a two-pane viewer
+  — a collapsible, searchable trace tree (left) and the selected object's metadata
+  (right). A synthetic **Session Overview** node (top of the tree) surfaces the
+  derived views from `reader` — context-growth chart, per-step bottlenecks table,
+  and loop/redundancy list — while the sticky header shows at-a-glance cost / token
+  / failure chips; each LLM/tool row shows a tokens-added badge, the right pane has
+  a **CONTEXT WINDOW** section, and every input/output box has a copy button.
+  Exposed as the `my-coding-agent-viewer` console script.
 
 ---
 
@@ -137,6 +205,7 @@ Each run creates `.my_coding_agent/<session_id>/`:
 | `stderr.log` | Plain-text log of the full run |
 | `stderr_colored.log` | Same log with ANSI color codes |
 | `session_data.json` | Metrics, tool records, LLM call log, stop reason |
+| `events.jsonl` | Structured observability event stream (LLM calls, tool I/O, handoffs, agent links) — read by the viewer |
 | `tool_artifacts.json` | Full outputs for any call that triggered artifact separation |
 | `session_analysis.md` | Post-run analysis report (if --analyze was used) |
 

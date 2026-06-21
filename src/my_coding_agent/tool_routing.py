@@ -63,7 +63,7 @@ class ToolRouter:
         Baseline tools (bash, read_file, read_tool_artifact) are always included.
         """
         if not all_tools:
-            return all_tools
+            return self._finish_route(message, all_tools, "empty")
 
         text = message.lower()
         baseline = [t for t in all_tools if t["function"]["name"] in _BASELINE_TOOLS]
@@ -77,7 +77,7 @@ class ToolRouter:
             self.logger.tool(
                 "router phase-1 → %s (no non-baseline tools, skipped)", names
             )
-            return all_tools
+            return self._finish_route(message, all_tools, "no_nonbaseline")
 
         # Phase 1: keyword match on tags — check non-baseline tools first.
         keyword_matched = [
@@ -88,7 +88,7 @@ class ToolRouter:
             selected = baseline + keyword_matched
             names = [t["function"]["name"] for t in selected]
             self.logger.tool("router phase-1 → %s", names)
-            return selected
+            return self._finish_route(message, selected, "phase1_keyword")
 
         # Phase 1b: check if the message matches any baseline tool's tags.
         # If so, the task clearly needs only baseline tools — skip the LLM call.
@@ -100,7 +100,7 @@ class ToolRouter:
             self.logger.tool(
                 "router phase-1 → %s (baseline tag match, skipped phase-2)", names
             )
-            return all_tools
+            return self._finish_route(message, all_tools, "phase1_baseline")
 
         # Phase 2: LLM fallback — only reached when zero tag matches found anywhere.
         all_names = [t["function"]["name"] for t in all_tools]
@@ -147,4 +147,17 @@ class ToolRouter:
         self.logger.tool(
             "router phase-2 → %s", [t["function"]["name"] for t in selected]
         )
+        return self._finish_route(message, selected, "phase2_llm")
+
+    def _finish_route(
+        self, signal: str, selected: list[dict[str, Any]], phase: str
+    ) -> list[dict[str, Any]]:
+        """Record the selected tool subset (if a recorder is attached) and return it."""
+        recorder = getattr(self.client, "_recorder", None)
+        if recorder is not None:
+            recorder.record_router(
+                signal=signal,
+                selected=[t["function"]["name"] for t in selected],
+                phase=phase,
+            )
         return selected
