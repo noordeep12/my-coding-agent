@@ -17,7 +17,7 @@ src/my_coding_agent/
 ├── tool_execution/         ← ToolExecutor + its pure helpers (package)
 │   ├── __init__.py         ← ToolExecutor: orchestration, hooks, dispatch + retry
 │   ├── result_schema.py    ← Canonical envelope: build/validate/normalize (pure)
-│   ├── args.py             ← Tool-call parse + alias remap + kwarg strip (pure)
+│   ├── args.py             ← Tool-call parse, alias/strip, LLM arg-correction
 │   └── output.py           ← Summary extraction, truncation, artifact summary
 ├── tools.py                ← Tool registry and decorator
 ├── handoff.py              ← Context reset / handoff state transfer
@@ -29,6 +29,7 @@ src/my_coding_agent/
 │   └── summary.py          ← print_run_summary renderer (+ token chart)
 ├── observability/          ← Structured session capture + HTML tree viewer (package)
 │   ├── recorder.py         ← Recorder: append-as-you-go events.jsonl writer + contextvars
+│   ├── records.py          ← Call-record builders (per-tool-call dicts for tool_records)
 │   ├── events.py           ← Typed schema (Session/LLMCall/ToolCall/Handoff/TreeNode)
 │   ├── reader.py           ← load_session(s) + derived analytical views
 │   ├── tree.py             ← build_trace_tree: reconstruct the hierarchical pipeline tree
@@ -66,14 +67,14 @@ methods:
 
 - **`result_schema.py`** — the canonical-envelope contract: `build_tool_result()`,
   `validate_tool_result()`, and `result_envelope()` (source-shape normalizer).
-- **`args.py`** — `parse_tool_call()`, `apply_arg_aliases()`, `strip_unknown_args()`.
+- **`args.py`** — `parse_tool_call()`, `apply_arg_aliases()`, `strip_unknown_args()`, and `correct_args()` (the LLM arg-correction call, client injected).
 - **`output.py`** — `_extract_summary()`, `validate_tool_output()` (truncation),
   `summarize_artifact()` (takes the client as an injected dependency).
 
 The orchestrator's own methods each do real work (no pass-through delegators):
 
 - **`execute_tool_calls(message, conversation, tools)`** — iterates tool-call requests, dispatches each through `invoke_tool`, collects results back as `role: tool` messages via the `_emit` helper. The `conversation` and `tools` are passed in explicitly (not read off the client) so the executor stays decoupled from the agent loop's state.
-- **`invoke_tool(...)`** — calls the tool function with up to `_MAX_ARG_RETRIES` retries; on `TypeError` it asks the LLM to correct the arguments (`tool_arg_correction` call) before retrying. Recoverable exceptions become `ok:false` results; non-recoverable ones re-raise. It returns the canonical envelope, not a raw string.
+- **`invoke_tool(...)`** — dispatches the tool inline (call → artifact offload/summarize → coerce → truncate) with up to `_MAX_ARG_RETRIES` retries; on `TypeError` it asks the LLM to correct the arguments via `args.correct_args` (`tool_arg_correction` call) before retrying. Recoverable exceptions become `ok:false` results; non-recoverable ones re-raise. It returns the canonical envelope, not a raw string. The per-call records it returns are built by `observability.records` (`call_record` / `error_record`).
 - **Canonical tool-output schema** — the single choke point that enforces a uniform contract on *every* result that reaches the agent (direct results, summarized artifacts, skips, parse/arg errors, raised exceptions). Each is normalized via `result_schema` into one envelope — `{schema_version, tool, ok, output, error, metadata}`, modeled on bash's `ok`/`exit_code` — and checked with `validate_tool_result()` before being serialized to JSON for the model. `output` carries the raw payload (stdout / file content / report / summary); tool-specific extras (`exit_code`, `stderr`, `file_path`, `artifact`, `truncated`, `summarized`, …) live in the flexible `metadata` bag. Failure is detected from bash-style `ok`/`exit_code`, the stored artifact, the `Error…` string convention, or an exception, giving the agent **and** the viewer one consistent success/failure signal.
 - **Artifact separation** — when a tool returns a `(None, dict)` tuple (bash output above `ARTIFACT_THRESHOLD`), the full dict is stored in `self.tool_artifacts[tool_call_id]` and an LLM-generated summary (kind `tool_output_summarizer`) is sent back instead. The summarizer prompt asks the model to wrap its answer in `<summary>…</summary>`, which `_extract_summary` extracts (falling back to stripping `<think>` blocks) so reasoning never leaks into the result. The full artifact is retrievable via the `read_tool_artifact` tool.
 - **Arg aliases** — a static map remaps common model hallucinations (e.g. `bash(path=)` → `bash(command=)`) before dispatch; unknown kwargs are stripped to the tool's signature.
@@ -153,6 +154,11 @@ left untouched) and additive to the existing `session_data.json`.
   (`current_session_id`, `current_recorder`) let a delegated subagent record its
   `parent_session_id` and let `delegate` attach the spawned child's id to its tool
   call (`note_delegate_child`) for an exact parent→child link.
+- **`records.py`** — `error_record()` / `call_record()` build the per-tool-call
+  dicts (`name`/`args`/`ok`/`status`/…) the `ToolExecutor` appends to
+  `Agent.tool_records` and persists in `session_data.json`. Owning the record
+  shape here keeps it consistent across success, failure, skip, and parse-error
+  paths.
 - **`events.py`** — the reader-side typed schema (`Session`, `LLMCall`,
   `ToolCall`, `Handoff`) plus `TreeNode`, the node type for the trace tree.
 - **`reader.py`** — `load_session` / `load_sessions_by_id` / `load_all_sessions`

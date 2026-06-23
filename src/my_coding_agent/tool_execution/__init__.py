@@ -14,8 +14,8 @@ import subprocess
 from typing import TYPE_CHECKING, Any
 
 from ..logger import get_logger
+from ..observability.records import call_record, error_record
 from ..tools import ToolsRegistry
-from ..utils import extract_message, parse_tool_args
 from . import args as arg_prep
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
@@ -132,89 +132,6 @@ class ToolExecutor:
             )
         return modified
 
-    def _dispatch_tool(
-        self, registry: ToolsRegistry, func_name: str, args: dict, tool_call_id: str
-    ) -> tuple[str, bool, bool]:
-        """Call func_name(**args), handle artifact tuples, coerce and validate.
-
-        Returns (result, is_artifact, is_truncated).
-        """
-        result = getattr(registry, func_name)(**args)
-        is_artifact = isinstance(result, tuple) and len(result) == 2
-        if is_artifact:
-            _, artifact = result
-            self.tool_artifacts[tool_call_id] = artifact
-            result = summarize_artifact(self.client, artifact, func_name, tool_call_id)
-        if not isinstance(result, str):
-            result = str(result)
-        pre_len = len(result)
-        result = validate_tool_output(
-            result, func_name, self.client._session_log_path, is_summary=is_artifact
-        )
-        is_truncated = not is_artifact and len(result) < pre_len
-        return result, is_artifact, is_truncated
-
-    def _correct_args(
-        self,
-        func_name: str,
-        args: dict,
-        exc: Exception,
-        sig: inspect.Signature,
-        tool_call: dict,
-        tool_call_id: str,
-        attempt: int,
-        conversation: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-    ) -> dict | None:
-        """Ask the LLM to fix wrong args after a TypeError.
-
-        Returns corrected args, or None on failure.
-        """
-        correction_messages = list(conversation) + [
-            {"role": "assistant", "content": None, "tool_calls": [tool_call]},
-            {"role": "tool", "tool_call_id": tool_call_id, "content": f"Error: {exc}"},
-            {
-                "role": "user",
-                "content": (
-                    f"Tool '{func_name}' was called with wrong arguments: {exc}. "
-                    f"Expected signature: {func_name}{sig}. "
-                    f"Please call '{func_name}' again with the correct arguments."
-                ),
-            },
-        ]
-        correction_resp = self.client.chat_completion(
-            correction_messages,
-            tools=tools,
-            kind="tool_arg_correction",
-        )
-        corrected = next(
-            (
-                c
-                for c in (extract_message(correction_resp).get("tool_calls") or [])
-                if c.get("function", {}).get("name") == func_name
-            ),
-            None,
-        )
-        if not corrected:
-            self.logger.warning(
-                "correction attempt %s: model did not return a %s call",
-                attempt + 1,
-                func_name,
-            )
-            return None
-        try:
-            args = parse_tool_args(corrected.get("function", {}).get("arguments", {}))
-        except json.JSONDecodeError:
-            self.logger.warning(
-                "correction attempt %s: could not parse corrected args", attempt + 1
-            )
-            return None
-        args = arg_prep.apply_arg_aliases(func_name, args)
-        self.logger.tool(
-            "corrected args (attempt %s): %s(%s)", attempt + 1, func_name, args
-        )
-        return args
-
     def invoke_tool(
         self,
         tool_call_id: str,
@@ -235,15 +152,33 @@ class ToolExecutor:
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
             env = build_tool_result(func_name, False, "", err, {"reason": "not_found"})
-            return env, "error", self._error_record(func_name, args, tool_call_id, err)
+            return env, "error", error_record(func_name, args, tool_call_id, err)
 
         sig = inspect.signature(getattr(ToolsRegistry, func_name))
 
         for attempt in range(_MAX_ARG_RETRIES + 1):
             try:
-                result, is_artifact, is_truncated = self._dispatch_tool(
-                    registry, func_name, args, tool_call_id
+                # Dispatch: call the tool, offload+summarize artifact tuples,
+                # coerce to str, and truncate oversized output.
+                result = getattr(registry, func_name)(**args)
+                is_artifact = isinstance(result, tuple) and len(result) == 2
+                if is_artifact:
+                    _, artifact = result
+                    self.tool_artifacts[tool_call_id] = artifact
+                    result = summarize_artifact(
+                        self.client, artifact, func_name, tool_call_id
+                    )
+                if not isinstance(result, str):
+                    result = str(result)
+                pre_len = len(result)
+                result = validate_tool_output(
+                    result,
+                    func_name,
+                    self.client._session_log_path,
+                    is_summary=is_artifact,
                 )
+                is_truncated = not is_artifact and len(result) < pre_len
+
                 self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
                 env = result_envelope(
                     func_name,
@@ -253,7 +188,7 @@ class ToolExecutor:
                     tool_call_id,
                     self.tool_artifacts.get(tool_call_id),
                 )
-                status, record = self._call_record(
+                status, record = call_record(
                     func_name, args, tool_call_id, env, is_artifact, is_truncated
                 )
                 return env, status, record
@@ -273,7 +208,8 @@ class ToolExecutor:
                 corrected_args = (
                     None
                     if retries_exhausted
-                    else self._correct_args(
+                    else arg_prep.correct_args(
+                        self.client,
                         func_name,
                         args,
                         wrong_args_exc,
@@ -297,7 +233,7 @@ class ToolExecutor:
                     return (
                         env,
                         "error",
-                        self._error_record(
+                        error_record(
                             func_name, args, tool_call_id, str(wrong_args_exc)
                         ),
                     )
@@ -320,61 +256,12 @@ class ToolExecutor:
                 return (
                     env,
                     "error",
-                    self._error_record(func_name, args, tool_call_id, str(exc)),
+                    error_record(func_name, args, tool_call_id, str(exc)),
                 )
 
         # Unreachable: the final iteration always returns (success, or an error result
         # once retries are exhausted). Present so mypy can prove the function returns.
         raise AssertionError("invoke_tool retry loop exited without returning")
-
-    @staticmethod
-    def _error_record(
-        func_name: str,
-        args: dict,
-        tool_call_id: str,
-        error: str,
-        status: str = "error",
-    ) -> dict[str, Any]:
-        """Build a failure call-record (for session_data.json / observability)."""
-        return {
-            "name": func_name,
-            "args": args,
-            "ok": False,
-            "error": error,
-            "tool_call_id": tool_call_id,
-            "artifact": False,
-            "truncated": False,
-            "status": status,
-        }
-
-    @staticmethod
-    def _call_record(
-        func_name: str,
-        args: dict,
-        tool_call_id: str,
-        env: dict[str, Any],
-        is_artifact: bool,
-        is_truncated: bool,
-    ) -> tuple[str, dict[str, Any]]:
-        """Build the (status, call-record) for a dispatched tool, from its envelope."""
-        status = "success" if env["ok"] else "error"
-        record = {
-            "name": func_name,
-            "args": args,
-            "ok": env["ok"],
-            "tool_call_id": tool_call_id,
-            "artifact": is_artifact,
-            "truncated": is_truncated,
-            "status": status,
-        }
-        if not env["ok"]:
-            record["error"] = env["error"] or "tool reported failure"
-        return status, record
-
-    def _finalize_result(self, env: dict[str, Any]) -> str:
-        """Validate the envelope and serialize it to the agent-facing JSON string."""
-        validate_tool_result(env)
-        return json.dumps(env, default=str)
 
     @staticmethod
     def _emit(
@@ -430,15 +317,9 @@ class ToolExecutor:
                 env = build_tool_result(
                     name, False, "", error, {"reason": "parse_error"}
                 )
-                record = self._error_record(name, {}, tool_call_id, error)
-                self._emit(
-                    messages,
-                    records,
-                    tool_call_id,
-                    self._finalize_result(env),
-                    "error",
-                    record,
-                )
+                record = error_record(name, {}, tool_call_id, error)
+                content = json.dumps(validate_tool_result(env), default=str)
+                self._emit(messages, records, tool_call_id, content, "error", record)
                 continue
 
             # error is None here, so parse_tool_call gave a valid func_name and args.
@@ -455,17 +336,11 @@ class ToolExecutor:
                     "skipped",
                     {"reason": "skipped"},
                 )
-                record = self._error_record(
+                record = error_record(
                     func_name, {}, tool_call_id, "skipped", status="skipped"
                 )
-                self._emit(
-                    messages,
-                    records,
-                    tool_call_id,
-                    self._finalize_result(env),
-                    "skipped",
-                    record,
-                )
+                content = json.dumps(validate_tool_result(env), default=str)
+                self._emit(messages, records, tool_call_id, content, "skipped", record)
                 continue
 
             # Invoke the tool with retries for argument correction, and handle
@@ -482,9 +357,8 @@ class ToolExecutor:
             )
 
             # Serialize to the canonical schema, then post-process before the LLM.
-            content = self.after_tool_call(
-                tool_call_id, func_name, args, self._finalize_result(env)
-            )
+            serialized = json.dumps(validate_tool_result(env), default=str)
+            content = self.after_tool_call(tool_call_id, func_name, args, serialized)
             self._emit(messages, records, tool_call_id, content, status, record)
 
         return messages, records

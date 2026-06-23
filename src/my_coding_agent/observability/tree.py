@@ -24,14 +24,14 @@ from .events import Session, ToolCall, TreeNode
 _VALIDATION: dict[str, tuple[str, str, str]] = {
     # raw kind -> (function name, status, message)
     "tool_output_summarizer": (
-        "_summarize_artifact",
+        "output.summarize_artifact",
         "success",
-        "_summarize_artifact: summarized large output",
+        "output.summarize_artifact: summarized large output",
     ),
     "tool_arg_correction": (
-        "_correct_args",
+        "args.correct_args",
         "warning",
-        "_correct_args: corrected tool arguments",
+        "args.correct_args: corrected tool arguments",
     ),
 }
 
@@ -383,9 +383,9 @@ def _tool_node(
 
 
 def _validation_node(ev: dict[str, Any]) -> TreeNode:
-    """``ToolExecutor.<method>`` node wrapping the LLM call it makes.
+    """Node for an ancillary executor helper wrapping the LLM call it makes.
 
-    Both ``_summarize_artifact`` and ``_correct_args`` are real
+    Both ``output.summarize_artifact`` and ``args.correct_args`` are real
     ``LLM.chat_completion`` calls; the call is nested as its own ``llm_call`` node
     so its prompt/response and token cost are visible in the tree.
     """

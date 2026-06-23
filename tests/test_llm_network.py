@@ -14,6 +14,7 @@ import json
 import pytest
 
 from my_coding_agent.tool_execution import MAX_TOOL_OUTPUT_CHARS, output
+from my_coding_agent.tool_execution import args as arg_prep
 from my_coding_agent.tools import ToolsRegistry
 
 
@@ -316,37 +317,42 @@ def test_summarize_artifact_falls_back_on_llm_failure_file(bare_executor, mocker
     assert head == {"file_path": "/a.txt", "size": 99}
 
 
-# --- _dispatch_tool ----------------------------------------------------------
+# --- invoke_tool dispatch (inlined: plain output + artifact tuple) -----------
 
 
-def test_dispatch_tool_plain_string_result(bare_executor, tmp_path):
+def test_invoke_tool_plain_string_not_truncated(bare_executor, tmp_path):
     bare_executor.client._session_log_path = None
     f = tmp_path / "f.txt"
     f.write_text("data")
     reg = ToolsRegistry(base_dir=str(tmp_path))
-    result, is_artifact, is_truncated = bare_executor._dispatch_tool(
-        reg, "read_file", {"file_path": str(f)}, "c1"
+    env, status, record = bare_executor.invoke_tool(
+        "c1", "read_file", {"file_path": str(f)}, reg, {}, [], None
     )
-    assert result == "data"
-    assert is_artifact is False
-    assert is_truncated is False
+    assert status == "success"
+    assert env["output"] == "data"
+    assert record["truncated"] is False
 
 
-def test_dispatch_tool_artifact_tuple_is_summarized(bare_executor, mocker):
+def test_invoke_tool_artifact_tuple_is_summarized(bare_executor, mocker):
     bare_executor.client._session_log_path = None
     mocker.patch.object(
         bare_executor.client,
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "summary"}}]}),
     )
-
-    class _Reg:
-        def big(self):
-            return None, {"exit_code": 0, "ok": True, "stdout": "x", "stderr": ""}
-
-    result, is_artifact, _ = bare_executor._dispatch_tool(_Reg(), "big", {}, "c1")
-    assert is_artifact is True
-    assert "summary" in result
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            {"exit_code": 0, "ok": True, "stdout": "x", "stderr": ""},
+        ),
+    )
+    env, status, record = bare_executor.invoke_tool(
+        "c1", "bash", {"command": "x"}, ToolsRegistry(), {}, [], None
+    )
+    assert "summary" in env["output"]
+    assert record["artifact"] is True
     assert bare_executor.tool_artifacts["c1"]["exit_code"] == 0
 
 
@@ -470,8 +476,9 @@ def test_invoke_tool_corrects_wrong_args_then_succeeds(bare_executor, mocker):
                 raise TypeError("unexpected keyword argument 'wrong'")
             return f"read {file_path}"
 
-    mocker.patch.object(
-        bare_executor, "_correct_args", return_value={"file_path": "ok"}
+    mocker.patch(
+        "my_coding_agent.tool_execution.args.correct_args",
+        return_value={"file_path": "ok"},
     )
     result, status, _ = bare_executor.invoke_tool(
         "c1", "read_file", {"wrong": "x"}, _Reg(), {}, [], []
@@ -624,7 +631,7 @@ def test_execute_tool_calls_uses_passed_conversation_and_tools(bare_executor, mo
     assert {"role": "system", "content": "DECOY"} not in sent_messages
 
 
-# --- _correct_args -----------------------------------------------------------
+# --- correct_args ------------------------------------------------------------
 
 
 def test_correct_args_returns_parsed_corrected_call(bare_executor, mocker):
@@ -636,8 +643,17 @@ def test_correct_args_returns_parsed_corrected_call(bare_executor, mocker):
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": [fixed]}}]}),
     )
-    out = bare_executor._correct_args(
-        "read_file", {"bad": 1}, TypeError("boom"), "(sig)", {}, "c1", 0, [], []
+    out = arg_prep.correct_args(
+        bare_executor.client,
+        "read_file",
+        {"bad": 1},
+        TypeError("boom"),
+        "(sig)",
+        {},
+        "c1",
+        0,
+        [],
+        [],
     )
     assert out == {"file_path": "/ok"}
 
@@ -648,8 +664,17 @@ def test_correct_args_returns_none_when_model_skips_tool(bare_executor, mocker):
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": []}}]}),
     )
-    out = bare_executor._correct_args(
-        "read_file", {}, TypeError("boom"), "(sig)", {}, "c1", 0, [], []
+    out = arg_prep.correct_args(
+        bare_executor.client,
+        "read_file",
+        {},
+        TypeError("boom"),
+        "(sig)",
+        {},
+        "c1",
+        0,
+        [],
+        [],
     )
     assert out is None
 
@@ -661,8 +686,17 @@ def test_correct_args_returns_none_on_unparseable_args(bare_executor, mocker):
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"tool_calls": [bad_call]}}]}),
     )
-    out = bare_executor._correct_args(
-        "read_file", {}, TypeError("boom"), "(sig)", {}, "c1", 0, [], []
+    out = arg_prep.correct_args(
+        bare_executor.client,
+        "read_file",
+        {},
+        TypeError("boom"),
+        "(sig)",
+        {},
+        "c1",
+        0,
+        [],
+        [],
     )
     assert out is None
 

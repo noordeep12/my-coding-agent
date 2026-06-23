@@ -280,7 +280,7 @@ def test_tool_output_validation_nested_under_tool(tmp_path):
     tool = next(c for c in step.children if c.type == "tool_executor")
     val = tool.children[0]
     assert val.type == "tool_output_validation"
-    assert val.metadata["function"] == "_summarize_artifact"
+    assert val.metadata["function"] == "output.summarize_artifact"
     # the summarizer is a real LLM.chat_completion call, nested + reflected
     llm = val.children[0]
     assert llm.type == "llm_call"
