@@ -1,13 +1,24 @@
-"""Tests for tool-execution helpers (summary extraction + output schema)."""
+"""Tests for tool-execution helpers (summary extraction + output schema).
+
+The block tagged "characterization" locks the CURRENT observable behavior of
+``ToolExecutor`` before the module is split into a package. These tests are the
+safety net for that refactor: they assert behavior as it is today (including the
+``error``/``metadata.stderr`` duplication), so any accidental change during the
+move is caught. They must stay green across the refactor unchanged.
+"""
+
+import json
 
 import pytest
 
 from my_coding_agent.tool_execution import (
+    MAX_TOOL_OUTPUT_CHARS,
     TOOL_SCHEMA_VERSION,
     _extract_summary,
     build_tool_result,
     validate_tool_result,
 )
+from my_coding_agent.tools import ToolsRegistry
 
 
 def test_extract_summary_prefers_summary_tags():
@@ -64,3 +75,253 @@ def test_validate_tool_result_accepts_minimal_failure():
 def test_validate_tool_result_rejects_malformed(bad):
     with pytest.raises(ValueError):
         validate_tool_result(bad)
+
+
+# ── characterization: envelope normalization (_result_envelope) ───────────────
+# Locks how raw tool returns become the canonical envelope, per source shape.
+
+
+def test_envelope_bash_success_folds_stdout_and_metadata(bare_executor):
+    raw = json.dumps({"stdout": "hi", "stderr": "", "exit_code": 0, "ok": True})
+    env = bare_executor._result_envelope("bash", raw, False, False, "c1")
+    assert env["ok"] is True
+    assert env["output"] == "hi"
+    assert env["error"] is None
+    assert env["metadata"]["exit_code"] == 0
+
+
+def test_envelope_bash_failure_duplicates_stderr_into_error_and_metadata(bare_executor):
+    # CURRENT behavior (locked, not endorsed): stderr appears in BOTH error and
+    # metadata.stderr. Issue #55 will dedup this; until then the net pins it.
+    raw = json.dumps({"stdout": "", "stderr": "boom", "exit_code": 1, "ok": False})
+    env = bare_executor._result_envelope("bash", raw, False, False, "c1")
+    assert env["ok"] is False
+    assert env["error"] == "boom"
+    assert env["metadata"]["stderr"] == "boom"
+    assert env["metadata"]["exit_code"] == 1
+
+
+def test_envelope_error_string_convention_marks_failure(bare_executor):
+    env = bare_executor._result_envelope("read_file", "Error: nope", False, False, "c1")
+    assert env["ok"] is False
+    assert env["error"] == "Error: nope"
+    assert env["output"] == ""
+
+
+def test_envelope_plain_string_is_success(bare_executor):
+    env = bare_executor._result_envelope("read_file", "done", False, False, "c1")
+    assert env["ok"] is True
+    assert env["output"] == "done"
+    assert env["error"] is None
+
+
+def test_envelope_truncated_flag_is_recorded(bare_executor):
+    env = bare_executor._result_envelope("read_file", "done", False, True, "c1")
+    assert env["metadata"]["truncated"] is True
+
+
+def test_envelope_artifact_branch_reads_stored_artifact(bare_executor):
+    bare_executor.tool_artifacts["c1"] = {
+        "stdout": "x",
+        "stderr": "err",
+        "exit_code": 1,
+        "ok": False,
+    }
+    env = bare_executor._result_envelope("bash", "summary text", True, False, "c1")
+    assert env["ok"] is False
+    assert env["output"] == "summary text"
+    assert env["error"] == "err"
+    assert env["metadata"]["summarized"] is True
+    assert env["metadata"]["artifact"] is True
+
+
+# ── characterization: tool-call parsing (parse_tool_call) ─────────────────────
+
+
+def test_parse_tool_call_valid(bare_executor):
+    tc = {
+        "id": "c1",
+        "type": "function",
+        "function": {"name": "bash", "arguments": json.dumps({"command": "ls"})},
+    }
+    assert bare_executor.parse_tool_call(tc) == ("c1", "bash", {"command": "ls"}, None)
+
+
+@pytest.mark.parametrize(
+    "tc,needle",
+    [
+        ({"id": "c1", "function": {"name": "bash"}}, "missing 'type'"),
+        (
+            {"id": "c1", "type": "web", "function": {"name": "bash"}},
+            "not supported",
+        ),
+        ({"id": "c1", "type": "function", "function": {}}, "missing 'function.name'"),
+        (
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "bash", "arguments": "{bad"},
+            },
+            "could not parse",
+        ),
+    ],
+)
+def test_parse_tool_call_errors(bare_executor, tc, needle):
+    _id, _name, args, error = bare_executor.parse_tool_call(tc)
+    assert error is not None and needle in error
+
+
+# ── characterization: argument preparation ────────────────────────────────────
+
+
+def test_apply_arg_aliases_remaps_known_wrong_name(bare_executor):
+    assert bare_executor._apply_arg_aliases("bash", {"path": "ls"}) == {"command": "ls"}
+
+
+def test_strip_unknown_args_drops_kwargs_not_in_signature(bare_executor):
+    cleaned = bare_executor._strip_unknown_args("bash", {"command": "ls", "bogus": 1})
+    assert cleaned == {"command": "ls"}
+
+
+# ── characterization: output validation (_validate_tool_output) ───────────────
+
+
+def test_validate_output_replaces_empty(bare_executor):
+    assert bare_executor._validate_tool_output("   ", "bash") == (
+        "(tool returned empty output)"
+    )
+
+
+def test_validate_output_truncates_oversized(bare_executor):
+    long = "x" * (MAX_TOOL_OUTPUT_CHARS * 2)
+    out = bare_executor._validate_tool_output(long, "read_file")
+    assert "[output truncated" in out
+    assert len(out) < len(long)
+
+
+# ── characterization: dispatch + retry + exceptions (invoke_tool) ─────────────
+
+
+def _registry(executor, base_dir=None):
+    # base_dir lets file tools resolve inside a tmp dir instead of the repo root,
+    # so tests neither pollute the workspace nor trip the path-traversal guard.
+    return ToolsRegistry(artifacts=executor.tool_artifacts, tools=[], base_dir=base_dir)
+
+
+def test_invoke_tool_success(bare_executor, tmp_path):
+    target = tmp_path / "out.txt"
+    env, status, record = bare_executor.invoke_tool(
+        "c1",
+        "write_file",
+        {"file_path": "out.txt", "content": "hi"},
+        _registry(bare_executor, str(tmp_path)),
+        {"id": "c1"},
+        [],
+        None,
+    )
+    assert status == "success"
+    assert env["ok"] is True
+    assert record["ok"] is True
+    assert target.read_text() == "hi"
+
+
+def test_invoke_tool_not_found(bare_executor):
+    env, status, _ = bare_executor.invoke_tool(
+        "c1", "nope", {}, _registry(bare_executor), {"id": "c1"}, [], None
+    )
+    assert status == "error"
+    assert env["ok"] is False
+    assert env["metadata"]["reason"] == "not_found"
+
+
+def test_invoke_tool_error_string_is_failure(bare_executor, tmp_path):
+    env, status, _ = bare_executor.invoke_tool(
+        "c1",
+        "read_file",
+        {"file_path": "missing.txt"},
+        _registry(bare_executor, str(tmp_path)),
+        {"id": "c1"},
+        [],
+        None,
+    )
+    assert status == "error"
+    assert env["ok"] is False
+
+
+def test_invoke_tool_recoverable_exception_returns_error(bare_executor, monkeypatch):
+    def boom(self, file_path):
+        raise FileNotFoundError("nope")
+
+    monkeypatch.setattr(ToolsRegistry, "read_file", boom)
+    env, status, _ = bare_executor.invoke_tool(
+        "c1",
+        "read_file",
+        {"file_path": "x"},
+        _registry(bare_executor),
+        {"id": "c1"},
+        [],
+        None,
+    )
+    assert status == "error"
+    assert env["ok"] is False
+    assert env["metadata"]["reason"] == "raised"
+
+
+def test_invoke_tool_non_recoverable_exception_reraises(bare_executor, monkeypatch):
+    def boom(self, file_path):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(ToolsRegistry, "read_file", boom)
+    with pytest.raises(RuntimeError, match="kaboom"):
+        bare_executor.invoke_tool(
+            "c1",
+            "read_file",
+            {"file_path": "x"},
+            _registry(bare_executor),
+            {"id": "c1"},
+            [],
+            None,
+        )
+
+
+# ── characterization: orchestration (execute_tool_calls) ──────────────────────
+
+
+def _tool_call(name, args, call_id="c1"):
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(args)},
+    }
+
+
+def test_execute_tool_calls_success(bare_executor, monkeypatch):
+    # execute_tool_calls builds its own registry (base = cwd); stub bash so the
+    # orchestration path is exercised without a real shell or network.
+    monkeypatch.setattr(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: json.dumps(
+            {"stdout": "hi", "stderr": "", "exit_code": 0, "ok": True}
+        ),
+    )
+    msg = {"tool_calls": [_tool_call("bash", {"command": "ls"})]}
+    messages, records = bare_executor.execute_tool_calls(msg, [], [])
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["status"] == "success"
+    assert records[0]["ok"] is True
+
+
+def test_execute_tool_calls_parse_error(bare_executor):
+    msg = {"tool_calls": [{"id": "c1", "function": {"name": "bash"}}]}  # no type
+    messages, records = bare_executor.execute_tool_calls(msg, [], [])
+    assert messages[0]["status"] == "error"
+    assert records[0]["ok"] is False
+
+
+def test_execute_tool_calls_skip_when_before_hook_returns_none(bare_executor):
+    bare_executor.client._before_hook = lambda name, args: None
+    msg = {"tool_calls": [_tool_call("bash", {"command": "ls"})]}
+    messages, records = bare_executor.execute_tool_calls(msg, [], [])
+    assert messages[0]["status"] == "skipped"
+    assert records[0]["status"] == "skipped"
