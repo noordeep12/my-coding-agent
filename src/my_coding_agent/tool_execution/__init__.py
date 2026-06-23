@@ -84,40 +84,6 @@ class ToolExecutor:
         self.tool_artifacts: dict = {}
         self.logger = get_logger(self.__class__.__name__)
 
-    def _validate_tool_output(
-        self, result: str, func_name: str, is_summary: bool = False
-    ) -> str:
-        """Adapter over :func:`output.validate_tool_output` (injects the log path)."""
-        return validate_tool_output(
-            result,
-            func_name,
-            self.client._session_log_path,
-            self.logger,
-            is_summary,
-        )
-
-    def _summarize_artifact(
-        self, artifact: dict, func_name: str, tool_call_id: str
-    ) -> str:
-        """Adapter over :func:`output.summarize_artifact` (injects the client)."""
-        return summarize_artifact(
-            self.client, artifact, func_name, tool_call_id, self.logger
-        )
-
-    def parse_tool_call(
-        self, tool_call: dict
-    ) -> tuple[str, str | None, dict | None, str | None]:
-        """Adapter over :func:`args.parse_tool_call` (injects the logger)."""
-        return arg_prep.parse_tool_call(tool_call, self.logger)
-
-    def _apply_arg_aliases(self, func_name: str, args: dict) -> dict:
-        """Adapter over :func:`args.apply_arg_aliases` (injects the logger)."""
-        return arg_prep.apply_arg_aliases(func_name, args, self.logger)
-
-    def _strip_unknown_args(self, func_name: str, args: dict) -> dict:
-        """Adapter over :func:`args.strip_unknown_args` (injects the logger)."""
-        return arg_prep.strip_unknown_args(func_name, args, self.logger)
-
     def before_tool_call(
         self, tool_call_id: str, func_name: str, args: dict
     ) -> dict | None:
@@ -125,8 +91,8 @@ class ToolExecutor:
 
         Returns the (possibly modified) args to proceed, or None to skip the call.
         """
-        args = self._apply_arg_aliases(func_name, args)
-        args = self._strip_unknown_args(func_name, args)
+        args = arg_prep.apply_arg_aliases(func_name, args)
+        args = arg_prep.strip_unknown_args(func_name, args)
         self.logger.tool(
             "%s → before_hook %s(%s) [after alias remapping]",
             tool_call_id,
@@ -178,11 +144,13 @@ class ToolExecutor:
         if is_artifact:
             _, artifact = result
             self.tool_artifacts[tool_call_id] = artifact
-            result = self._summarize_artifact(artifact, func_name, tool_call_id)
+            result = summarize_artifact(self.client, artifact, func_name, tool_call_id)
         if not isinstance(result, str):
             result = str(result)
         pre_len = len(result)
-        result = self._validate_tool_output(result, func_name, is_summary=is_artifact)
+        result = validate_tool_output(
+            result, func_name, self.client._session_log_path, is_summary=is_artifact
+        )
         is_truncated = not is_artifact and len(result) < pre_len
         return result, is_artifact, is_truncated
 
@@ -241,7 +209,7 @@ class ToolExecutor:
                 "correction attempt %s: could not parse corrected args", attempt + 1
             )
             return None
-        args = self._apply_arg_aliases(func_name, args)
+        args = arg_prep.apply_arg_aliases(func_name, args)
         self.logger.tool(
             "corrected args (attempt %s): %s(%s)", attempt + 1, func_name, args
         )
@@ -277,21 +245,17 @@ class ToolExecutor:
                     registry, func_name, args, tool_call_id
                 )
                 self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
-                env = self._result_envelope(
-                    func_name, result, is_artifact, is_truncated, tool_call_id
+                env = result_envelope(
+                    func_name,
+                    result,
+                    is_artifact,
+                    is_truncated,
+                    tool_call_id,
+                    self.tool_artifacts.get(tool_call_id),
                 )
-                status = "success" if env["ok"] else "error"
-                record = {
-                    "name": func_name,
-                    "args": args,
-                    "ok": env["ok"],
-                    "tool_call_id": tool_call_id,
-                    "artifact": is_artifact,
-                    "truncated": is_truncated,
-                    "status": status,
-                }
-                if not env["ok"]:
-                    record["error"] = env["error"] or "tool reported failure"
+                status, record = self._call_record(
+                    func_name, args, tool_call_id, env, is_artifact, is_truncated
+                )
                 return env, status, record
 
             except (
@@ -365,7 +329,11 @@ class ToolExecutor:
 
     @staticmethod
     def _error_record(
-        func_name: str, args: dict, tool_call_id: str, error: str
+        func_name: str,
+        args: dict,
+        tool_call_id: str,
+        error: str,
+        status: str = "error",
     ) -> dict[str, Any]:
         """Build a failure call-record (for session_data.json / observability)."""
         return {
@@ -376,35 +344,57 @@ class ToolExecutor:
             "tool_call_id": tool_call_id,
             "artifact": False,
             "truncated": False,
-            "status": "error",
+            "status": status,
         }
 
-    def _result_envelope(
-        self,
-        tool: str,
-        result: str,
+    @staticmethod
+    def _call_record(
+        func_name: str,
+        args: dict,
+        tool_call_id: str,
+        env: dict[str, Any],
         is_artifact: bool,
         is_truncated: bool,
-        tool_call_id: str,
-    ) -> dict[str, Any]:
-        """Normalize a tool's raw return into the canonical schema envelope.
-
-        Thin adapter over :func:`result_schema.result_envelope`: it injects this
-        call's stored artifact so the schema logic stays pure and stateless.
-        """
-        return result_envelope(
-            tool,
-            result,
-            is_artifact,
-            is_truncated,
-            tool_call_id,
-            self.tool_artifacts.get(tool_call_id),
-        )
+    ) -> tuple[str, dict[str, Any]]:
+        """Build the (status, call-record) for a dispatched tool, from its envelope."""
+        status = "success" if env["ok"] else "error"
+        record = {
+            "name": func_name,
+            "args": args,
+            "ok": env["ok"],
+            "tool_call_id": tool_call_id,
+            "artifact": is_artifact,
+            "truncated": is_truncated,
+            "status": status,
+        }
+        if not env["ok"]:
+            record["error"] = env["error"] or "tool reported failure"
+        return status, record
 
     def _finalize_result(self, env: dict[str, Any]) -> str:
         """Validate the envelope and serialize it to the agent-facing JSON string."""
         validate_tool_result(env)
         return json.dumps(env, default=str)
+
+    @staticmethod
+    def _emit(
+        messages: list[dict[str, Any]],
+        records: list[dict[str, Any]],
+        tool_call_id: str,
+        content: str,
+        status: str,
+        record: dict[str, Any],
+    ) -> None:
+        """Append one tool-result message and its matching call-record."""
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content,
+                "status": status,
+            }
+        )
+        records.append(record)
 
     def execute_tool_calls(
         self,
@@ -426,41 +416,28 @@ class ToolExecutor:
         Failure record: {"name": str, "args": dict, "ok": False, "error": str}
         """
         tool_calls = message.get("tool_calls", []) or []
-        messages, records = [], []
+        messages: list[dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         registry = ToolsRegistry(artifacts=self.tool_artifacts, tools=tools or [])
         self.logger.tool("dispatch: %d tool call(s)", len(tool_calls))
 
         for tool_call in tool_calls:
             # Parse and validate the raw tool call first, to catch issues
             # before invoking any tools.
-            tool_call_id, func_name, args, error = self.parse_tool_call(tool_call)
+            tool_call_id, func_name, args, error = arg_prep.parse_tool_call(tool_call)
             if error:
+                name = func_name or "<unknown>"
                 env = build_tool_result(
-                    func_name or "<unknown>",
-                    False,
-                    "",
-                    error,
-                    {"reason": "parse_error"},
+                    name, False, "", error, {"reason": "parse_error"}
                 )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": self._finalize_result(env),
-                        "status": "error",
-                    }
-                )
-                records.append(
-                    {
-                        "name": func_name or "<unknown>",
-                        "args": {},
-                        "ok": False,
-                        "error": error,
-                        "tool_call_id": tool_call_id,
-                        "artifact": False,
-                        "truncated": False,
-                        "status": "error",
-                    }
+                record = self._error_record(name, {}, tool_call_id, error)
+                self._emit(
+                    messages,
+                    records,
+                    tool_call_id,
+                    self._finalize_result(env),
+                    "error",
+                    record,
                 )
                 continue
 
@@ -478,25 +455,16 @@ class ToolExecutor:
                     "skipped",
                     {"reason": "skipped"},
                 )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": self._finalize_result(env),
-                        "status": "skipped",
-                    }
+                record = self._error_record(
+                    func_name, {}, tool_call_id, "skipped", status="skipped"
                 )
-                records.append(
-                    {
-                        "name": func_name,
-                        "args": {},
-                        "ok": False,
-                        "error": "skipped",
-                        "tool_call_id": tool_call_id,
-                        "artifact": False,
-                        "truncated": False,
-                        "status": "skipped",
-                    }
+                self._emit(
+                    messages,
+                    records,
+                    tool_call_id,
+                    self._finalize_result(env),
+                    "skipped",
+                    record,
                 )
                 continue
 
@@ -517,14 +485,6 @@ class ToolExecutor:
             content = self.after_tool_call(
                 tool_call_id, func_name, args, self._finalize_result(env)
             )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": content,
-                    "status": status,
-                }
-            )
-            records.append(record)
+            self._emit(messages, records, tool_call_id, content, status, record)
 
         return messages, records

@@ -9,12 +9,14 @@ import json
 import re
 from typing import TYPE_CHECKING
 
-from ..logger.logging_core import _PackageLogger
+from ..logger import get_logger
 from ..tools import ARTIFACT_THRESHOLD
 from ..utils import extract_message
 
 if TYPE_CHECKING:
     from ..llm import LLM
+
+logger = get_logger(__name__)
 
 # Single source of truth lives in tools.ARTIFACT_THRESHOLD: the artifact-separation
 # boundary and this truncation boundary are the same concept (large tool output).
@@ -40,7 +42,6 @@ def validate_tool_output(
     result: str,
     func_name: str,
     session_log_path: str | None,
-    logger: _PackageLogger,
     is_summary: bool = False,
 ) -> str:
     """Replace empty output and truncate oversized output to the limit."""
@@ -77,7 +78,6 @@ def summarize_artifact(
     artifact: dict,
     func_name: str,
     tool_call_id: str,
-    logger: _PackageLogger,
 ) -> str:
     """Summarize an offloaded artifact for the model, pointing at the full copy."""
     logger.tool(

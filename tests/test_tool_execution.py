@@ -15,9 +15,12 @@ from my_coding_agent.tool_execution import (
     MAX_TOOL_OUTPUT_CHARS,
     TOOL_SCHEMA_VERSION,
     _extract_summary,
+    args,
     build_tool_result,
+    output,
     validate_tool_result,
 )
+from my_coding_agent.tool_execution.result_schema import result_envelope
 from my_coding_agent.tools import ToolsRegistry
 
 
@@ -81,53 +84,48 @@ def test_validate_tool_result_rejects_malformed(bad):
 # Locks how raw tool returns become the canonical envelope, per source shape.
 
 
-def test_envelope_bash_success_folds_stdout_and_metadata(bare_executor):
+def test_envelope_bash_success_folds_stdout_and_metadata():
     raw = json.dumps({"stdout": "hi", "stderr": "", "exit_code": 0, "ok": True})
-    env = bare_executor._result_envelope("bash", raw, False, False, "c1")
+    env = result_envelope("bash", raw, False, False, "c1")
     assert env["ok"] is True
     assert env["output"] == "hi"
     assert env["error"] is None
     assert env["metadata"]["exit_code"] == 0
 
 
-def test_envelope_bash_failure_duplicates_stderr_into_error_and_metadata(bare_executor):
+def test_envelope_bash_failure_duplicates_stderr_into_error_and_metadata():
     # CURRENT behavior (locked, not endorsed): stderr appears in BOTH error and
     # metadata.stderr. Issue #55 will dedup this; until then the net pins it.
     raw = json.dumps({"stdout": "", "stderr": "boom", "exit_code": 1, "ok": False})
-    env = bare_executor._result_envelope("bash", raw, False, False, "c1")
+    env = result_envelope("bash", raw, False, False, "c1")
     assert env["ok"] is False
     assert env["error"] == "boom"
     assert env["metadata"]["stderr"] == "boom"
     assert env["metadata"]["exit_code"] == 1
 
 
-def test_envelope_error_string_convention_marks_failure(bare_executor):
-    env = bare_executor._result_envelope("read_file", "Error: nope", False, False, "c1")
+def test_envelope_error_string_convention_marks_failure():
+    env = result_envelope("read_file", "Error: nope", False, False, "c1")
     assert env["ok"] is False
     assert env["error"] == "Error: nope"
     assert env["output"] == ""
 
 
-def test_envelope_plain_string_is_success(bare_executor):
-    env = bare_executor._result_envelope("read_file", "done", False, False, "c1")
+def test_envelope_plain_string_is_success():
+    env = result_envelope("read_file", "done", False, False, "c1")
     assert env["ok"] is True
     assert env["output"] == "done"
     assert env["error"] is None
 
 
-def test_envelope_truncated_flag_is_recorded(bare_executor):
-    env = bare_executor._result_envelope("read_file", "done", False, True, "c1")
+def test_envelope_truncated_flag_is_recorded():
+    env = result_envelope("read_file", "done", False, True, "c1")
     assert env["metadata"]["truncated"] is True
 
 
-def test_envelope_artifact_branch_reads_stored_artifact(bare_executor):
-    bare_executor.tool_artifacts["c1"] = {
-        "stdout": "x",
-        "stderr": "err",
-        "exit_code": 1,
-        "ok": False,
-    }
-    env = bare_executor._result_envelope("bash", "summary text", True, False, "c1")
+def test_envelope_artifact_branch_reads_stored_artifact():
+    artifact = {"stdout": "x", "stderr": "err", "exit_code": 1, "ok": False}
+    env = result_envelope("bash", "summary text", True, False, "c1", artifact)
     assert env["ok"] is False
     assert env["output"] == "summary text"
     assert env["error"] == "err"
@@ -138,13 +136,13 @@ def test_envelope_artifact_branch_reads_stored_artifact(bare_executor):
 # ── characterization: tool-call parsing (parse_tool_call) ─────────────────────
 
 
-def test_parse_tool_call_valid(bare_executor):
+def test_parse_tool_call_valid():
     tc = {
         "id": "c1",
         "type": "function",
         "function": {"name": "bash", "arguments": json.dumps({"command": "ls"})},
     }
-    assert bare_executor.parse_tool_call(tc) == ("c1", "bash", {"command": "ls"}, None)
+    assert args.parse_tool_call(tc) == ("c1", "bash", {"command": "ls"}, None)
 
 
 @pytest.mark.parametrize(
@@ -166,35 +164,35 @@ def test_parse_tool_call_valid(bare_executor):
         ),
     ],
 )
-def test_parse_tool_call_errors(bare_executor, tc, needle):
-    _id, _name, args, error = bare_executor.parse_tool_call(tc)
+def test_parse_tool_call_errors(tc, needle):
+    _id, _name, _args, error = args.parse_tool_call(tc)
     assert error is not None and needle in error
 
 
 # ── characterization: argument preparation ────────────────────────────────────
 
 
-def test_apply_arg_aliases_remaps_known_wrong_name(bare_executor):
-    assert bare_executor._apply_arg_aliases("bash", {"path": "ls"}) == {"command": "ls"}
+def test_apply_arg_aliases_remaps_known_wrong_name():
+    assert args.apply_arg_aliases("bash", {"path": "ls"}) == {"command": "ls"}
 
 
-def test_strip_unknown_args_drops_kwargs_not_in_signature(bare_executor):
-    cleaned = bare_executor._strip_unknown_args("bash", {"command": "ls", "bogus": 1})
+def test_strip_unknown_args_drops_kwargs_not_in_signature():
+    cleaned = args.strip_unknown_args("bash", {"command": "ls", "bogus": 1})
     assert cleaned == {"command": "ls"}
 
 
-# ── characterization: output validation (_validate_tool_output) ───────────────
+# ── characterization: output validation (validate_tool_output) ────────────────
 
 
-def test_validate_output_replaces_empty(bare_executor):
-    assert bare_executor._validate_tool_output("   ", "bash") == (
+def test_validate_output_replaces_empty():
+    assert output.validate_tool_output("   ", "bash", None) == (
         "(tool returned empty output)"
     )
 
 
-def test_validate_output_truncates_oversized(bare_executor):
+def test_validate_output_truncates_oversized():
     long = "x" * (MAX_TOOL_OUTPUT_CHARS * 2)
-    out = bare_executor._validate_tool_output(long, "read_file")
+    out = output.validate_tool_output(long, "read_file", None)
     assert "[output truncated" in out
     assert len(out) < len(long)
 

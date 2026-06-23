@@ -14,7 +14,11 @@ src/my_coding_agent/
 ├── agent.py                ← Agent loop (holds an LLM client; delegates routing + execution)
 ├── llm.py                  ← LLM HTTP client (pure client)
 ├── tool_routing.py         ← ToolRouter (two-phase tool selection)
-├── tool_execution.py       ← ToolExecutor (tool dispatch + artifacts)
+├── tool_execution/         ← ToolExecutor + its pure helpers (package)
+│   ├── __init__.py         ← ToolExecutor: orchestration, hooks, dispatch + retry
+│   ├── result_schema.py    ← Canonical envelope: build/validate/normalize (pure)
+│   ├── args.py             ← Tool-call parse + alias remap + kwarg strip (pure)
+│   └── output.py           ← Summary extraction, truncation, artifact summary
 ├── tools.py                ← Tool registry and decorator
 ├── handoff.py              ← Context reset / handoff state transfer
 ├── logger/                 ← Logging, session-log capture, terminal UI (package)
@@ -52,13 +56,25 @@ Tool routing and tool execution are **not** on `LLM` — they live in the `ToolR
 
 Holds the LLM client and selects the relevant tool subset for a message via **`route_tools(message, all_tools)`** — two-phase selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback (`client.chat_completion(..., kind="tool_router")`) if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included.
 
-### `ToolExecutor` (`tool_execution.py`)
+### `ToolExecutor` (`tool_execution/` package)
 
-Holds the LLM client AND owns the `tool_artifacts` store (execution state). Runs every tool call requested in an LLM response:
+A package split by responsibility: the `ToolExecutor` class (`__init__.py`) is the
+stateful **orchestrator** — it holds the LLM client and owns the `tool_artifacts`
+store — and **composes** three pure sibling modules (no client, no state, no I/O)
+by calling their functions directly at each step rather than through wrapper
+methods:
 
-- **`execute_tool_calls(message, conversation, tools)`** — iterates tool-call requests, dispatches each through `invoke_tool`, collects results back as `role: tool` messages. The `conversation` and `tools` are passed in explicitly (not read off the client) so the executor stays decoupled from the agent loop's state.
-- **`invoke_tool(...)`** — calls the tool function with up to `_MAX_ARG_RETRIES` retries; on `TypeError` it asks the LLM to correct the arguments (`tool_arg_correction` call) before retrying. Recoverable exceptions become `ok:false` results; non-recoverable ones re-raise. It returns the canonical envelope (below), not a raw string.
-- **Canonical tool-output schema** — this is the single choke point that enforces a uniform contract on *every* result that reaches the agent (direct results, summarized artifacts, skips, parse/arg errors, raised exceptions). Each is normalized via `build_tool_result()` into one envelope — `{schema_version, tool, ok, output, error, metadata}`, modeled on bash's `ok`/`exit_code` — and checked with `validate_tool_result()` before being serialized to JSON for the model. `output` carries the raw payload (stdout / file content / report / summary); tool-specific extras (`exit_code`, `stderr`, `file_path`, `artifact`, `truncated`, `summarized`, …) live in the flexible `metadata` bag. Failure is detected from bash-style `ok`/`exit_code`, the stored artifact, the `Error…` string convention, or an exception, giving the agent **and** the viewer one consistent success/failure signal.
+- **`result_schema.py`** — the canonical-envelope contract: `build_tool_result()`,
+  `validate_tool_result()`, and `result_envelope()` (source-shape normalizer).
+- **`args.py`** — `parse_tool_call()`, `apply_arg_aliases()`, `strip_unknown_args()`.
+- **`output.py`** — `_extract_summary()`, `validate_tool_output()` (truncation),
+  `summarize_artifact()` (takes the client as an injected dependency).
+
+The orchestrator's own methods each do real work (no pass-through delegators):
+
+- **`execute_tool_calls(message, conversation, tools)`** — iterates tool-call requests, dispatches each through `invoke_tool`, collects results back as `role: tool` messages via the `_emit` helper. The `conversation` and `tools` are passed in explicitly (not read off the client) so the executor stays decoupled from the agent loop's state.
+- **`invoke_tool(...)`** — calls the tool function with up to `_MAX_ARG_RETRIES` retries; on `TypeError` it asks the LLM to correct the arguments (`tool_arg_correction` call) before retrying. Recoverable exceptions become `ok:false` results; non-recoverable ones re-raise. It returns the canonical envelope, not a raw string.
+- **Canonical tool-output schema** — the single choke point that enforces a uniform contract on *every* result that reaches the agent (direct results, summarized artifacts, skips, parse/arg errors, raised exceptions). Each is normalized via `result_schema` into one envelope — `{schema_version, tool, ok, output, error, metadata}`, modeled on bash's `ok`/`exit_code` — and checked with `validate_tool_result()` before being serialized to JSON for the model. `output` carries the raw payload (stdout / file content / report / summary); tool-specific extras (`exit_code`, `stderr`, `file_path`, `artifact`, `truncated`, `summarized`, …) live in the flexible `metadata` bag. Failure is detected from bash-style `ok`/`exit_code`, the stored artifact, the `Error…` string convention, or an exception, giving the agent **and** the viewer one consistent success/failure signal.
 - **Artifact separation** — when a tool returns a `(None, dict)` tuple (bash output above `ARTIFACT_THRESHOLD`), the full dict is stored in `self.tool_artifacts[tool_call_id]` and an LLM-generated summary (kind `tool_output_summarizer`) is sent back instead. The summarizer prompt asks the model to wrap its answer in `<summary>…</summary>`, which `_extract_summary` extracts (falling back to stripping `<think>` blocks) so reasoning never leaks into the result. The full artifact is retrievable via the `read_tool_artifact` tool.
 - **Arg aliases** — a static map remaps common model hallucinations (e.g. `bash(path=)` → `bash(command=)`) before dispatch; unknown kwargs are stripped to the tool's signature.
 

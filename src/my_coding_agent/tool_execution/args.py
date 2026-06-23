@@ -7,9 +7,11 @@ state. Each takes the executor's logger so log output stays attributed to it.
 import inspect
 import json
 
-from ..logger.logging_core import _PackageLogger
+from ..logger import get_logger
 from ..tools import ToolsRegistry
 from ..utils import parse_tool_args
+
+logger = get_logger(__name__)
 
 # Known parameter aliases: maps wrong arg name → correct arg name per tool.
 # Handles recurring model hallucinations
@@ -35,7 +37,7 @@ _ARG_ALIASES: dict[str, dict[str, str]] = {
 
 
 def parse_tool_call(
-    tool_call: dict, logger: _PackageLogger
+    tool_call: dict,
 ) -> tuple[str, str | None, dict | None, str | None]:
     """Parse and validate a raw tool_call dict from the LLM response.
 
@@ -93,7 +95,7 @@ def parse_tool_call(
     return tool_call_id, func_name, args, None
 
 
-def apply_arg_aliases(func_name: str, args: dict, logger: _PackageLogger) -> dict:
+def apply_arg_aliases(func_name: str, args: dict) -> dict:
     """Remap known wrong parameter names to their correct names for func_name."""
     for wrong, correct in _ARG_ALIASES.get(func_name, {}).items():
         if wrong in args and correct not in args:
@@ -104,7 +106,7 @@ def apply_arg_aliases(func_name: str, args: dict, logger: _PackageLogger) -> dic
     return args
 
 
-def strip_unknown_args(func_name: str, args: dict, logger: _PackageLogger) -> dict:
+def strip_unknown_args(func_name: str, args: dict) -> dict:
     """Drop kwargs not in the tool's signature, logging each dropped arg.
 
     This prevents TypeError from hallucinated parameters (e.g. file_path on bash)

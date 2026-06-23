@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from my_coding_agent.tool_execution import MAX_TOOL_OUTPUT_CHARS
+from my_coding_agent.tool_execution import MAX_TOOL_OUTPUT_CHARS, output
 from my_coding_agent.tools import ToolsRegistry
 
 
@@ -252,30 +252,27 @@ def test_route_tools_phase2_extracts_array_from_prose(bare_router, mocker):
     assert "read_article" in selected
 
 
-# --- _validate_tool_output ---------------------------------------------------
+# --- validate_tool_output ----------------------------------------------------
 
 
-def test_validate_tool_output_empty_returns_placeholder(bare_executor):
-    bare_executor.client._session_log_path = None
-    out = bare_executor._validate_tool_output("   ", "bash")
+def test_validate_tool_output_empty_returns_placeholder():
+    out = output.validate_tool_output("   ", "bash", None)
     assert out == "(tool returned empty output)"
 
 
-def test_validate_tool_output_truncates_oversized(bare_executor):
-    bare_executor.client._session_log_path = "/tmp/log"
+def test_validate_tool_output_truncates_oversized():
     big = "y" * (MAX_TOOL_OUTPUT_CHARS + 50)
-    out = bare_executor._validate_tool_output(big, "read_file")
+    out = output.validate_tool_output(big, "read_file", "/tmp/log")
     assert "[output truncated" in out
     assert "/tmp/log" in out
 
 
-def test_validate_tool_output_summary_not_truncated(bare_executor):
-    bare_executor.client._session_log_path = None
+def test_validate_tool_output_summary_not_truncated():
     big = "z" * (MAX_TOOL_OUTPUT_CHARS + 50)
-    assert bare_executor._validate_tool_output(big, "bash", is_summary=True) == big
+    assert output.validate_tool_output(big, "bash", None, is_summary=True) == big
 
 
-# --- _summarize_artifact -----------------------------------------------------
+# --- summarize_artifact ------------------------------------------------------
 
 
 def test_summarize_artifact_uses_llm_summary(bare_executor, mocker):
@@ -284,8 +281,8 @@ def test_summarize_artifact_uses_llm_summary(bare_executor, mocker):
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "all good"}}]}),
     )
-    out = bare_executor._summarize_artifact(
-        {"exit_code": 0, "ok": True}, "bash", "call_1"
+    out = output.summarize_artifact(
+        bare_executor.client, {"exit_code": 0, "ok": True}, "bash", "call_1"
     )
     assert out.startswith("all good")
     assert 'read_tool_artifact(tool_call_id="call_1")' in out
@@ -295,8 +292,11 @@ def test_summarize_artifact_falls_back_on_llm_failure_bash(bare_executor, mocker
     mocker.patch.object(
         bare_executor.client, "chat_completion", side_effect=RuntimeError("boom")
     )
-    out = bare_executor._summarize_artifact(
-        {"exit_code": 2, "ok": False, "stdout": "abc", "stderr": ""}, "bash", "c1"
+    out = output.summarize_artifact(
+        bare_executor.client,
+        {"exit_code": 2, "ok": False, "stdout": "abc", "stderr": ""},
+        "bash",
+        "c1",
     )
     head = json.loads(out.split("\n[Full output")[0])
     assert head == {"exit_code": 2, "ok": False, "stdout_chars": 3, "stderr_chars": 0}
@@ -306,8 +306,11 @@ def test_summarize_artifact_falls_back_on_llm_failure_file(bare_executor, mocker
     mocker.patch.object(
         bare_executor.client, "chat_completion", side_effect=RuntimeError("boom")
     )
-    out = bare_executor._summarize_artifact(
-        {"content": "...", "file_path": "/a.txt", "size": 99}, "read_file", "c2"
+    out = output.summarize_artifact(
+        bare_executor.client,
+        {"content": "...", "file_path": "/a.txt", "size": 99},
+        "read_file",
+        "c2",
     )
     head = json.loads(out.split("\n[Full output")[0])
     assert head == {"file_path": "/a.txt", "size": 99}
@@ -667,10 +670,9 @@ def test_correct_args_returns_none_on_unparseable_args(bare_executor, mocker):
 # --- _validate_tool_output bash non-JSON warning -----------------------------
 
 
-def test_validate_tool_output_warns_on_non_json_bash(bare_executor):
-    bare_executor.client._session_log_path = None
+def test_validate_tool_output_warns_on_non_json_bash():
     # Non-JSON bash output passes through unchanged (the warning is a side effect).
-    out = bare_executor._validate_tool_output("plain text not json", "bash")
+    out = output.validate_tool_output("plain text not json", "bash", None)
     assert out == "plain text not json"
 
 
