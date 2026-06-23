@@ -10,13 +10,19 @@ artifacts with an LLM-generated summary returned to the model.
 
 import inspect
 import json
-import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
 from ..logger import get_logger
-from ..tools import ARTIFACT_THRESHOLD, ToolsRegistry
+from ..tools import ToolsRegistry
 from ..utils import extract_message, parse_tool_args
+from . import args as arg_prep
+from .output import (
+    MAX_TOOL_OUTPUT_CHARS,
+    _extract_summary,
+    summarize_artifact,
+    validate_tool_output,
+)
 from .result_schema import (
     TOOL_SCHEMA_VERSION,
     build_tool_result,
@@ -34,11 +40,8 @@ __all__ = [
     "TOOL_SCHEMA_VERSION",
     "build_tool_result",
     "validate_tool_result",
+    "_extract_summary",
 ]
-
-# Single source of truth lives in tools.ARTIFACT_THRESHOLD: the artifact-separation
-# boundary and this truncation boundary are the same concept (large tool output).
-MAX_TOOL_OUTPUT_CHARS = ARTIFACT_THRESHOLD
 
 # Exceptions the LLM can recover from — returned as error content, not re-raised.
 # Anything not in this tuple hard-stops the agent loop via re-raise.
@@ -53,46 +56,10 @@ _RECOVERABLE_EXCEPTIONS = (
 # Max retries for the inner arg-correction loop before falling back to error result.
 _MAX_ARG_RETRIES: int = 3
 
-_SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL | re.IGNORECASE)
-_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
-
-
-def _extract_summary(content: str) -> str:
-    """Return only the summary, dropping any model thinking/preamble.
-
-    Prefers the explicit ``<summary>...</summary>`` block the prompt asks for;
-    otherwise strips ``<think>...</think>`` reasoning blocks and returns the rest.
-    """
-    match = _SUMMARY_RE.search(content)
-    if match:
-        return match.group(1).strip()
-    return _THINK_RE.sub("", content).strip()
-
-
-# The canonical tool-output schema (build/validate/envelope) lives in
-# ``result_schema`` — a pure data-contract module the executor composes.
-
-# Known parameter aliases: maps wrong arg name → correct arg name per tool.
-# Handles recurring model hallucinations
-# (e.g. bash(path=) instead of bash(command=)).
-_ARG_ALIASES: dict[str, dict[str, str]] = {
-    "bash": {
-        "path": "command",
-        "cmd": "command",
-        "script": "command",
-        "shell": "command",
-    },
-    "read_file": {
-        "path": "file_path",
-        "filename": "file_path",
-        "filepath": "file_path",
-    },
-    "write_file": {
-        "path": "file_path",
-        "filename": "file_path",
-        "filepath": "file_path",
-    },
-}
+# Data contract, output post-processing, and argument prep live in the sibling
+# modules result_schema / output / args; the executor below composes them. The
+# canonical schema (build/validate/envelope), the truncation limit
+# (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported above.
 
 
 class ToolExecutor:
@@ -120,179 +87,36 @@ class ToolExecutor:
     def _validate_tool_output(
         self, result: str, func_name: str, is_summary: bool = False
     ) -> str:
-        if not result.strip():
-            return "(tool returned empty output)"
-        if not is_summary and len(result) > MAX_TOOL_OUTPUT_CHARS:
-            log_hint = (
-                f" Use read_file(file_path='{self.client._session_log_path}') "
-                "to inspect the full output."
-                if self.client._session_log_path
-                else ""
-            )
-            self.logger.warning(
-                "tool output truncated: %s returned %d chars (limit %d)",
-                func_name,
-                len(result),
-                MAX_TOOL_OUTPUT_CHARS,
-            )
-            result = (
-                result[:MAX_TOOL_OUTPUT_CHARS]
-                + f"\n[output truncated at {MAX_TOOL_OUTPUT_CHARS} chars —"
-                + f" full output is in the session log.{log_hint}]"
-            )
-        if func_name == "bash" and not is_summary:
-            try:
-                json.loads(result.split("\n[output truncated")[0])
-            except json.JSONDecodeError:
-                self.logger.warning("bash tool returned non-JSON output")
-        return result
+        """Adapter over :func:`output.validate_tool_output` (injects the log path)."""
+        return validate_tool_output(
+            result,
+            func_name,
+            self.client._session_log_path,
+            self.logger,
+            is_summary,
+        )
 
     def _summarize_artifact(
         self, artifact: dict, func_name: str, tool_call_id: str
     ) -> str:
-        self.logger.tool(
-            "%s → %s: artifact %s chars (summarizing for model)",
-            tool_call_id,
-            func_name,
-            len(json.dumps(artifact)),
-        )
-        prompt = (
-            "/no_think\n"
-            f"Summarize the following `{func_name}` tool output concisely "
-            "for an AI coding agent. "
-            "Include: exit status, key findings, any errors, and what the "
-            "agent needs to know to continue its task. "
-            "Be factual and brief — 3 to 8 sentences max.\n"
-            "Output ONLY the summary itself — no reasoning, analysis, planning, "
-            "or preamble. Wrap the summary in <summary>...</summary> tags.\n\n"
-            f"Output:\n{json.dumps(artifact, indent=2)[:12_000]}"
-        )
-        try:
-            resp = self.client.chat_completion(
-                [{"role": "user", "content": prompt}],
-                tools=[],
-                kind="tool_output_summarizer",
-                max_tokens=512,
-            )
-            summary = _extract_summary(extract_message(resp).get("content") or "")
-        except Exception as exc:
-            self.logger.warning("artifact summarization failed: %s", exc)
-            if "content" in artifact:
-                summary = json.dumps(
-                    {
-                        "file_path": artifact.get("file_path"),
-                        "size": artifact.get("size"),
-                    }
-                )
-            else:
-                summary = json.dumps(
-                    {
-                        "exit_code": artifact.get("exit_code"),
-                        "ok": artifact.get("ok"),
-                        "stdout_chars": len(artifact.get("stdout", "")),
-                        "stderr_chars": len(artifact.get("stderr", "")),
-                    }
-                )
-        return summary.strip() + (
-            f"\n\n[Full output stored as artifact — use "
-            f'read_tool_artifact(tool_call_id="{tool_call_id}") ONLY if the '
-            "summary above is insufficient to proceed. "
-            "Avoid calling it unless strictly necessary.]"
+        """Adapter over :func:`output.summarize_artifact` (injects the client)."""
+        return summarize_artifact(
+            self.client, artifact, func_name, tool_call_id, self.logger
         )
 
     def parse_tool_call(
         self, tool_call: dict
     ) -> tuple[str, str | None, dict | None, str | None]:
-        """Parse and validate a raw tool_call dict from the LLM response.
-
-        Returns (tool_call_id, func_name, args, error).
-        error is None on success; func_name is set on JSON-parse failure
-        for record creation.
-        """
-        tool_call_id = tool_call.get("id", "unknown_id")
-
-        tool_type = tool_call.get("type")
-        if tool_type is None:
-            self.logger.warning(
-                "skip %s — malformed tool call: missing 'type' field", tool_call_id
-            )
-            return (
-                tool_call_id,
-                None,
-                None,
-                "Error: malformed tool call — missing 'type' field",
-            )
-        if tool_type != "function":
-            self.logger.warning(
-                "skip %s — type '%s' not supported", tool_call_id, tool_type
-            )
-            return (
-                tool_call_id,
-                None,
-                None,
-                f"Error: tool type '{tool_type}' is not supported",
-            )
-
-        func_block = tool_call.get("function")
-        func_name = func_block.get("name") if func_block else None
-        if not func_name:
-            self.logger.warning(
-                "skip %s — malformed tool call: missing 'function.name'", tool_call_id
-            )
-            return (
-                tool_call_id,
-                None,
-                None,
-                "Error: malformed tool call — missing 'function.name'",
-            )
-
-        # func_name is truthy here, which is only possible when func_block is truthy.
-        assert func_block is not None
-        try:
-            args = parse_tool_args(func_block.get("arguments", {}))
-        except json.JSONDecodeError as exc:
-            self.logger.error(
-                "malformed args %s → %s: %s", tool_call_id, func_name, exc
-            )
-            return (
-                tool_call_id,
-                func_name,
-                None,
-                f"Error: could not parse tool arguments as JSON: {exc}",
-            )
-
-        return tool_call_id, func_name, args, None
+        """Adapter over :func:`args.parse_tool_call` (injects the logger)."""
+        return arg_prep.parse_tool_call(tool_call, self.logger)
 
     def _apply_arg_aliases(self, func_name: str, args: dict) -> dict:
-        """Remap known wrong parameter names to their correct names for func_name."""
-        for wrong, correct in _ARG_ALIASES.get(func_name, {}).items():
-            if wrong in args and correct not in args:
-                self.logger.warning(
-                    "arg alias: %s(%s=) → %s(%s=)", func_name, wrong, func_name, correct
-                )
-                args[correct] = args.pop(wrong)
-        return args
+        """Adapter over :func:`args.apply_arg_aliases` (injects the logger)."""
+        return arg_prep.apply_arg_aliases(func_name, args, self.logger)
 
     def _strip_unknown_args(self, func_name: str, args: dict) -> dict:
-        """Drop kwargs not in the tool's signature, logging each dropped arg.
-
-        This prevents TypeError from hallucinated parameters (e.g. file_path on bash)
-        from ever reaching the LLM correction loop, which is unreliable on local models.
-        """
-        func = getattr(ToolsRegistry, func_name, None)
-        if func is None:
-            return args
-        valid = set(inspect.signature(func).parameters)
-        dropped = {k: v for k, v in args.items() if k not in valid}
-        if dropped:
-            for k in dropped:
-                self.logger.warning(
-                    "stripped unknown arg: %s(%s=) — not in tool signature",
-                    func_name,
-                    k,
-                )
-            args = {k: v for k, v in args.items() if k in valid}
-        return args
+        """Adapter over :func:`args.strip_unknown_args` (injects the logger)."""
+        return arg_prep.strip_unknown_args(func_name, args, self.logger)
 
     def before_tool_call(
         self, tool_call_id: str, func_name: str, args: dict
