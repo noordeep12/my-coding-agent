@@ -317,7 +317,22 @@ def test_summarize_artifact_falls_back_on_llm_failure_file(bare_executor, mocker
     assert head == {"file_path": "/a.txt", "size": 99}
 
 
-# --- invoke_tool dispatch (inlined: plain output + artifact tuple) -----------
+def _invoke(executor, tool_call_id, func_name, call_args, registry):
+    """Drive invoke_tool → after_tool_call and return (env, status, record).
+
+    invoke_tool now returns only (raw, failure); the canonical envelope is
+    produced by after_tool_call, so the final result needs both phases.
+    """
+    raw, failure = executor.invoke_tool(
+        tool_call_id, func_name, call_args, registry, {}, [], []
+    )
+    content, status, record = executor.after_tool_call(
+        tool_call_id, func_name, call_args, raw, failure
+    )
+    return json.loads(content), status, record
+
+
+# --- invoke_tool dispatch (post-processed: plain output + artifact tuple) ----
 
 
 def test_invoke_tool_plain_string_not_truncated(bare_executor, tmp_path):
@@ -325,8 +340,8 @@ def test_invoke_tool_plain_string_not_truncated(bare_executor, tmp_path):
     f = tmp_path / "f.txt"
     f.write_text("data")
     reg = ToolsRegistry(base_dir=str(tmp_path))
-    env, status, record = bare_executor.invoke_tool(
-        "c1", "read_file", {"file_path": str(f)}, reg, {}, [], None
+    env, status, record = _invoke(
+        bare_executor, "c1", "read_file", {"file_path": str(f)}, reg
     )
     assert status == "success"
     assert env["output"] == "data"
@@ -348,8 +363,8 @@ def test_invoke_tool_artifact_tuple_is_summarized(bare_executor, mocker):
             {"exit_code": 0, "ok": True, "stdout": "x", "stderr": ""},
         ),
     )
-    env, status, record = bare_executor.invoke_tool(
-        "c1", "bash", {"command": "x"}, ToolsRegistry(), {}, [], None
+    env, status, record = _invoke(
+        bare_executor, "c1", "bash", {"command": "x"}, ToolsRegistry()
     )
     assert "summary" in env["output"]
     assert record["artifact"] is True
@@ -364,12 +379,12 @@ def test_invoke_tool_success(bare_executor, tmp_path):
     f = tmp_path / "f.txt"
     f.write_text("hello")
     reg = ToolsRegistry(base_dir=str(tmp_path))
-    result, status, record = bare_executor.invoke_tool(
-        "c1", "read_file", {"file_path": str(f)}, reg, {}, [], []
+    env, status, record = _invoke(
+        bare_executor, "c1", "read_file", {"file_path": str(f)}, reg
     )
-    assert result["ok"] is True
-    assert result["output"] == "hello"
-    assert result["tool"] == "read_file"
+    assert env["ok"] is True
+    assert env["output"] == "hello"
+    assert env["tool"] == "read_file"
     assert status == "success"
     assert record["ok"] is True
 
@@ -384,8 +399,8 @@ def test_invoke_tool_bash_success_envelope(bare_executor):
                 {"stdout": "hi", "stderr": "", "exit_code": 0, "ok": True}
             )
 
-    env, status, record = bare_executor.invoke_tool(
-        "c1", "bash", {"command": "echo hi"}, _Reg(), {}, [], []
+    env, status, record = _invoke(
+        bare_executor, "c1", "bash", {"command": "echo hi"}, _Reg()
     )
     assert env["ok"] is True
     assert env["output"] == "hi"
@@ -404,8 +419,8 @@ def test_invoke_tool_bash_failure_envelope(bare_executor):
                 {"stdout": "", "stderr": "boom", "exit_code": 1, "ok": False}
             )
 
-    env, status, record = bare_executor.invoke_tool(
-        "c1", "bash", {"command": "false"}, _Reg(), {}, [], []
+    env, status, record = _invoke(
+        bare_executor, "c1", "bash", {"command": "false"}, _Reg()
     )
     assert env["ok"] is False
     assert env["error"] == "boom"
@@ -418,8 +433,8 @@ def test_invoke_tool_error_string_becomes_failure(bare_executor, tmp_path):
     """A tool that returns an 'Error…' string (no exception) is flagged failure."""
     bare_executor.client._session_log_path = None
     reg = ToolsRegistry(base_dir=str(tmp_path))
-    env, status, _ = bare_executor.invoke_tool(
-        "c1", "read_file", {"file_path": str(tmp_path / "nope.txt")}, reg, {}, [], []
+    env, status, _ = _invoke(
+        bare_executor, "c1", "read_file", {"file_path": str(tmp_path / "nope.txt")}, reg
     )
     assert env["ok"] is False
     assert "not found" in env["error"]
@@ -427,26 +442,28 @@ def test_invoke_tool_error_string_becomes_failure(bare_executor, tmp_path):
 
 
 def test_invoke_tool_unknown_tool_returns_error(bare_executor):
-    reg = ToolsRegistry()
-    result, status, record = bare_executor.invoke_tool(
-        "c1", "does_not_exist", {}, reg, {}, [], []
+    env, status, record = _invoke(
+        bare_executor, "c1", "does_not_exist", {}, ToolsRegistry()
     )
     assert status == "error"
-    assert result["ok"] is False
-    assert "not found" in result["error"]
+    assert env["ok"] is False
+    assert "not found" in env["error"]
     assert record["ok"] is False
 
 
 def test_invoke_tool_recoverable_exception_returns_error(bare_executor):
     """read_file traversal raises PathTraversalError (a ValueError), recoverable."""
     bare_executor.client._session_log_path = None
-    reg = ToolsRegistry()  # base_dir = cwd
-    result, status, record = bare_executor.invoke_tool(
-        "c1", "read_file", {"file_path": "../../../etc/passwd"}, reg, {}, [], []
+    env, status, record = _invoke(
+        bare_executor,
+        "c1",
+        "read_file",
+        {"file_path": "../../../etc/passwd"},
+        ToolsRegistry(),  # base_dir = cwd
     )
     assert status == "error"
-    assert result["ok"] is False
-    assert "PathTraversalError" in result["error"]
+    assert env["ok"] is False
+    assert "PathTraversalError" in env["error"]
     assert record["ok"] is False
 
 
@@ -480,11 +497,9 @@ def test_invoke_tool_corrects_wrong_args_then_succeeds(bare_executor, mocker):
         "my_coding_agent.tool_execution.args.correct_args",
         return_value={"file_path": "ok"},
     )
-    result, status, _ = bare_executor.invoke_tool(
-        "c1", "read_file", {"wrong": "x"}, _Reg(), {}, [], []
-    )
+    env, status, _ = _invoke(bare_executor, "c1", "read_file", {"wrong": "x"}, _Reg())
     assert status == "success"
-    assert result["output"] == "read ok"
+    assert env["output"] == "read ok"
 
 
 # --- execute_tool_calls (full flow) ------------------------------------------
@@ -724,15 +739,15 @@ def test_before_tool_call_hook_can_skip(bare_executor):
     assert bare_executor.before_tool_call("c1", "bash", {"command": "ls"}) is None
 
 
-def test_after_tool_call_applies_hook(bare_executor):
+def test_after_hook_applies_to_result(bare_executor):
     bare_executor.client._after_hook = lambda name, args, result: result.upper()
-    assert bare_executor.after_tool_call("c1", "bash", {}, "ok") == "OK"
+    assert bare_executor._apply_after_hook("c1", "bash", {}, "ok") == "OK"
 
 
-def test_after_tool_call_swallows_hook_exception(bare_executor):
+def test_after_hook_swallows_exception(bare_executor):
     def _raises(name, args, result):
         raise RuntimeError("hook broke")
 
     bare_executor.client._after_hook = _raises
     # On hook failure the original result is returned unchanged.
-    assert bare_executor.after_tool_call("c1", "bash", {}, "original") == "original"
+    assert bare_executor._apply_after_hook("c1", "bash", {}, "original") == "original"

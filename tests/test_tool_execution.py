@@ -206,16 +206,29 @@ def _registry(executor, base_dir=None):
     return ToolsRegistry(artifacts=executor.tool_artifacts, tools=[], base_dir=base_dir)
 
 
+def _invoke(executor, tool_call_id, func_name, call_args, registry):
+    """Drive invoke_tool → after_tool_call and return (env, status, record).
+
+    The two-phase contract (invoke = call+retries, after = post-process) means
+    the final envelope only exists once both have run; this stitches them.
+    """
+    raw, failure = executor.invoke_tool(
+        tool_call_id, func_name, call_args, registry, {"id": tool_call_id}, [], None
+    )
+    content, status, record = executor.after_tool_call(
+        tool_call_id, func_name, call_args, raw, failure
+    )
+    return json.loads(content), status, record
+
+
 def test_invoke_tool_success(bare_executor, tmp_path):
     target = tmp_path / "out.txt"
-    env, status, record = bare_executor.invoke_tool(
+    env, status, record = _invoke(
+        bare_executor,
         "c1",
         "write_file",
         {"file_path": "out.txt", "content": "hi"},
         _registry(bare_executor, str(tmp_path)),
-        {"id": "c1"},
-        [],
-        None,
     )
     assert status == "success"
     assert env["ok"] is True
@@ -224,23 +237,19 @@ def test_invoke_tool_success(bare_executor, tmp_path):
 
 
 def test_invoke_tool_not_found(bare_executor):
-    env, status, _ = bare_executor.invoke_tool(
-        "c1", "nope", {}, _registry(bare_executor), {"id": "c1"}, [], None
-    )
+    env, status, _ = _invoke(bare_executor, "c1", "nope", {}, _registry(bare_executor))
     assert status == "error"
     assert env["ok"] is False
     assert env["metadata"]["reason"] == "not_found"
 
 
 def test_invoke_tool_error_string_is_failure(bare_executor, tmp_path):
-    env, status, _ = bare_executor.invoke_tool(
+    env, status, _ = _invoke(
+        bare_executor,
         "c1",
         "read_file",
         {"file_path": "missing.txt"},
         _registry(bare_executor, str(tmp_path)),
-        {"id": "c1"},
-        [],
-        None,
     )
     assert status == "error"
     assert env["ok"] is False
@@ -251,14 +260,8 @@ def test_invoke_tool_recoverable_exception_returns_error(bare_executor, monkeypa
         raise FileNotFoundError("nope")
 
     monkeypatch.setattr(ToolsRegistry, "read_file", boom)
-    env, status, _ = bare_executor.invoke_tool(
-        "c1",
-        "read_file",
-        {"file_path": "x"},
-        _registry(bare_executor),
-        {"id": "c1"},
-        [],
-        None,
+    env, status, _ = _invoke(
+        bare_executor, "c1", "read_file", {"file_path": "x"}, _registry(bare_executor)
     )
     assert status == "error"
     assert env["ok"] is False

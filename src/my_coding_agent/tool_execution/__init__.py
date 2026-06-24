@@ -108,30 +108,6 @@ class ToolExecutor:
             )
         return result
 
-    def after_tool_call(
-        self, tool_call_id: str, func_name: str, args: dict, result: str
-    ) -> str:
-        """Runs after every tool dispatch: apply the user hook to the result."""
-        self.logger.tool(
-            "%s → after_hook %s(%s) → %s", tool_call_id, func_name, args, result
-        )
-        try:
-            modified = self.client._after_hook(func_name, args, result)
-        except Exception as exc:
-            self.logger.error(
-                "%s → after_hook raised %s for %s: %s",
-                tool_call_id,
-                type(exc).__name__,
-                func_name,
-                exc,
-            )
-            return result
-        if modified != result:
-            self.logger.tool(
-                "%s → after_hook modified result for %s", tool_call_id, func_name
-            )
-        return modified
-
     def invoke_tool(
         self,
         tool_call_id: str,
@@ -141,61 +117,28 @@ class ToolExecutor:
         tool_call: dict,
         conversation: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
-    ) -> tuple[dict, str, dict]:
-        """Dispatch func_name with arg-correction retries.
+    ) -> tuple[Any, dict | None]:
+        """Call ``func_name(**args)`` with LLM arg-correction retries.
 
-        Returns (result_envelope, status, record). The envelope is the canonical
-        tool-output schema (see :func:`build_tool_result`).
+        This is the call step only: it returns ``(raw_result, failure)`` — on
+        success the tool's raw return value (str or artifact tuple) and ``None``;
+        on a handled failure ``None`` and a ``{"reason", "error"}`` descriptor.
+        Turning the raw result into the canonical envelope is
+        :meth:`after_tool_call`'s job. Non-recoverable exceptions re-raise.
         """
         if not hasattr(registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
-            env = build_tool_result(func_name, False, "", err, {"reason": "not_found"})
-            return env, "error", error_record(func_name, args, tool_call_id, err)
+            return None, {"reason": "not_found", "error": err}
 
         sig = inspect.signature(getattr(ToolsRegistry, func_name))
 
         for attempt in range(_MAX_ARG_RETRIES + 1):
             try:
-                # Dispatch: call the tool, offload+summarize artifact tuples,
-                # coerce to str, and truncate oversized output.
-                result = getattr(registry, func_name)(**args)
-                is_artifact = isinstance(result, tuple) and len(result) == 2
-                if is_artifact:
-                    _, artifact = result
-                    self.tool_artifacts[tool_call_id] = artifact
-                    result = summarize_artifact(
-                        self.client, artifact, func_name, tool_call_id
-                    )
-                if not isinstance(result, str):
-                    result = str(result)
-                pre_len = len(result)
-                result = validate_tool_output(
-                    result,
-                    func_name,
-                    self.client._session_log_path,
-                    is_summary=is_artifact,
-                )
-                is_truncated = not is_artifact and len(result) < pre_len
+                return getattr(registry, func_name)(**args), None
 
-                self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
-                env = result_envelope(
-                    func_name,
-                    result,
-                    is_artifact,
-                    is_truncated,
-                    tool_call_id,
-                    self.tool_artifacts.get(tool_call_id),
-                )
-                status, record = call_record(
-                    func_name, args, tool_call_id, env, is_artifact, is_truncated
-                )
-                return env, status, record
-
-            except (
-                TypeError
-            ) as wrong_args_exc:  # wrong arguments — attempt correction with the LLM
+            except TypeError as wrong_args_exc:  # wrong arguments — ask the LLM to fix
                 self.logger.error(
                     "wrong args %s → %s (attempt %s/%s): %s",
                     tool_call_id,
@@ -227,20 +170,11 @@ class ToolExecutor:
                         f"{attempt + 1} attempt(s): {wrong_args_exc}. "
                         f"Expected: {func_name}{sig}"
                     )
-                    env = build_tool_result(
-                        func_name, False, "", err, {"reason": "wrong_args"}
-                    )
-                    return (
-                        env,
-                        "error",
-                        error_record(
-                            func_name, args, tool_call_id, str(wrong_args_exc)
-                        ),
-                    )
+                    return None, {"reason": "wrong_args", "error": err}
                 args = corrected_args
 
-            # other errors — log and return as an error result (don't re-raise,
-            # so the agent can keep going)
+            # other errors — return as a failure (don't re-raise, so the agent
+            # can keep going); non-recoverable ones re-raise.
             except Exception as exc:
                 if not isinstance(exc, _RECOVERABLE_EXCEPTIONS):
                     self.logger.error(
@@ -252,16 +186,92 @@ class ToolExecutor:
                     raise
                 self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
                 err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
-                env = build_tool_result(func_name, False, "", err, {"reason": "raised"})
-                return (
-                    env,
-                    "error",
-                    error_record(func_name, args, tool_call_id, str(exc)),
-                )
+                return None, {"reason": "raised", "error": err}
 
-        # Unreachable: the final iteration always returns (success, or an error result
+        # Unreachable: the final iteration always returns (success, or a failure
         # once retries are exhausted). Present so mypy can prove the function returns.
         raise AssertionError("invoke_tool retry loop exited without returning")
+
+    def after_tool_call(
+        self,
+        tool_call_id: str,
+        func_name: str,
+        args: dict,
+        raw_result: Any,
+        failure: dict | None,
+    ) -> tuple[str, str, dict]:
+        """Turn the tool's raw return (or failure) into (content, status, record).
+
+        On failure, builds the error envelope from the ``{reason, error}``
+        descriptor. On success, offloads+summarizes artifact tuples, coerces to
+        str, truncates, and normalizes into the canonical envelope. Then
+        serializes and applies the user after-hook **last**, so the recorder
+        captures the final agent-facing content.
+        """
+        if failure is not None:
+            env = build_tool_result(
+                func_name, False, "", failure["error"], {"reason": failure["reason"]}
+            )
+            status = "error"
+            record = error_record(func_name, args, tool_call_id, failure["error"])
+        else:
+            is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
+            if is_artifact:
+                _, artifact = raw_result
+                self.tool_artifacts[tool_call_id] = artifact
+                result = summarize_artifact(
+                    self.client, artifact, func_name, tool_call_id
+                )
+            else:
+                result = raw_result
+            if not isinstance(result, str):
+                result = str(result)
+            pre_len = len(result)
+            result = validate_tool_output(
+                result, func_name, self.client._session_log_path, is_summary=is_artifact
+            )
+            is_truncated = not is_artifact and len(result) < pre_len
+
+            self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
+            env = result_envelope(
+                func_name,
+                result,
+                is_artifact,
+                is_truncated,
+                tool_call_id,
+                self.tool_artifacts.get(tool_call_id),
+            )
+            status, record = call_record(
+                func_name, args, tool_call_id, env, is_artifact, is_truncated
+            )
+
+        serialized = json.dumps(validate_tool_result(env), default=str)
+        content = self._apply_after_hook(tool_call_id, func_name, args, serialized)
+        return content, status, record
+
+    def _apply_after_hook(
+        self, tool_call_id: str, func_name: str, args: dict, result: str
+    ) -> str:
+        """Apply the user after-hook to the serialized result (recorder capture)."""
+        self.logger.tool(
+            "%s → after_hook %s(%s) → %s", tool_call_id, func_name, args, result
+        )
+        try:
+            modified = self.client._after_hook(func_name, args, result)
+        except Exception as exc:
+            self.logger.error(
+                "%s → after_hook raised %s for %s: %s",
+                tool_call_id,
+                type(exc).__name__,
+                func_name,
+                exc,
+            )
+            return result
+        if modified != result:
+            self.logger.tool(
+                "%s → after_hook modified result for %s", tool_call_id, func_name
+            )
+        return modified
 
     @staticmethod
     def _emit(
@@ -343,10 +353,10 @@ class ToolExecutor:
                 self._emit(messages, records, tool_call_id, content, "skipped", record)
                 continue
 
-            # Invoke the tool with retries for argument correction, and handle
-            # any exceptions.
+            # Call the tool (with arg-correction retries), then post-process its
+            # raw result (or failure) into the final message + record.
             self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
-            env, status, record = self.invoke_tool(
+            raw, failure = self.invoke_tool(
                 tool_call_id,
                 func_name,
                 args,
@@ -355,10 +365,9 @@ class ToolExecutor:
                 conversation,
                 tools,
             )
-
-            # Serialize to the canonical schema, then post-process before the LLM.
-            serialized = json.dumps(validate_tool_result(env), default=str)
-            content = self.after_tool_call(tool_call_id, func_name, args, serialized)
+            content, status, record = self.after_tool_call(
+                tool_call_id, func_name, args, raw, failure
+            )
             self._emit(messages, records, tool_call_id, content, status, record)
 
         return messages, records
