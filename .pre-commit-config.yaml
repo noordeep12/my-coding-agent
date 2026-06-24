@@ -44,9 +44,37 @@ repos:
         language: system
         stages: [commit-msg]
 
+      - id: mypy
+        name: type check (mypy)
+        entry: uv run mypy src
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: pip-audit
+        name: dependency audit (pip-audit)
+        entry: uv run pip-audit
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
       - id: pytest
         name: run test suite
         entry: uv run pytest
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: docs-build
+        name: docs build (sphinx-build -W)
+        entry: uv run sphinx-build -W -b html docs docs/_build/html
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: docs-updated
+        name: documentation must be updated with src/ changes
+        entry: python3 .hooks/check_docs_updated.py
         language: system
         pass_filenames: false
         stages: [pre-commit]

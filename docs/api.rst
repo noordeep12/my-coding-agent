@@ -8,15 +8,6 @@ The package ``my_coding_agent`` re-exports the core types listed in its
    :no-members:
 
 
-Agent
------
-
-.. automodule:: my_coding_agent.agent
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-
 LLM client
 ----------
 
@@ -25,10 +16,70 @@ LLM client
    :show-inheritance:
 
 
-Tool routing
-------------
+Pipeline
+--------
 
-.. automodule:: my_coding_agent.tool_routing
+.. automodule:: my_coding_agent.pipeline.dag
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.context
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.node
+   :members:
+   :show-inheritance:
+
+
+Pipeline nodes
+--------------
+
+.. automodule:: my_coding_agent.pipeline.nodes.agent_node
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.handoff
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.tool_routing
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.tool_dispatch
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.llm_call
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.router
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.context_preflight
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.finish_check
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.pipeline.nodes.token_tracking
+   :members:
+   :show-inheritance:
+
+
+Tool registry
+-------------
+
+.. automodule:: my_coding_agent.tool_registry.registry
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.tool_registry.converter
    :members:
    :show-inheritance:
 
@@ -40,46 +91,54 @@ Tool execution
    :members:
    :show-inheritance:
 
-
-Tool definition
-----------------
-
-.. automodule:: my_coding_agent.tools
+.. automodule:: my_coding_agent.tool_execution.result_schema
    :members:
    :show-inheritance:
 
 
-Context handoff
----------------
+Observability
+-------------
 
-.. automodule:: my_coding_agent.handoff
+.. automodule:: my_coding_agent.observability.recorder
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.observability.records
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.observability.events
    :members:
    :show-inheritance:
 
 
-Exceptions
-----------
-
-.. automodule:: my_coding_agent.exceptions
-   :members:
-   :show-inheritance:
-
-
-Workflows
----------
-
-.. automodule:: my_coding_agent.workflows.main
-   :members:
-   :show-inheritance:
-
-
-Agents
+Logger
 ------
 
-.. automodule:: my_coding_agent.agents.discovery
+.. automodule:: my_coding_agent.logger.logging_core
    :members:
    :show-inheritance:
 
-.. automodule:: my_coding_agent.agents.session_analyzer
+.. automodule:: my_coding_agent.logger.session_log
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.logger.summary
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.logger.banner
+   :members:
+   :show-inheritance:
+
+
+Utilities
+---------
+
+.. automodule:: my_coding_agent.utils.exceptions
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.utils.parsing
    :members:
    :show-inheritance:

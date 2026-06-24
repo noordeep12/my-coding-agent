@@ -6,6 +6,7 @@ session that crashes mid-run still leaves a diagnosable trail. It never touches
 the ``logger`` package — capture is entirely separate from logging.
 
 Wiring (see ``agent.py`` / ``llm.py``):
+
 - ``record_llm_call`` is called at the single LLM choke point, capturing every
   call kind with full conversation snapshots for payload-bearing kinds.
 - ``before_tool`` / ``after_tool`` are installed as the agent's tool hooks to

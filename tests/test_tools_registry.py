@@ -189,3 +189,64 @@ def test_read_article_truncates_long_content(mocker):
     mocker.patch("my_coding_agent.tool_registry.registry.httpx.get", return_value=resp)
     out = ToolsRegistry.read_article("https://example.com")
     assert "truncated" in out
+
+
+# --- delegate ----------------------------------------------------------------
+
+
+def _make_fake_agent(mocker, messages):
+    """Return a mock AgentNode whose execute() returns *messages*."""
+    fake = mocker.Mock()
+    fake.execute.return_value = messages
+    fake.session_id = "abc123"
+    return fake
+
+
+def test_delegate_returns_last_assistant_content(mocker):
+    fake_agent = _make_fake_agent(
+        mocker,
+        [
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "report text"},
+        ],
+    )
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent_node.AgentNode",
+        return_value=fake_agent,
+    )
+    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    assert out == "report text"
+    fake_agent.execute.assert_called_once_with(max_steps=5)
+
+
+def test_delegate_no_report_fallback(mocker):
+    fake_agent = _make_fake_agent(
+        mocker, [{"role": "user", "content": "only user msg"}]
+    )
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent_node.AgentNode",
+        return_value=fake_agent,
+    )
+    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    assert out == "(subagent produced no report)"
+
+
+def test_delegate_excludes_delegate_tool_from_subagent(mocker):
+    """The subagent must not receive the delegate tool to prevent recursion."""
+    fake_agent = _make_fake_agent(mocker, [{"role": "assistant", "content": "ok"}])
+    spy = mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent_node.AgentNode",
+        return_value=fake_agent,
+    )
+    tools = [
+        {"function": {"name": "bash"}},
+        {"function": {"name": "delegate"}},
+    ]
+    reg = ToolsRegistry()
+    reg._tools = tools
+    ToolsRegistry.delegate(reg, task="t", context="c")
+    _, kwargs = spy.call_args
+    passed_tools = kwargs["tools"]
+    names = [t["function"]["name"] for t in passed_tools]
+    assert "delegate" not in names
+    assert "bash" in names

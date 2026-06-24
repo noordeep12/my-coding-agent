@@ -1,7 +1,9 @@
 """Public API for my-coding-agent."""
 
 import logging
+import warnings
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 from .llm import LLM
 from .pipeline.nodes.agent_node import AgentNode
@@ -15,10 +17,8 @@ from .utils.exceptions import (
 )
 
 
-def Agent(*args, **kwargs):
-    """Deprecated: use AgentNode instead."""
-    import warnings
-
+def Agent(*args: Any, **kwargs: Any) -> "AgentNode":
+    """Construct an AgentNode. Deprecated — use AgentNode directly; removed in v0.2.0."""
     warnings.warn(
         "Agent is deprecated and will be removed in v0.2.0. Use AgentNode instead.",
         DeprecationWarning,

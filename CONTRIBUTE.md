@@ -658,7 +658,45 @@ Documentation is not optional — it is the difference between a library that ge
 
 ---
 
-### 41. Security: Additional Patterns
+### 41. Documentation Update Policy
+
+Every change to `src/` **must** be accompanied by a documentation update in the same commit. This is enforced by the `docs-updated` pre-commit hook.
+
+#### What counts as a documentation update
+
+| What changed | Minimum doc to update |
+|---|---|
+| New public function / class / module | Docstring + `docs/` API reference |
+| Behaviour or interface change | `README.md` usage section |
+| Architectural decision or new component | `ARCHITECTURE.md` |
+| Config or CLI flag change | `README.md` |
+| Internal refactor with no observable change | `ARCHITECTURE.md` (note the restructure) |
+
+#### Files the hook monitors
+
+- `README.md` — user-facing usage and behaviour
+- `ARCHITECTURE.md` — structural decisions and component layout
+- `docs/` — Sphinx source (API reference, guides)
+
+#### If a change genuinely needs no doc update
+
+Stage a no-op touch to the most relevant file and explain **why** in the commit body. The hook checks presence, not content depth — the commit body carries the justification.
+
+```bash
+# Example: internal test helper refactor with no observable change
+touch ARCHITECTURE.md
+git add ARCHITECTURE.md
+# commit body: "Internal helper extraction in tests/; no public API or
+# structure change. ARCHITECTURE.md touched to satisfy docs-updated hook."
+```
+
+#### Why this matters
+
+Documentation debt accumulates silently. By the time it is noticed it is expensive to reconstruct — especially for architectural decisions where the original reasoning is lost. Keeping docs in sync at commit time costs seconds; reconstructing them later costs hours.
+
+---
+
+### 42. Security: Additional Patterns
 
 #### Log Injection Prevention
 
@@ -737,7 +775,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
 ---
 
-### 42. Testing: Coverage and Multi-Environment
+### 43. Testing: Coverage and Multi-Environment
 
 #### Coverage: Quality over Quantity
 
@@ -792,7 +830,7 @@ commands = pytest
 
 ---
 
-### 43. Performance: Benchmark → Profile → Optimize
+### 44. Performance: Benchmark → Profile → Optimize
 
 The correct order is always:
 
@@ -819,7 +857,7 @@ Never optimize speculatively. Never rely on intuition about which code is slow.
 
 ---
 
-### 44. Versioning and Release Discipline
+### 45. Versioning and Release Discipline
 
 #### Semantic Versioning Commitment
 
@@ -847,7 +885,7 @@ If you knowingly defer a vulnerability, **document it** with justification and a
 
 ---
 
-### 45. pyproject.toml: Why It Replaced setup.py
+### 46. pyproject.toml: Why It Replaced setup.py
 
 `setup.py` ran arbitrary Python code during installation — a security risk and a source of fragile bootstrapping bugs. `pyproject.toml` is declarative (states *what* the project needs, not *how* to build it), which is:
 
@@ -862,7 +900,7 @@ Key PEPs behind modern packaging:
 
 ---
 
-### 46. Commit Standards
+### 47. Commit Standards
 
 Every commit must answer four questions so any reader — future-self, collaborators,
 AI agents, CI tooling — can understand it in isolation without tracing code.
@@ -899,7 +937,7 @@ git config commit.template .gitmessage
 
 ---
 
-### 47. Conformity Enforcement
+### 48. Conformity Enforcement
 
 Every code change is checked against the project's policy documents (`.claude/CLAUDE.md`,
 `CONTRIBUTE.md`, `ARCHITECTURE.md`, `README.md`) before it can be committed locally. A
