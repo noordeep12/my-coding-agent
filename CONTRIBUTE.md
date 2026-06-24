@@ -902,13 +902,13 @@ git config commit.template .gitmessage
 ### 47. Conformity Enforcement
 
 Every code change is checked against the project's policy documents (`.claude/CLAUDE.md`,
-`CONTRIBUTE.md`, `ARCHITECTURE.md`, `README.md`) before it can be committed locally. Two
-cooperating hooks share `.hooks/conformity.py`:
+`CONTRIBUTE.md`, `ARCHITECTURE.md`, `README.md`) before it can be committed locally. A
+single script, `.hooks/check_conformity_report.py`, runs in two modes:
 
-| Component | Trigger | Role |
-|-----------|---------|------|
-| `.hooks/conformity_report.py` | Claude Code **Stop** hook (end of each turn) | If code under `src/` changed vs HEAD, a headless `claude -p` auditor applies the gap-audit criteria scoped to the changed files and writes `conformity.md` (gitignored) with a verdict and a diff-bound meta block. Fail-closed: state `blocked` if the auditor can't run. |
-| `.hooks/check_conformity_report.py` | git **pre-commit** | Blocks the commit when `conformity.md` is missing, stale (diff-hash mismatch), or in a state other than `pass`/`approved`. |
+| Mode | Trigger | Role |
+|------|---------|------|
+| `--report` | Claude Code **Stop** hook (end of each turn) | If code under `src/` changed vs HEAD, a headless `claude -p` auditor applies the gap-audit criteria scoped to the changed files and writes `conformity.md` (gitignored) with a verdict and a diff-bound meta block. Fail-closed: state `blocked` if the auditor can't run. |
+| _(default)_ | git **pre-commit** | Blocks the commit when `conformity.md` is missing, stale (diff-hash mismatch), or in a state other than `pass`/`approved`. |
 
 `conformity.md` carries a machine-readable meta block read by both hooks:
 
