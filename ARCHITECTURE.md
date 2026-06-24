@@ -49,7 +49,7 @@ The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, an
 - **`chat_completion(messages, tools, kind)`** — single POST to the LLM server; records token usage per call tagged by `kind` (`main`, `handoff`, `tool_router`, `tool_output_summarizer`, `tool_arg_correction`).
 - **`available_models` / `context_window`** — fetch the model list and resolve/cache the context window (128k fallback when unreachable).
 - **`_request_with_retry`** — retries transient connection/timeout failures with backoff.
-- **Hooks** — `before_tool_call` and `after_tool_call` callbacks are stored on the client (`_before_hook`/`_after_hook`). These are now vestigial: the `ToolExecutor` captures tool I/O by calling `llm._recorder` directly rather than reading these callbacks.
+- **Recorder** — the optional observability `Recorder` is attached as `llm._recorder` by the `Agent`; the `ToolExecutor` calls it directly to capture tool I/O. (The old `_before_hook`/`_after_hook` callbacks were removed.)
 
 Tool routing and tool execution are **not** on `LLM` — they live in the `ToolRouter` and `ToolExecutor` collaborators, each of which holds an `LLM` as its `client`.
 

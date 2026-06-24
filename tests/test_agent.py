@@ -435,8 +435,6 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     # The continuation is built from client-side state read off the held client.
     agent.llm.api_url = "http://x"
     agent.llm.api_key = "k"
-    agent.llm._before_hook = lambda n, a: a
-    agent.llm._after_hook = lambda n, a, r: r
     handoff = mocker.Mock()
     handoff.to_user_message.return_value = {"role": "user", "content": "HANDOFF"}
     fake_cont = mocker.Mock()

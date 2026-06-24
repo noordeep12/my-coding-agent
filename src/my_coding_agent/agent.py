@@ -12,7 +12,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from .handoff import ContextHandoff
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
@@ -68,8 +68,6 @@ class Agent:
         tools: list[dict[str, Any]] | None = None,
         label: str = "Agent",
         context_reset_threshold: float = 0.75,
-        before_tool_call: Callable[..., Any] | None = None,
-        after_tool_call: Callable[..., Any] | None = None,
     ) -> None:
         """Initialize the agent and open a session log (no network I/O).
 
@@ -89,8 +87,6 @@ class Agent:
             label: Human-readable name shown in the banner and summary.
             context_reset_threshold: Prompt-token fraction of the context window
                 (0-1) at which a handoff is generated and a continuation spawned.
-            before_tool_call: Optional pre-dispatch hook (see ``LLM``).
-            after_tool_call: Optional post-dispatch hook (see ``LLM``).
         """
         self.session_id = uuid.uuid4().hex[:12]
         self.started_at = datetime.now().isoformat(timespec="seconds")
@@ -101,13 +97,9 @@ class Agent:
         self.recorder = Recorder(
             self.session_id, _session_dir, parent_session_id=current_session_id.get()
         )
-        # Default the tool hooks to the recorder when the caller passed none, so
-        # tool input/output and latency are captured with no extra wiring.
-        _before = before_tool_call or self.recorder.before_tool
-        _after = after_tool_call or self.recorder.after_tool
         # Hold the LLM client via composition (no longer subclass it). The
-        # routing/execution collaborators hold this same client instance.
-        self.llm = LLM(api_url, api_key, model, _before, _after)
+        # ToolExecutor (built per step) captures tool I/O via this recorder.
+        self.llm = LLM(api_url, api_key, model)
         self.llm._recorder = self.recorder
         self._router = ToolRouter(self.llm)
         # A fresh ToolExecutor is built per step (per message); artifacts it
@@ -243,8 +235,6 @@ class Agent:
             tools=self.tools,
             label=f"{self.label} (cont.)",
             context_reset_threshold=self.context_reset_threshold,
-            before_tool_call=self.llm._before_hook,
-            after_tool_call=self.llm._after_hook,
         )
         remaining_steps = max_steps - self.step_num
         return continuation.run(max_steps=max(remaining_steps, 1))

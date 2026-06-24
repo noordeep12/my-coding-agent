@@ -150,7 +150,7 @@ class Recorder:
             }
         )
 
-    # ── tool hooks (installed as the agent's before/after_tool_call) ───────────
+    # ── tool capture (called directly by the ToolExecutor) ─────────────────────
     def before_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Pre-dispatch hook: stamp the start time. Returns args unchanged."""
         self._pending = (time.monotonic(), name)

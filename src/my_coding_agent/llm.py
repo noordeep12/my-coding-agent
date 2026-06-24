@@ -10,7 +10,7 @@ tool execution live in their own collaborators (``routing.ToolRouter`` and
 import json
 import os
 import time
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
@@ -54,8 +54,6 @@ class LLM:
         api_url: str = OMLX_API_URL,
         api_key: str = OMLX_API_KEY,
         model: str = OMLX_MODEL,
-        before_tool_call: Callable[..., Any] | None = None,
-        after_tool_call: Callable[..., Any] | None = None,
         timeout: float = DEFAULT_HTTP_TIMEOUT,
     ) -> None:
         """Initialize the LLM client without performing any network I/O.
@@ -68,10 +66,6 @@ class LLM:
             api_url: Base URL of the OpenAI-compatible API (e.g. ``.../v1``).
             api_key: Bearer token sent on every request.
             model: Model id whose context window is looked up on first use.
-            before_tool_call: Optional ``(name, args) -> args | None`` hook run
-                before each tool dispatch; returning None skips the call.
-            after_tool_call: Optional ``(name, args, result) -> result`` hook run
-                after each tool dispatch to post-process the result.
             timeout: Per-request HTTP timeout in seconds for the session.
         """
         self.api_url = api_url
@@ -88,12 +82,6 @@ class LLM:
         # Optional observability recorder; set by Agent. None → no capture.
         self._recorder: Any = None
         self.llm_calls: list[dict] = []  # one entry per chat_completion call, in order
-        self._before_hook: Callable[[str, dict], dict | None] = before_tool_call or (
-            lambda name, args: args
-        )
-        self._after_hook: Callable[[str, dict, str], str] = after_tool_call or (
-            lambda name, args, result: result
-        )
 
     def setup_session(self) -> None:
         """Create the httpx client and apply auth headers and the timeout.
