@@ -2,7 +2,7 @@
 
 ## Overview
 
-`my-coding-agent` is a hand-rolled Python agent harness. There are no external agent frameworks — the entire agentic loop, tool dispatch, context management, and session persistence are implemented from scratch in ~1,000 lines across a small number of modules.
+`my-coding-agent` is a hand-rolled Python agent harness. There are no external agent frameworks — the entire agentic loop, tool dispatch, context management, and session persistence are implemented from scratch in ~1,200 lines across a small number of modules.
 
 ```
 src/my_coding_agent/
@@ -11,7 +11,19 @@ src/my_coding_agent/
 ├── agents/discovery.py     ← Discovery Agent (codebase mapping)
 ├── agents/session_analyzer.py  ← Session Analyzer Agent (post-run reporting)
 │
-├── agent.py                ← Agent loop (holds an LLM client; delegates routing + execution)
+├── agent.py                ← Agent: session bookkeeping + thin pipeline runner
+├── pipeline/               ← Node-based DAG execution engine (package)
+│   ├── __init__.py         ← Public surface: RunContext, Pipeline, Node, build_default_pipeline
+│   ├── context.py          ← RunContext dataclass: explicit data contract between nodes
+│   ├── node.py             ← Node protocol + BaseNode ABC
+│   ├── dag.py              ← Pipeline: ordered node list + step-loop execution engine
+│   └── nodes/              ← One module per pipeline stage
+│       ├── context_preflight.py  ← ContextPreflightNode: context-window check + handoff trigger
+│       ├── tool_routing.py       ← ToolRoutingNode: select relevant tool subset
+│       ├── llm_call.py           ← LLMCallNode: chat_completion + append assistant message
+│       ├── tool_dispatch.py      ← ToolDispatchNode: ToolExecutor.run() per step
+│       ├── token_tracking.py     ← TokenTrackingNode: record step usage
+│       └── finish_check.py       ← FinishCheckNode: detect stop/exit/quit finish reason
 ├── llm.py                  ← LLM HTTP client (pure client)
 ├── tool_routing.py         ← ToolRouter (two-phase tool selection)
 ├── tool_execution/         ← ToolExecutor + its pure helpers (package)
@@ -89,27 +101,42 @@ function call into three phases — **before → call → after** — driven by 
 - **Artifact separation** — when a tool returns a `(None, dict)` tuple (bash output above `ARTIFACT_THRESHOLD`), the full dict is stored in `self.tool_artifacts[tool_call_id]` and a deterministic description (`describe_artifact`: exit status + byte counts, or file metadata, plus a `read_tool_artifact` pointer) is sent back instead — no LLM. The full artifact is retrievable via the `read_tool_artifact` tool. Note: a per-message executor resets `tool_artifacts`, so cross-step retrieval does not persist (the agent aggregates them for `session_data.json`).
 - **Arg aliases** — a static map remaps common model hallucinations (e.g. `bash(path=)` → `bash(command=)`) before dispatch; unknown kwargs are stripped to the tool's signature.
 
+### `Pipeline` (`pipeline/` package)
+
+The node-based DAG execution engine. The pipeline is the runtime representation of the agentic loop — a declared, inspectable sequence of named stages.
+
+**`RunContext` (`context.py`)** — the explicit data contract that flows through the pipeline. Holds immutable run config (session id, max steps, LLM client, recorder, all tools) and mutable state fields (messages, step_num, last_prompt_tokens, tool_records, tool_artifacts, handoff_records). Control signals (`signal`, `stop_reason`) are written by nodes and read by `Pipeline.execute` to decide whether to continue, stop, or reset. `last_response` threads the raw LLM response from `LLMCallNode` to downstream nodes without those nodes calling the LLM again.
+
+**`Node` protocol + `BaseNode` (`node.py`)** — a `Node` is any callable with a `name: str` and a `run(ctx: RunContext) -> None` method. Nodes read and write `ctx` in place; control flow is communicated via `ctx.signal`.
+
+**`Pipeline` (`dag.py`)** — takes an ordered list of `Node` objects. `run_step` executes every node in order for one step, short-circuiting when any node sets a non-`CONTINUE` signal. `execute` wraps `run_step` in the outer step loop, handling `STOP` and `RESET` signals.
+
+**The six default nodes** (instantiated by `build_default_pipeline()`):
+
+| Node | Stage | What it does |
+|---|---|---|
+| `ContextPreflightNode` | 1 | Checks `last_prompt_tokens / context_window`; sets STOP (limit), RESET (handoff), or CONTINUE |
+| `ToolRoutingNode` | 2 | Creates `ToolRouter(ctx.llm)`, calls `route_tools`, writes `ctx.routed_tools` |
+| `LLMCallNode` | 3 | Increments `step_num`, calls `chat_completion`, appends assistant message, writes `ctx.last_response` |
+| `ToolDispatchNode` | 4 | Builds `ToolExecutor(last_message, ctx.llm)`, runs it, merges records and artifacts into `ctx` |
+| `TokenTrackingNode` | 5 | Reads `ctx.last_response`, updates `ctx.last_prompt_tokens`, logs usage |
+| `FinishCheckNode` | 6 | Reads finish_reason from `ctx.last_response`; sets STOP on stop/exit/quit |
+
 ### `Agent` (`agent.py`)
 
-Holds an `LLM` client via composition (`self.llm`) — it is **not** a subclass of `LLM`. In `__init__` it builds that client and the `ToolRouter(self.llm)` collaborator; the `ToolExecutor` is built **per step** inside the loop (`ToolExecutor(message, self.llm)`). Every client read goes through `self.llm.*` (`chat_completion`, `context_window`, `llm_calls`, `model`, `api_url`/`api_key`); agent-loop state (`messages`, `tools`, `step_num`, `tool_records`, `tool_artifacts`, `last_prompt_tokens`, …) stays on the agent — `tool_artifacts` accumulates each step's executor artifacts for `session_data.json`. Runs the main agentic loop in `run(max_steps)`.
+Holds an `LLM` client via composition (`self.llm`) — it is **not** a subclass of `LLM`. `__init__` builds the client, assigns a session id, attaches the session log, and initializes run stats. `run(max_steps)` constructs a `RunContext`, builds the pipeline via `build_default_pipeline(spawn_fn=...)`, and delegates execution to `pipeline.execute(ctx)`. After the pipeline returns, `run` copies results back from `ctx` and saves session data.
 
-Each step:
-1. **Context pre-flight check** — computes `prompt_tokens / context_window`. If ≥ threshold (default 75%), triggers a context handoff (see below). If ≥ 100%, hard stops.
-2. **Tool routing** — calls `self._router.route_tools(signal, self.tools)` to select the relevant subset of tools for this step.
-3. **LLM call** — `chat_completion(messages, routed_tools)`.
-4. **Tool dispatch** — builds `ToolExecutor(message, self.llm)` and calls `executor.run()`, appends its tool-result messages, and merges `executor.tool_artifacts` into `self.tool_artifacts`.
-5. **Token tracking** — updates `last_prompt_tokens` for the next step's context check.
-6. **Finish check** — stops on `finish_reason` of `stop`/`exit`/`quit` or when `step_num >= max_steps`.
+`Agent` owns session bookkeeping: banner printing, session log attachment/detachment, `session_data.json` + `tool_artifacts.json` persistence, run summary printing, and observability recorder start/finish. It also owns `_generate_handoff`, `_spawn_continuation`, and `_handle_context_reset` — the context-reset machinery called by `ContextPreflightNode` via the `spawn_fn` closure.
 
-After the loop: saves `session_data.json` (including the accumulated `self.tool_artifacts`), prints the run summary, detaches the session log.
+### Context Handoff (`handoff.py` + `pipeline/nodes/context_preflight.py`)
 
-### Context Handoff (`handoff.py` + `agent.py`)
-
-When `prompt_tokens / context_window >= context_reset_threshold`, the agent:
+When `ContextPreflightNode` detects that `prompt_tokens / context_window >= context_reset_threshold`, it calls `spawn_fn()` — a closure set by `Agent.run` that calls `Agent._handle_context_reset`. That method:
 1. Sends a structured handoff prompt asking the LLM to summarize progress, files changed, decisions made, and remaining work.
 2. Saves the result as a markdown file under `.my_coding_agent/handoffs/`.
 3. Saves session data and prints a summary for the current run.
 4. Spawns a fresh `Agent` instance carrying only the system messages and the handoff as a user message — then calls `continuation.run(remaining_steps)` and returns its result.
+
+`ContextPreflightNode` stores the result in `ctx.continuation_messages` and sets `ctx.signal = "RESET"`, which causes `Pipeline.execute` to return those messages immediately.
 
 This lets long-running tasks survive context exhaustion without silent truncation.
 

@@ -1,10 +1,11 @@
 """Agentic loop built on top of the LLM client.
 
-Defines ``Agent``, which holds an ``LLM`` client (composition) to run the
-step-by-step reason-act loop: per-step context pre-flight checks, tool routing,
-model calls, tool dispatch, and token accounting. When the context window fills,
-it performs a structured handoff and spawns a fresh continuation agent. After the
-run it persists session data and prints the run summary.
+Defines ``Agent``, which holds an ``LLM`` client (composition) and runs the
+agentic pipeline via ``pipeline.execute(ctx)``.  The pipeline is a DAG of
+named nodes (context preflight, tool routing, LLM call, tool dispatch, token
+tracking, finish check); ``run`` constructs a ``RunContext``, builds the
+pipeline, and delegates execution to it.  Session bookkeeping (banner, session
+log, summary, session_data.json) stays on ``Agent``.
 """
 
 import json
@@ -12,7 +13,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from .handoff import ContextHandoff
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
@@ -25,9 +26,8 @@ from .logger import (
 )
 from .observability import Recorder, current_session_id
 from .observability.recorder import current_recorder
-from .tool_execution import ToolExecutor
-from .tool_routing import ToolRouter
-from .utils import extract_finish_reason, extract_message, extract_usage
+from .pipeline import RunContext, build_default_pipeline
+from .utils import extract_message
 
 _HANDOFF_PROMPT = (
     "CONTEXT RESET REQUIRED: your context window is nearly full. "
@@ -46,18 +46,13 @@ _HANDOFF_PROMPT = (
 
 
 class Agent:
-    """Run the main agentic loop over a held ``LLM`` client.
+    """Run the agentic pipeline over a held ``LLM`` client.
 
-    Hold an ``LLM`` client (``self.llm``) via composition and drive a bounded
-    reason-act loop in ``run(max_steps)``. Each step checks context usage (handing
-    off to a fresh continuation agent when the window nears full), routes the
-    relevant tool subset, calls the model, dispatches any tool calls, and tracks
-    token usage. On completion it saves session data, prints the run summary, and
-    detaches the session log.
+    Hold an ``LLM`` client (``self.llm``) via composition and drive the pipeline
+    in ``run(max_steps)``.  The pipeline is built from six named nodes; this class
+    owns session bookkeeping (banner, session log, summary, session_data.json) and
+    the ``_spawn_continuation`` callable passed into ``ContextPreflightNode``.
     """
-
-    # Messages from a continuation agent when a context reset fires mid-run.
-    _continuation_result: list[dict[str, Any]]
 
     def __init__(
         self,
@@ -101,7 +96,6 @@ class Agent:
         # ToolExecutor (built per step) captures tool I/O via this recorder.
         self.llm = LLM(api_url, api_key, model)
         self.llm._recorder = self.recorder
-        self._router = ToolRouter(self.llm)
         # A fresh ToolExecutor is built per step (per message); artifacts it
         # offloads are accumulated here for session_data.json.
         self.tool_artifacts: dict = {}
@@ -239,144 +233,20 @@ class Agent:
         remaining_steps = max_steps - self.step_num
         return continuation.run(max_steps=max(remaining_steps, 1))
 
-    def _context_preflight(
-        self, max_steps: int, t_start: float
-    ) -> Literal["stop", "reset", "ok"]:
-        """Check context usage before a step and act on the threshold reached.
-
-        Returns:
-            ``"stop"`` if the context window is fully exhausted (caller breaks);
-            ``"reset"`` if a reset fired and a continuation finished the run — its
-            messages are stashed in ``self._continuation_result`` for the caller
-            to return; ``"ok"`` if there is room to proceed.
-        """
-        if not self.llm.context_window:
-            return "ok"
-        ctx_tokens = self.last_prompt_tokens or len(json.dumps(self.messages)) // 2
-        ctx_pct = ctx_tokens / self.llm.context_window
-
-        if ctx_pct >= 1.0:
-            # Hard stop — context fully exhausted, no room to generate handoff.
-            self.stop_reason = "context_limit"
-            self.logger.warning(
-                "Context limit reached: %d / %d tokens (%.1f%%). Stopping.",
-                ctx_tokens,
-                self.llm.context_window,
-                ctx_pct * 100,
-            )
-            return "stop"
-
-        if ctx_pct >= self.context_reset_threshold:
-            self._continuation_result = self._handle_context_reset(
-                ctx_tokens, ctx_pct, max_steps, t_start
-            )
-            return "reset"
-
-        if ctx_pct >= 0.6:
-            self.logger.warning(
-                "Context at %.1f%% (%d / %d tokens) — reset at %.0f%%.",
-                ctx_pct * 100,
-                ctx_tokens,
-                self.llm.context_window,
-                self.context_reset_threshold * 100,
-            )
-        return "ok"
-
-    def _handle_context_reset(
-        self, ctx_tokens: int, ctx_pct: float, max_steps: int, t_start: float
-    ) -> list[dict[str, Any]]:
-        """Generate a handoff, finalize this run, and spawn the continuation."""
-        self.logger.warning(
-            "Context reset threshold reached: %.1f%% used (%d / %d tokens). "
-            "Generating handoff and spawning continuation.",
-            ctx_pct * 100,
-            ctx_tokens,
-            self.llm.context_window,
-        )
-        handoff = self._generate_handoff(self.step_num, ctx_tokens)
-        self.handoff_records.append(
-            {
-                "step": self.step_num,
-                "ctx_tokens": ctx_tokens,
-                "ctx_pct": ctx_pct * 100,
-                "threshold": self.context_reset_threshold * 100,
-                "path": handoff.path,
-                "reason": (
-                    f"prompt_tokens {ctx_tokens:,} >= "
-                    f"{self.context_reset_threshold * 100:.0f}% "
-                    f"of {self.llm.context_window:,}"
-                ),
-            }
-        )
-        self.recorder.record_handoff(
-            self.step_num,
-            ctx_tokens,
-            ctx_pct * 100,
-            handoff.content,
-            handoff.path or "",
-        )
-        self.stop_reason = "context_reset"
-        self.elapsed_seconds = time.monotonic() - t_start
-        self._save_session_data(max_steps)
-        self._print_summary(max_steps)
-        detach_session_log(self._session_log_handler)
-        return self._spawn_continuation(handoff, max_steps)
-
-    def _routing_signal(self) -> str:
-        """Combine the last user and assistant messages into the router signal."""
-        last_user_content = next(
-            (
-                m.get("content", "") or ""
-                for m in reversed(self.messages)
-                if m.get("role") == "user"
-            ),
-            "",
-        )
-        last_assistant_content = next(
-            (
-                m.get("content", "") or ""
-                for m in reversed(self.messages)
-                if m.get("role") == "assistant"
-            ),
-            "",
-        )
-        return " ".join(filter(None, [last_user_content, last_assistant_content]))
-
-    def _track_step_usage(self, resp: Any) -> None:
-        """Record usage for the step and update last_prompt_tokens for next check."""
-        usage = extract_usage(resp)
-        step_prompt = usage.get("prompt_tokens", 0)
-        step_completion = usage.get("completion_tokens", 0)
-        step_total = usage.get("total_tokens", 0)
-        self.last_prompt_tokens = step_prompt
-        ctx = self.llm.context_window
-        ctx_str = f" / {ctx:,} ({step_prompt / ctx * 100:.1f}% ctx used)" if ctx else ""
-        self.logger.info(
-            "Step %d tokens — prompt: %d, completion: %d, total: %d%s",
-            self.step_num,
-            step_prompt,
-            step_completion,
-            step_total,
-            ctx_str,
-        )
-
     def run(self, max_steps: int = 5) -> list[dict[str, Any]]:
-        """Run the agentic loop until a stop condition, returning the messages.
+        """Run the agentic pipeline until a stop condition, returning the messages.
 
-        Each step performs a context pre-flight check, routes a relevant tool
-        subset, calls the model, and dispatches any tool calls. The loop ends
-        when the model signals stop/exit/quit, ``max_steps`` is reached, or the
-        context window is exhausted. When usage crosses
-        ``context_reset_threshold``, a handoff is generated and a fresh
-        continuation agent finishes the remaining steps (this method then
-        returns that continuation's result). Session data and a summary are
-        written on exit, including the ``KeyboardInterrupt`` (aborted) path.
+        Build a ``RunContext`` and a ``Pipeline`` of six named nodes, then
+        delegate execution to ``pipeline.execute(ctx)``.  Session bookkeeping
+        (banner, session log, summary, session_data.json) is handled here.
+        The ``KeyboardInterrupt`` path is also caught here so the finally block
+        always runs.
 
         Args:
             max_steps: Maximum number of agent steps before stopping.
 
         Returns:
-            The full conversation message list at the point the loop stopped.
+            The full conversation message list at the point the pipeline stopped.
         """
         # reset stats for this run
         self.step_num = 0
@@ -384,19 +254,13 @@ class Agent:
         self.tool_records = []
         self.handoff_records = []
         self.llm.llm_calls = []
-        self.last_prompt_tokens = (
-            0  # prompt tokens from the last main-step call (used for context % check)
-        )
-        self._continuation_result = []
+        self.last_prompt_tokens = 0
+
         t_start = time.monotonic()
-        # Record the session start and publish our id so a delegated subagent
-        # links back to us as its parent. The token is reset in ``finally``.
         self.recorder.start(self.label, self.llm.model, self.llm.context_window)
         _ctx_token = current_session_id.set(self.session_id)
         _rec_token = current_recorder.set(self.recorder)
 
-        # Emit the startup banner here (not in __init__) so construction stays
-        # network-free: reading context_window now resolves the real value.
         print_banner(
             label=self.label,
             model=self.llm.model,
@@ -407,74 +271,34 @@ class Agent:
             session_id=self.session_id,
         )
         self.logger.info("Agent run started with max_steps: %d", max_steps)
+
+        ctx = RunContext(
+            session_id=self.session_id,
+            label=self.label,
+            max_steps=max_steps,
+            context_reset_threshold=self.context_reset_threshold,
+            all_tools=self.tools,
+            llm=self.llm,
+            recorder=self.recorder,
+            messages=self.messages,
+            last_prompt_tokens=self.last_prompt_tokens,
+        )
+
+        # _spawn_continuation needs ctx.handoff_records / ctx.step_num at reset
+        # time; it closes over `ctx` and `max_steps` from this scope.
+        def _spawn_fn() -> list[dict[str, Any]]:
+            return self._handle_context_reset(ctx, max_steps, t_start)
+
+        pipeline = build_default_pipeline(spawn_fn=_spawn_fn)
+
+        result: list[dict[str, Any]] = []
         try:
-            # step_num counts completed steps and is 1-based once a step begins.
-            # Each pass runs exactly one main chat_completion; the loop performs
-            # at most max_steps passes, so exactly max_steps main calls are made.
-            while self.step_num < max_steps:
-                # Pre-flight context check using actual tokens reported by the
-                # API in the previous step. Step 1 falls back to a character
-                # estimate (no prior data). Uses the completed-step count.
-                preflight = self._context_preflight(max_steps, t_start)
-                if preflight == "stop":
-                    break
-                if preflight == "reset":
-                    return self._continuation_result  # continuation finished the run
-
-                self.step_num += 1
-                self.logger.info(
-                    "----------------------------------------------------------------"
-                )
-                self.logger.info(
-                    "----------------------------------------------------------------   STEP %d/%d",  # noqa: E501
-                    self.step_num,
-                    max_steps,
-                )
-                self.logger.info(
-                    "----------------------------------------------------------------"
-                )
-
-                # Route: pick the relevant subset of tools for this step's context.
-                routed_tools = self._router.route_tools(
-                    self._routing_signal(), self.tools
-                )
-                resp = self.llm.chat_completion(self.messages, tools=routed_tools)
-                message = extract_message(resp)
-                if not message:
-                    self.logger.error(
-                        "Step %d: API returned empty message — skipping step",
-                        self.step_num,
-                    )
-                    continue
-                self.add_message(message)
-
-                # Execute this message's tool calls (a fresh executor per step),
-                # accumulate its artifacts, and add results back to messages.
-                executor = ToolExecutor(message, self.llm)
-                tool_messages, records = executor.run()
-                self.tool_artifacts.update(executor.tool_artifacts)
-                self.tool_records.extend(records)
-                for tool_message in tool_messages or []:
-                    self.add_message(tool_message)
-
-                # Track usage — update last_prompt_tokens for the next step's
-                # context-window check
-                self._track_step_usage(resp)
-
-                # Finish conditions. The max_steps bound is enforced by the
-                # while condition (step_num was incremented at the top of this
-                # pass); stop_reason defaults to "max_steps" and is set here only
-                # for an early model-signalled finish.
-                finish_reason = extract_finish_reason(resp)
-                if finish_reason in ("stop", "exit", "quit"):
-                    self.stop_reason = finish_reason
-                    break
-
+            result = pipeline.execute(ctx)
         except KeyboardInterrupt:
-            self.stop_reason = "aborted"
+            ctx.stop_reason = "aborted"
             self.logger.warning("Agent run aborted by user (KeyboardInterrupt)")
         finally:
-            self.elapsed_seconds = time.monotonic() - t_start
+            self._sync_from_ctx(ctx, t_start)
             out = Path(".my_coding_agent") / self.session_id / "session_data.json"
             if not out.exists():  # context-reset path already saved; don't overwrite
                 self._save_session_data(max_steps)
@@ -485,4 +309,54 @@ class Agent:
             )
             current_session_id.reset(_ctx_token)
             current_recorder.reset(_rec_token)
-        return self.messages
+
+        return result if result else ctx.messages
+
+    def _sync_from_ctx(self, ctx: RunContext, t_start: float) -> None:
+        """Copy pipeline state back onto self so session-data methods see it."""
+        self.step_num = ctx.step_num
+        self.stop_reason = ctx.stop_reason
+        self.tool_records = ctx.tool_records
+        self.handoff_records = ctx.handoff_records
+        self.tool_artifacts = ctx.tool_artifacts
+        self.last_prompt_tokens = ctx.last_prompt_tokens
+        self.elapsed_seconds = time.monotonic() - t_start
+
+    def _handle_context_reset(
+        self,
+        ctx: RunContext,
+        max_steps: int,
+        t_start: float,
+    ) -> list[dict[str, Any]]:
+        """Generate a handoff, finalize this run, spawn and return the continuation."""
+        ctx_tokens = ctx.last_prompt_tokens or len(json.dumps(ctx.messages)) // 2
+        ctx_pct = ctx_tokens / ctx.llm.context_window if ctx.llm.context_window else 0.0
+
+        handoff = self._generate_handoff(ctx.step_num, ctx_tokens)
+        ctx.handoff_records.append(
+            {
+                "step": ctx.step_num,
+                "ctx_tokens": ctx_tokens,
+                "ctx_pct": ctx_pct * 100,
+                "threshold": ctx.context_reset_threshold * 100,
+                "path": handoff.path,
+                "reason": (
+                    f"prompt_tokens {ctx_tokens:,} >= "
+                    f"{ctx.context_reset_threshold * 100:.0f}% "
+                    f"of {ctx.llm.context_window:,}"
+                ),
+            }
+        )
+        self.recorder.record_handoff(
+            ctx.step_num,
+            ctx_tokens,
+            ctx_pct * 100,
+            handoff.content,
+            handoff.path or "",
+        )
+        ctx.stop_reason = "context_reset"
+        self._sync_from_ctx(ctx, t_start)
+        self._save_session_data(max_steps)
+        self._print_summary(max_steps)
+        detach_session_log(self._session_log_handler)
+        return self._spawn_continuation(handoff, max_steps)
