@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from my_coding_agent.llm import _HTTP_RETRIES
-from my_coding_agent.pipeline.router import _BASELINE_TOOLS
+from my_coding_agent.pipeline.nodes.router import _BASELINE_TOOLS
 from my_coding_agent.tool_execution import args as arg_prep
 
 # --- helpers -----------------------------------------------------------------

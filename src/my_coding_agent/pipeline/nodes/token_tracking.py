@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ...logger import get_logger
-from ...utils import extract_usage
+from ...utils.parsing import extract_usage
 from ..context import RunContext
 from ..node import BaseNode
 

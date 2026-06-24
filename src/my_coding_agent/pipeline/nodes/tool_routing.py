@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ..context import RunContext
 from ..node import BaseNode
-from ..router import ToolRouter
+from .router import ToolRouter
 
 
 class ToolRoutingNode(BaseNode):

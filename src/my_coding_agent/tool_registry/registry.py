@@ -12,8 +12,8 @@ from pathlib import Path
 import html2text
 import httpx
 
-from ..exceptions import PathTraversalError
 from ..observability.recorder import current_recorder
+from ..utils.exceptions import PathTraversalError
 
 # Single source of truth for the large-tool-output boundary (chars). bash output
 # above this triggers artifact separation; tool_execution.MAX_TOOL_OUTPUT_CHARS

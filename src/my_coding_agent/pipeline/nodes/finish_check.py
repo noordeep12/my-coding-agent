@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...utils import extract_finish_reason
+from ...utils.parsing import extract_finish_reason
 from ..context import RunContext
 from ..node import BaseNode
 

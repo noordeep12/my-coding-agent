@@ -9,7 +9,7 @@ import json
 
 from ..logger import get_logger
 from ..tool_registry import ToolRegistry
-from ..utils import parse_tool_args
+from ..utils.parsing import parse_tool_args
 
 logger = get_logger(__name__)
 

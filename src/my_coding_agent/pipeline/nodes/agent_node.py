@@ -19,10 +19,10 @@ from ...logger import (
 )
 from ...observability import Recorder, current_session_id
 from ...observability.recorder import current_recorder
-from ...utils import extract_message
+from ...utils.parsing import extract_message
 from ..context import RunContext
-from ..handoff import ContextHandoff
 from ..node import BaseNode
+from .handoff import ContextHandoff
 
 _HANDOFF_PROMPT = (
     "CONTEXT RESET REQUIRED: your context window is nearly full. "

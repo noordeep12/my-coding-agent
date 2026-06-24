@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from my_coding_agent.utils import (
+from my_coding_agent.utils.parsing import (
     extract_finish_reason,
     extract_message,
     extract_usage,
