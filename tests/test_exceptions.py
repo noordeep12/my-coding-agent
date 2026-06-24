@@ -8,7 +8,8 @@ from my_coding_agent import (
     PathTraversalError,
     ToolDefinitionError,
 )
-from my_coding_agent.tools import ToolsRegistry, function_to_json
+from my_coding_agent.tool_registry import ToolRegistry as ToolsRegistry
+from my_coding_agent.tool_registry import function_to_json
 
 
 @pytest.mark.parametrize(
@@ -53,7 +54,7 @@ def test_tool_definition_raise_site(mocker):
         pass  # pragma: no cover
 
     mocker.patch(
-        "my_coding_agent.tools.inspect.signature",
+        "my_coding_agent.tool_registry.converter.inspect.signature",
         side_effect=ValueError("no signature"),
     )
     with pytest.raises(ToolDefinitionError, match="Failed to get signature"):

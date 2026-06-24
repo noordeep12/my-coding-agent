@@ -22,7 +22,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 
-from my_coding_agent import Agent, ToolsRegistry, __version__, tool
+from my_coding_agent import Agent, ToolRegistry, __version__, tool
 from my_coding_agent.agents.discovery import run_discovery
 from my_coding_agent.agents.session_analyzer import run_analysis
 
@@ -77,10 +77,10 @@ _HISTORY_FILE = Path.home() / ".my_coding_agent_history"
 def _all_tools() -> list:
     names = [
         name
-        for name, _ in inspect.getmembers(ToolsRegistry, predicate=inspect.isfunction)
+        for name, _ in inspect.getmembers(ToolRegistry, predicate=inspect.isfunction)
         if not name.startswith("_")
     ]
-    return [tool(getattr(ToolsRegistry, name)) for name in names]
+    return [tool(getattr(ToolRegistry, name)) for name in names]
 
 
 def _read_interactive_prompt() -> str:

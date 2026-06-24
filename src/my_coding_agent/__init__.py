@@ -1,7 +1,7 @@
 """Public API for my-coding-agent.
 
 Re-exports the agent harness's core types — the ``Agent`` loop, the ``LLM``
-client, the ``ToolsRegistry`` and ``tool`` converter, the ``ContextHandoff``
+client, the ``ToolRegistry`` and ``tool`` converter, the ``ContextHandoff``
 state object, and the exception hierarchy.
 """
 
@@ -17,7 +17,7 @@ from .exceptions import (
 )
 from .handoff import ContextHandoff
 from .llm import LLM
-from .tools import ToolsRegistry, tool
+from .tool_registry import ToolRegistry, tool
 
 # Library logging convention (CONTRIBUTE.md §31): attach a no-op handler to the
 # package's top-level logger once, so the library emits no output and no
@@ -34,7 +34,7 @@ __all__ = [
     "LLM",
     "Agent",
     "tool",
-    "ToolsRegistry",
+    "ToolRegistry",
     "ContextHandoff",
     "MyCodingAgentError",
     "PathTraversalError",

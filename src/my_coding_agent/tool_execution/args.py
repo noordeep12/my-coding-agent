@@ -8,7 +8,7 @@ import inspect
 import json
 
 from ..logger import get_logger
-from ..tools import ToolsRegistry
+from ..tool_registry import ToolRegistry
 from ..utils import parse_tool_args
 
 logger = get_logger(__name__)
@@ -112,7 +112,7 @@ def strip_unknown_args(func_name: str, args: dict) -> dict:
     This prevents TypeError from hallucinated parameters (e.g. file_path on bash)
     from ever reaching the LLM correction loop, which is unreliable on local models.
     """
-    func = getattr(ToolsRegistry, func_name, None)
+    func = getattr(ToolRegistry, func_name, None)
     if func is None:
         return args
     valid = set(inspect.signature(func).parameters)

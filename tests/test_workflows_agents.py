@@ -11,7 +11,7 @@ import subprocess
 import pytest
 
 from my_coding_agent.agents import discovery, session_analyzer
-from my_coding_agent.tools import ToolsRegistry
+from my_coding_agent.tool_registry import ToolRegistry as ToolsRegistry
 from my_coding_agent.workflows import main as wf_main
 
 # --- _git wrappers (identical helper across the three modules) ----------------

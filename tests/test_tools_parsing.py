@@ -7,14 +7,13 @@ the highest-value, lowest-cost units to verify.
 
 import inspect
 
-from my_coding_agent.tools import (
-    ToolsRegistry,
+from my_coding_agent.tool_registry import ToolRegistry as ToolsRegistry
+from my_coding_agent.tool_registry import function_to_json, tool
+from my_coding_agent.tool_registry.converter import (
     _parse_args_section,
     _parse_tags_section,
     _strip_args_section,
     _strip_tags_section,
-    function_to_json,
-    tool,
 )
 
 # --- _parse_tags_section -----------------------------------------------------

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import click
 
-from my_coding_agent import Agent, ToolsRegistry, tool
+from my_coding_agent import Agent, ToolRegistry, tool
 from my_coding_agent.logger import get_logger
 
 logger = get_logger(__name__)
@@ -73,11 +73,11 @@ def run_discovery(force: bool = False, max_steps: int = 20) -> Path | None:
     logger.info("[discovery] running Discovery Agent (%s)", reason)
 
     tools = [
-        tool(ToolsRegistry.bash),
-        tool(ToolsRegistry.read_file),
-        tool(ToolsRegistry.write_file),
-        tool(ToolsRegistry.read_article),
-        tool(ToolsRegistry.read_tool_artifact),
+        tool(ToolRegistry.bash),
+        tool(ToolRegistry.read_file),
+        tool(ToolRegistry.write_file),
+        tool(ToolRegistry.read_article),
+        tool(ToolRegistry.read_tool_artifact),
     ]
 
     tool_docs = "\n".join(

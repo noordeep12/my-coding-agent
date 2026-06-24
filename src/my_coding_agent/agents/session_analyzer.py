@@ -24,7 +24,7 @@ from pathlib import Path
 
 import click
 
-from my_coding_agent import Agent, ToolsRegistry, tool
+from my_coding_agent import Agent, ToolRegistry, tool
 from my_coding_agent.logger import get_logger
 
 logger = get_logger(__name__)
@@ -217,11 +217,11 @@ def run_analysis(session_id: str | None = None, max_steps: int = 15) -> Path | N
     )
 
     tools = [
-        tool(ToolsRegistry.bash),
-        tool(ToolsRegistry.read_file),
-        tool(ToolsRegistry.write_file),
-        tool(ToolsRegistry.read_article),
-        tool(ToolsRegistry.read_tool_artifact),
+        tool(ToolRegistry.bash),
+        tool(ToolRegistry.read_file),
+        tool(ToolRegistry.write_file),
+        tool(ToolRegistry.read_article),
+        tool(ToolRegistry.read_tool_artifact),
     ]
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(

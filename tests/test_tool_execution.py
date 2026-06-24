@@ -21,7 +21,7 @@ from my_coding_agent.tool_execution import (
     validate_tool_result,
 )
 from my_coding_agent.tool_execution.result_schema import result_envelope
-from my_coding_agent.tools import ToolsRegistry
+from my_coding_agent.tool_registry import ToolRegistry as ToolsRegistry
 
 
 def test_extract_summary_prefers_summary_tags():

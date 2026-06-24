@@ -10,7 +10,7 @@ import re
 from typing import TYPE_CHECKING
 
 from ..logger import get_logger
-from ..tools import ARTIFACT_THRESHOLD
+from ..tool_registry import ARTIFACT_THRESHOLD
 from ..utils import extract_message
 
 if TYPE_CHECKING:

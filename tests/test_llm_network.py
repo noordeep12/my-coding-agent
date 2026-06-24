@@ -14,7 +14,7 @@ import json
 import pytest
 
 from my_coding_agent.tool_execution import MAX_TOOL_OUTPUT_CHARS, output
-from my_coding_agent.tools import ToolsRegistry
+from my_coding_agent.tool_registry import ToolRegistry as ToolsRegistry
 
 
 class _Resp:

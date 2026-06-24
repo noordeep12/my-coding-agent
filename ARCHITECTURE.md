@@ -19,7 +19,10 @@ src/my_coding_agent/
 │   ├── result_schema.py    ← Canonical envelope: build/validate/normalize (pure)
 │   ├── args.py             ← Tool-call parse + alias remap + kwarg strip (pure)
 │   └── output.py           ← Truncation + deterministic artifact description
-├── tools.py                ← Tool registry and decorator
+├── tool_registry/          ← ToolRegistry class + OpenAI tool-definition converter (package)
+│   ├── __init__.py         ← Re-export facade (ToolRegistry, ARTIFACT_THRESHOLD, function_to_json, tool)
+│   ├── converter.py        ← function_to_json + tool + private docstring parsers (pure)
+│   └── registry.py        ← ToolRegistry: callable tool methods + ARTIFACT_THRESHOLD
 ├── handoff.py              ← Context reset / handoff state transfer
 ├── logger/                 ← Logging, session-log capture, terminal UI (package)
 │   ├── __init__.py         ← Re-export facade (get_logger, print_banner, attach/detach_session_log, …)
@@ -62,7 +65,7 @@ Holds the LLM client and selects the relevant tool subset for a message via **`r
 A package split by responsibility. The `ToolExecutor` class (`__init__.py`) is
 constructed **per assistant message** (`ToolExecutor(message, llm)`) and holds
 that message's `tool_calls` plus the running `tool_messages` / `tool_records` it
-fills, the `tool_artifacts` it offloads, and its own `ToolsRegistry`. **It makes
+fills, the `tool_artifacts` it offloads, and its own `ToolRegistry`. **It makes
 no LLM calls** — the `llm` is kept only for the session log path and the
 observability recorder (`llm._recorder`). It **composes** three pure sibling
 modules (no client, no state, no I/O) by calling their functions directly:
@@ -110,7 +113,7 @@ When `prompt_tokens / context_window >= context_reset_threshold`, the agent:
 
 This lets long-running tasks survive context exhaustion without silent truncation.
 
-### `ToolsRegistry` (`tools.py`)
+### `ToolRegistry` (`tool_registry/` package)
 
 A plain class whose methods are the tools the LLM can call:
 
@@ -127,7 +130,7 @@ Each tool returns its natural value (a string, or bash's `{stdout, stderr, exit_
 
 `delegate` recursively spawns a child `Agent` (read-only, `max_steps=5`, the `delegate` tool itself removed from its toolset), so the main agent can offload focused exploration without crowding its own context.
 
-The `@tool` decorator (actually `function_to_json`) converts any `ToolsRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings for parameter descriptions and routing `Tags`.
+The `@tool` decorator (actually `function_to_json`) converts any `ToolRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings for parameter descriptions and routing `Tags`.
 
 ### `Logger` (`logger/` package)
 
@@ -215,7 +218,7 @@ CLI (Click)
   ├── 2. Main Agent
   │       System prompt: workspace state + tool list + discovery.md pointer
   │       User prompt: task from --prompt / --interactive / default
-  │       Tools: all ToolsRegistry methods
+  │       Tools: all ToolRegistry methods
   │
   └── 3. Session Analyzer (optional, --analyze)
           Reads session_data.json + stderr.log → writes session_analysis.md

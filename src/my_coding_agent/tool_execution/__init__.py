@@ -2,7 +2,7 @@
 
 Defines ``ToolExecutor``, constructed per message: it parses and validates each
 raw tool call, applies argument aliases and strips unknown kwargs, dispatches
-through the ``ToolsRegistry``, and separates oversized outputs into artifacts —
+through the ``ToolRegistry``, and separates oversized outputs into artifacts —
 described deterministically. It makes no LLM calls itself; the LLM client is held
 only for the session log path and the observability recorder.
 """
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..logger import get_logger
 from ..observability.records import call_record, error_record
-from ..tools import ToolsRegistry
+from ..tool_registry import ToolRegistry
 from . import args as arg_prep
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ToolExecutor",
-    "ToolsRegistry",
+    "ToolRegistry",
     "MAX_TOOL_OUTPUT_CHARS",
     "TOOL_SCHEMA_VERSION",
     "build_tool_result",
@@ -74,7 +74,7 @@ class ToolExecutor:
         self.tool_artifacts: dict = {}
         self.llm = llm
         self.logger = get_logger(self.__class__.__name__)
-        self.registry = ToolsRegistry(artifacts=self.tool_artifacts)
+        self.registry = ToolRegistry(artifacts=self.tool_artifacts)
 
     def run(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Dispatch every tool call, filling ``tool_messages`` / ``tool_records``.
@@ -150,14 +150,14 @@ class ToolExecutor:
         """
         if not hasattr(self.registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
-            valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
+            valid = [n for n in dir(ToolRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
             return None, {"reason": "not_found", "error": err}
 
         try:
             return getattr(self.registry, func_name)(**args), None
         except TypeError as exc:  # wrong arguments — surfaced as a failure, no retry
-            sig = inspect.signature(getattr(ToolsRegistry, func_name))
+            sig = inspect.signature(getattr(ToolRegistry, func_name))
             self.logger.error("wrong args %s → %s: %s", tool_call_id, func_name, exc)
             err = (
                 f"Error: wrong arguments for '{func_name}': {exc}. "
