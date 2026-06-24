@@ -23,8 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-my-coding-agent = "my_coding_agent.workflows.main:main"
-my-coding-agent-viewer = "my_coding_agent.observability.report:main"
+my-coding-agent = "my_coding_agent.pipeline.examples.simple:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/my_coding_agent"]

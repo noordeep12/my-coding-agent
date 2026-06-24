@@ -13,9 +13,9 @@ import json
 
 import pytest
 
-from my_coding_agent.agent import Agent
 from my_coding_agent.llm import LLM
 from my_coding_agent.pipeline.context import RunContext
+from my_coding_agent.pipeline.nodes.agent_node import AgentNode as Agent
 from my_coding_agent.pipeline.nodes.context_preflight import ContextPreflightNode
 from my_coding_agent.pipeline.nodes.token_tracking import TokenTrackingNode
 from my_coding_agent.pipeline.nodes.tool_routing import _routing_signal
@@ -69,21 +69,6 @@ class _Resp:
 
     def json(self):
         return self._payload
-
-
-# --- add_message -------------------------------------------------------------
-
-
-def test_add_message_appends_in_place(silent_logger):
-    agent = _make_agent(silent_logger)
-    agent.add_message({"role": "user", "content": "hi"})
-    assert agent.messages == [{"role": "user", "content": "hi"}]
-
-
-def test_add_message_handles_missing_role(silent_logger):
-    agent = _make_agent(silent_logger)
-    agent.add_message({"content": "no role"})  # must not raise
-    assert agent.messages[-1] == {"content": "no role"}
 
 
 # --- _routing_signal (now in pipeline.nodes.tool_routing) --------------------
@@ -258,11 +243,13 @@ def _stub_run_internals(agent, mocker):
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
     # Banner is emitted at the start of run() (not __init__) — stub its output.
-    mocker.patch("my_coding_agent.agent.print_banner")
-    mocker.patch("my_coding_agent.agent.detach_session_log")
+    mocker.patch("my_coding_agent.pipeline.nodes.agent_node.print_banner")
+    mocker.patch("my_coding_agent.pipeline.nodes.agent_node.detach_session_log")
     # session_data.json existence check in finally → pretend it already exists so
     # the finally block does not try to save/summarize/detach again.
-    mocker.patch("my_coding_agent.agent.Path.exists", return_value=True)
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent_node.Path.exists", return_value=True
+    )
     agent._session_log_handler = (None, None, None)
     agent.session_id = "testsession"
     # Observability recorder is read by run() (start/finish/record_handoff); stub
@@ -292,7 +279,7 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
 
-    agent.run(max_steps=5)
+    agent.execute(max_steps=5)
     assert agent.stop_reason == "stop"
 
 
@@ -317,7 +304,7 @@ def test_run_stops_at_max_steps(silent_logger, mocker):
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
 
-    agent.run(max_steps=1)
+    agent.execute(max_steps=1)
     assert agent.stop_reason == "max_steps"
 
 
@@ -347,7 +334,7 @@ def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
 
-    agent.run(max_steps=max_steps)
+    agent.execute(max_steps=max_steps)
 
     assert chat.call_count == max_steps
     assert agent.step_num == max_steps
@@ -376,7 +363,7 @@ def test_run_skips_step_on_empty_message(silent_logger, mocker):
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
 
-    agent.run(max_steps=5)
+    agent.execute(max_steps=5)
     # First call returned empty (step skipped), second returned a stop.
     assert chat.call_count == 2
     assert agent.stop_reason == "stop"
@@ -399,7 +386,7 @@ def test_run_returns_continuation_result_on_reset(silent_logger, mocker):
     )
     mocker.patch.object(agent.llm, "chat_completion")  # must not be reached
 
-    result = agent.run(max_steps=5)
+    result = agent.execute(max_steps=5)
     assert result == cont
     agent.llm.chat_completion.assert_not_called()
 
@@ -419,7 +406,8 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
         return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
     )
     saved = mocker.patch(
-        "my_coding_agent.agent.ContextHandoff.save", return_value="/tmp/h.json"
+        "my_coding_agent.pipeline.nodes.agent_node.ContextHandoff.save",
+        return_value="/tmp/h.json",
     )
     handoff = agent._generate_handoff(step_num=2, prompt_tokens=8000)
     assert handoff.content == "handoff summary"
@@ -441,7 +429,7 @@ def test_print_summary_forwards_aggregates(silent_logger, mocker):
         session_id="s1",
         started_at="2026-06-12",
     )
-    spy = mocker.patch("my_coding_agent.agent.print_run_summary")
+    spy = mocker.patch("my_coding_agent.pipeline.nodes.agent_node.print_run_summary")
     agent._print_summary(max_steps=5)
     kwargs = spy.call_args.kwargs
     assert kwargs["prompt_tokens"] == 100
@@ -463,7 +451,10 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
         session_id="sess9",
         started_at="2026-06-12",
     )
-    mocker.patch("my_coding_agent.agent.Path", lambda *a: tmp_path.joinpath(*a))
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent_node.Path",
+        lambda *a: tmp_path.joinpath(*a),
+    )
     agent._save_session_data(max_steps=5)
     out = tmp_path / ".my_coding_agent" / "sess9" / "session_data.json"
     data = json.loads(out.read_text())
@@ -491,8 +482,10 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     handoff = mocker.Mock()
     handoff.to_user_message.return_value = {"role": "user", "content": "HANDOFF"}
     fake_cont = mocker.Mock()
-    fake_cont.run.return_value = [{"role": "assistant", "content": "cont done"}]
-    cont_cls = mocker.patch("my_coding_agent.agent.Agent", return_value=fake_cont)
+    fake_cont.execute.return_value = [{"role": "assistant", "content": "cont done"}]
+    cont_cls = mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent_node.AgentNode", return_value=fake_cont
+    )
 
     result = agent._spawn_continuation(handoff, max_steps=5)
     assert result == [{"role": "assistant", "content": "cont done"}]

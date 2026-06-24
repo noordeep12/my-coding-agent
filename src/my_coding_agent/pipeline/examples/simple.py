@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Main workflow
-=============
-Discovery Agent → Main Agent
+"""Simple coding-agent pipeline entry point.
 
 Run::
 
@@ -22,9 +19,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 
-from my_coding_agent import Agent, ToolRegistry, __version__, tool
-from my_coding_agent.agents.discovery import run_discovery
-from my_coding_agent.agents.session_analyzer import run_analysis
+from my_coding_agent import ToolRegistry, __version__, tool
+from my_coding_agent.pipeline.nodes.agent_node import AgentNode
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -61,13 +57,7 @@ def _system_prompt(tools: list) -> str:
         f"  contents : {os.listdir(os.getcwd())}\n"
         f"  git      : {_git('status', '--short') or 'clean'}\n"
         f"  branch   : {_git('rev-parse', '--abbrev-ref', 'HEAD')}\n"
-        f"  commits  :\n{_git('log', '-5', '--oneline')}\n"
-        + (
-            "\nDiscovery notes are available at `.my_coding_agent/discovery.md` — "
-            "use the read_file tool to consult them when you need codebase context."
-            if Path(".my_coding_agent/discovery.md").exists()
-            else "\n(no discovery notes — run with --discover to generate)"
-        )
+        f"  commits  :\n{_git('log', '-5', '--oneline')}\n" + ""
     )
 
 
@@ -84,21 +74,14 @@ def _all_tools() -> list:
 
 
 def _read_interactive_prompt() -> str:
-    """Rich interactive prompt with history, cursor navigation, and multi-line input.
-
-    Keybindings:
-      Enter          — new line
-      Meta+Enter / Escape then Enter — submit
-      Up / Down      — cycle through previous prompts
-      Ctrl+C         — cancel (returns empty string)
-    """
+    """Read a multi-line prompt with history and key bindings."""
     kb = KeyBindings()
 
     @kb.add(Keys.ControlC)
     def _cancel(event: KeyPressEvent) -> None:
         event.app.exit(result="")
 
-    @kb.add(Keys.Escape, Keys.ControlM)  # Escape then Enter
+    @kb.add(Keys.Escape, Keys.ControlM)
     @kb.add("escape", "enter")
     def _submit_esc_enter(event: KeyPressEvent) -> None:
         event.current_buffer.validate_and_handle()
@@ -131,65 +114,33 @@ def _read_interactive_prompt() -> str:
     "--prompt",
     "-p",
     default=None,
-    show_default="default commit-and-push task",
     metavar="TEXT",
-    help="Task for the Main Agent.",
+    help="Task for the agent.",
 )
 @click.option(
     "--interactive",
     "-i",
-    default=False,
     is_flag=True,
-    show_default=True,
-    help="Read the task prompt interactively from stdin (paste freely; "
-    "Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel).",
-)
-@click.option(
-    "--discover/--no-discover",
-    "-d/-D",
     default=False,
-    show_default=True,
-    help="Run the Discovery Agent before the Main Agent (opt-in).",
+    help="Read the task prompt interactively.",
 )
 @click.option(
     "--max-steps",
     default=20,
     show_default=True,
     type=click.IntRange(1, 100),
-    help="Maximum agent loop steps for the Main Agent.",
-)
-@click.option(
-    "--analyze/--no-analyze",
-    "-a/-A",
-    default=False,
-    show_default=True,
-    help="Run the Session Analyzer Agent after the Main Agent completes.",
+    help="Maximum agent loop steps.",
 )
 @click.version_option(version=__version__, prog_name="my-coding-agent")
-def main(
-    prompt: str | None,
-    interactive: bool,
-    discover: bool,
-    max_steps: int,
-    analyze: bool,
-) -> None:
-    """Run the full coding-agent workflow.
-
-    \b
-    Steps executed:
-      1. Main Agent       — executes the requested task
-      2. Discovery Agent  — maps the workspace first (opt-in with --discover)
-      3. Session Analyzer — reviews the session and writes a report (--analyze)
+def main(prompt: str | None, interactive: bool, max_steps: int) -> None:
+    """Run the coding-agent pipeline.
 
     \b
     Examples:
       uv run my-coding-agent
       uv run my-coding-agent -p "write tests for llm.py"
-      uv run my-coding-agent --discover   # map the workspace first
-      uv run my-coding-agent -i          # paste a multi-line prompt
-      uv run my-coding-agent --analyze   # also run session analysis
+      uv run my-coding-agent -i
     """
-    # ── resolve prompt ─────────────────────────────────────────────────────────
     if interactive:
         user_prompt = _read_interactive_prompt()
         if not user_prompt:
@@ -200,20 +151,8 @@ def main(
     else:
         user_prompt = _DEFAULT_PROMPT
 
-    # ── step 1: discovery ──────────────────────────────────────────────────────
-    if discover:
-        click.secho("\n● Discovery Agent", fg="cyan", bold=True, err=True)
-        run_discovery(force=True)
-    else:
-        click.secho(
-            "\n● Discovery Agent  (skipped via --no-discover)", fg="yellow", err=True
-        )
-
-    # ── step 2: main agent ─────────────────────────────────────────────────────
-    click.secho("\n● Main Agent", fg="cyan", bold=True, err=True)
     tools = _all_tools()
-
-    agent = Agent(
+    agent = AgentNode(
         messages=[
             {"role": "system", "content": _system_prompt(tools)},
             {"role": "user", "content": user_prompt},
@@ -221,12 +160,7 @@ def main(
         tools=tools,
         label="Main Agent",
     )
-    agent.run(max_steps=max_steps)
-
-    # ── step 3: session analysis (optional) ───────────────────────────────────
-    if analyze:
-        click.secho("\n● Session Analyzer", fg="cyan", bold=True, err=True)
-        run_analysis(session_id=agent.session_id)
+    agent.execute(max_steps=max_steps)
 
 
 if __name__ == "__main__":

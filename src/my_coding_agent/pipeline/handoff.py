@@ -7,13 +7,13 @@ from pathlib import Path
 
 @dataclass
 class ContextHandoff:
-    """Capture the state transferred when a run hands off to a fresh context.
+    """Capture state transferred when a run hands off to a fresh context.
 
-    Hold the originating agent's label, step number, and token usage alongside the
-    LLM-written ``content`` summarizing progress and remaining work. Render that
-    state as a seed user message for the continuation agent (``to_user_message``)
-    and persist it as a markdown file under ``.my_coding_agent/handoffs/``
-    (``save``).
+    Hold the originating agent's label, step number, and token usage alongside
+    the LLM-written ``content`` summarizing progress and remaining work. Render
+    that state as a seed user message for the continuation agent
+    (``to_user_message``) and persist it as a markdown file under
+    ``.my_coding_agent/handoffs/`` (``save``).
     """
 
     agent_label: str

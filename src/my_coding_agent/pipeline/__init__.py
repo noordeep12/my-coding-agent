@@ -6,6 +6,7 @@ from typing import Callable
 
 from .context import RunContext
 from .dag import Pipeline
+from .handoff import ContextHandoff
 from .node import BaseNode, Node
 from .nodes import (
     ContextPreflightNode,
@@ -15,12 +16,17 @@ from .nodes import (
     ToolDispatchNode,
     ToolRoutingNode,
 )
+from .nodes.agent_node import AgentNode
+from .router import ToolRouter
 
 __all__ = [
     "RunContext",
     "Pipeline",
     "Node",
     "BaseNode",
+    "AgentNode",
+    "ContextHandoff",
+    "ToolRouter",
     "ContextPreflightNode",
     "FinishCheckNode",
     "LLMCallNode",
