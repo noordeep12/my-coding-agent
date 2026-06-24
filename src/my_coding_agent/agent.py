@@ -110,7 +110,9 @@ class Agent:
         self.llm = LLM(api_url, api_key, model, _before, _after)
         self.llm._recorder = self.recorder
         self._router = ToolRouter(self.llm)
-        self._executor = ToolExecutor(self.llm)
+        # A fresh ToolExecutor is built per step (per message); artifacts it
+        # offloads are accumulated here for session_data.json.
+        self.tool_artifacts: dict = {}
         self.label = label
         self.messages = messages or []
         self.tools = tools or []
@@ -223,11 +225,9 @@ class Agent:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, indent=2))
         self.logger.info("Session data saved → %s", out)
-        if self._executor.tool_artifacts:
+        if self.tool_artifacts:
             artifacts_out = out.parent / "tool_artifacts.json"
-            artifacts_out.write_text(
-                json.dumps(self._executor.tool_artifacts, indent=2)
-            )
+            artifacts_out.write_text(json.dumps(self.tool_artifacts, indent=2))
             self.logger.info("Tool artifacts saved → %s", artifacts_out)
 
     def _spawn_continuation(
@@ -458,10 +458,11 @@ class Agent:
                     continue
                 self.add_message(message)
 
-                # Execute tool calls and add results back to messages
-                tool_messages, records = self._executor.execute_tool_calls(
-                    message, self.messages, self.tools
-                )
+                # Execute this message's tool calls (a fresh executor per step),
+                # accumulate its artifacts, and add results back to messages.
+                executor = ToolExecutor(message, self.llm)
+                tool_messages, records = executor.run()
+                self.tool_artifacts.update(executor.tool_artifacts)
                 self.tool_records.extend(records)
                 for tool_message in tool_messages or []:
                     self.add_message(tool_message)

@@ -1,11 +1,10 @@
-"""Tool-call dispatch, argument correction, and artifact separation.
+"""Tool-call dispatch for one assistant message.
 
-Defines ``ToolExecutor``, which holds the LLM client and the ``tool_artifacts``
-store and runs every tool call requested in an LLM response: it parses and
-validates each raw call, applies argument aliases and strips unknown kwargs,
-runs the before/after hooks, dispatches through the ``ToolsRegistry`` with an
-LLM-driven argument-correction retry loop, and separates oversized outputs into
-artifacts with an LLM-generated summary returned to the model.
+Defines ``ToolExecutor``, constructed per message: it parses and validates each
+raw tool call, applies argument aliases and strips unknown kwargs, dispatches
+through the ``ToolsRegistry``, and separates oversized outputs into artifacts —
+described deterministically. It makes no LLM calls itself; the LLM client is held
+only for the session log path and the observability recorder.
 """
 
 import inspect
@@ -20,7 +19,7 @@ from . import args as arg_prep
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
     _extract_summary,
-    summarize_artifact,
+    describe_artifact,
     validate_tool_output,
 )
 from .result_schema import (
@@ -43,18 +42,15 @@ __all__ = [
     "_extract_summary",
 ]
 
-# Exceptions the LLM can recover from — returned as error content, not re-raised.
-# Anything not in this tuple hard-stops the agent loop via re-raise.
+# Exceptions a tool may raise that are surfaced as an ``ok:false`` result rather
+# than re-raised. Anything not in this tuple hard-stops the agent loop.
 _RECOVERABLE_EXCEPTIONS = (
-    TypeError,  # wrong arg names / types — LLM can fix
-    ValueError,  # bad arg values — LLM can fix
-    FileNotFoundError,  # wrong path — LLM can fix
-    json.JSONDecodeError,  # malformed tool arguments — LLM can fix
+    TypeError,  # wrong arg names / types
+    ValueError,  # bad arg values
+    FileNotFoundError,  # wrong path
+    json.JSONDecodeError,  # malformed tool arguments
     subprocess.TimeoutExpired,  # belt-and-suspenders (bash catches this itself)
 )
-
-# Max retries for the inner arg-correction loop before falling back to error result.
-_MAX_ARG_RETRIES: int = 3
 
 # Data contract, output post-processing, and argument prep live in the sibling
 # modules result_schema / output / args; the executor below composes them. The
@@ -63,134 +59,120 @@ _MAX_ARG_RETRIES: int = 3
 
 
 class ToolExecutor:
-    """Dispatch tool calls for the agent loop, holding the client and artifacts.
+    """Dispatch the tool calls in one assistant message.
 
-    Own the ``tool_artifacts`` store (execution state) and the LLM client used
-    for argument-correction retries and artifact summarization. Parse each raw
-    tool call, apply argument aliases, strip unknown kwargs, run the before/after
-    hooks, dispatch through ``ToolsRegistry``, and separate oversized outputs into
-    artifacts summarized for the model.
+    Constructed per message: holds that message's ``tool_calls`` plus the running
+    ``tool_messages`` / ``tool_records`` it fills and the ``tool_artifacts`` it
+    offloads. It owns no LLM calls — the LLM client is kept only for the session
+    log path and the observability recorder (``llm._recorder``).
     """
 
-    def __init__(self, client: "LLM") -> None:
-        """Hold the LLM client and initialize the artifact store.
-
-        Args:
-            client: The LLM client used for the argument-correction call and the
-                artifact-summarization call, and whose ``_session_log_path`` and
-                hooks the executor reads when dispatching tools.
-        """
-        self.client = client
+    def __init__(self, message: dict[str, Any], llm: "LLM") -> None:
+        self.tool_calls = message.get("tool_calls", []) or []
+        self.tool_messages: list[dict[str, Any]] = []
+        self.tool_records: list[dict[str, Any]] = []
         self.tool_artifacts: dict = {}
+        self.llm = llm
         self.logger = get_logger(self.__class__.__name__)
+        self.registry = ToolsRegistry(artifacts=self.tool_artifacts)
 
-    def before_tool_call(
-        self, tool_call_id: str, func_name: str, args: dict
-    ) -> dict | None:
-        """Runs before every tool dispatch: alias-remap args, then apply the user hook.
+    def run(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Dispatch every tool call, filling ``tool_messages`` / ``tool_records``.
 
-        Returns the (possibly modified) args to proceed, or None to skip the call.
+        Each call runs the three phases — before → call → after — except parse
+        failures, which short-circuit to an error result. Returns the two lists
+        for convenience; they are also available as attributes.
+        """
+        self.logger.tool("dispatch: %d tool call(s)", len(self.tool_calls))
+        for tool_call in self.tool_calls:
+            tool_call_id, func_name, args, error = arg_prep.parse_tool_call(tool_call)
+            if error:
+                name = func_name or "<unknown>"
+                env = build_tool_result(
+                    name, False, "", error, {"reason": "parse_error"}
+                )
+                self.tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": json.dumps(validate_tool_result(env), default=str),
+                        "status": "error",
+                    }
+                )
+                self.tool_records.append(error_record(name, {}, tool_call_id, error))
+                continue
+
+            # parse_tool_call guarantees func_name/args are set when error is None.
+            assert func_name is not None and args is not None
+
+            args = self.before_tool_call(func_name, args)
+            self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
+            raw, failure = self.invoke_tool(tool_call_id, func_name, args)
+            content, status, record = self.after_tool_call(
+                tool_call_id, func_name, args, raw, failure
+            )
+            self.tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": content,
+                    "status": status,
+                }
+            )
+            self.tool_records.append(record)
+
+        return self.tool_messages, self.tool_records
+
+    def before_tool_call(self, func_name: str, args: dict) -> dict:
+        """Before the call: alias-remap args, strip unknown kwargs, stamp recorder.
+
+        Returns the prepared args. The recorder (if any) stamps the call's start
+        time for latency accounting.
         """
         args = arg_prep.apply_arg_aliases(func_name, args)
         args = arg_prep.strip_unknown_args(func_name, args)
-        self.logger.tool(
-            "%s → before_hook %s(%s) [after alias remapping]",
-            tool_call_id,
-            func_name,
-            args,
-        )
-        result = self.client._before_hook(func_name, args)
-        if result is None:
-            self.logger.tool("%s → before_hook skipped %s", tool_call_id, func_name)
-        elif result != args:
-            self.logger.tool(
-                "%s → before_hook modified %s args: %s", tool_call_id, func_name, result
-            )
-        return result
+        self.logger.tool("before %s(%s) [after alias remapping]", func_name, args)
+        if self.llm._recorder is not None:
+            self.llm._recorder.before_tool(func_name, args)
+        return args
 
     def invoke_tool(
-        self,
-        tool_call_id: str,
-        func_name: str,
-        args: dict,
-        registry: ToolsRegistry,
-        tool_call: dict,
-        conversation: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
+        self, tool_call_id: str, func_name: str, args: dict
     ) -> tuple[Any, dict | None]:
-        """Call ``func_name(**args)`` with LLM arg-correction retries.
+        """The call step only: invoke ``func_name(**args)`` against the registry.
 
-        This is the call step only: it returns ``(raw_result, failure)`` — on
-        success the tool's raw return value (str or artifact tuple) and ``None``;
-        on a handled failure ``None`` and a ``{"reason", "error"}`` descriptor.
-        Turning the raw result into the canonical envelope is
-        :meth:`after_tool_call`'s job. Non-recoverable exceptions re-raise.
+        Returns ``(raw_result, failure)`` — the tool's raw return value (str or
+        artifact tuple) and ``None`` on success, or ``None`` and a
+        ``{"reason", "error"}`` descriptor on a handled failure. No retries and no
+        LLM: a wrong-argument call fails directly. Non-recoverable exceptions
+        re-raise. Turning the raw result into the envelope is
+        :meth:`after_tool_call`'s job.
         """
-        if not hasattr(registry, func_name):
+        if not hasattr(self.registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
             valid = [n for n in dir(ToolsRegistry) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
             return None, {"reason": "not_found", "error": err}
 
-        sig = inspect.signature(getattr(ToolsRegistry, func_name))
-
-        for attempt in range(_MAX_ARG_RETRIES + 1):
-            try:
-                return getattr(registry, func_name)(**args), None
-
-            except TypeError as wrong_args_exc:  # wrong arguments — ask the LLM to fix
+        try:
+            return getattr(self.registry, func_name)(**args), None
+        except TypeError as exc:  # wrong arguments — surfaced as a failure, no retry
+            sig = inspect.signature(getattr(ToolsRegistry, func_name))
+            self.logger.error("wrong args %s → %s: %s", tool_call_id, func_name, exc)
+            err = (
+                f"Error: wrong arguments for '{func_name}': {exc}. "
+                f"Expected: {func_name}{sig}"
+            )
+            return None, {"reason": "wrong_args", "error": err}
+        except Exception as exc:
+            if not isinstance(exc, _RECOVERABLE_EXCEPTIONS):
                 self.logger.error(
-                    "wrong args %s → %s (attempt %s/%s): %s",
-                    tool_call_id,
-                    func_name,
-                    attempt + 1,
-                    _MAX_ARG_RETRIES,
-                    wrong_args_exc,
+                    "non-recoverable error %s → %s: %s", tool_call_id, func_name, exc
                 )
-                retries_exhausted = attempt == _MAX_ARG_RETRIES
-                corrected_args = (
-                    None
-                    if retries_exhausted
-                    else arg_prep.correct_args(
-                        self.client,
-                        func_name,
-                        args,
-                        wrong_args_exc,
-                        sig,
-                        tool_call,
-                        tool_call_id,
-                        attempt,
-                        conversation,
-                        tools,
-                    )
-                )
-                if corrected_args is None:
-                    err = (
-                        f"Error: wrong arguments for '{func_name}' after "
-                        f"{attempt + 1} attempt(s): {wrong_args_exc}. "
-                        f"Expected: {func_name}{sig}"
-                    )
-                    return None, {"reason": "wrong_args", "error": err}
-                args = corrected_args
-
-            # other errors — return as a failure (don't re-raise, so the agent
-            # can keep going); non-recoverable ones re-raise.
-            except Exception as exc:
-                if not isinstance(exc, _RECOVERABLE_EXCEPTIONS):
-                    self.logger.error(
-                        "non-recoverable error %s → %s: %s",
-                        tool_call_id,
-                        func_name,
-                        exc,
-                    )
-                    raise
-                self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
-                err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
-                return None, {"reason": "raised", "error": err}
-
-        # Unreachable: the final iteration always returns (success, or a failure
-        # once retries are exhausted). Present so mypy can prove the function returns.
-        raise AssertionError("invoke_tool retry loop exited without returning")
+                raise
+            self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
+            err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
+            return None, {"reason": "raised", "error": err}
 
     def after_tool_call(
         self,
@@ -203,11 +185,18 @@ class ToolExecutor:
         """Turn the tool's raw return (or failure) into (content, status, record).
 
         On failure, builds the error envelope from the ``{reason, error}``
-        descriptor. On success, offloads+summarizes artifact tuples, coerces to
-        str, truncates, and normalizes into the canonical envelope. Then
-        serializes and applies the user after-hook **last**, so the recorder
-        captures the final agent-facing content.
+        descriptor. On success, offloads artifact tuples (described
+        deterministically — no LLM), coerces to str, truncates, and normalizes
+        into the canonical envelope. Serializes, then lets the recorder capture
+        the final agent-facing content.
         """
+
+        def capture(content: str) -> str:
+            """Let the observability recorder (if any) emit the tool event."""
+            if self.llm._recorder is not None:
+                self.llm._recorder.after_tool(func_name, args, content)
+            return content
+
         if failure is not None:
             env = build_tool_result(
                 func_name, False, "", failure["error"], {"reason": failure["reason"]}
@@ -219,16 +208,14 @@ class ToolExecutor:
             if is_artifact:
                 _, artifact = raw_result
                 self.tool_artifacts[tool_call_id] = artifact
-                result = summarize_artifact(
-                    self.client, artifact, func_name, tool_call_id
-                )
+                result = describe_artifact(artifact, tool_call_id)
             else:
                 result = raw_result
             if not isinstance(result, str):
                 result = str(result)
             pre_len = len(result)
             result = validate_tool_output(
-                result, func_name, self.client._session_log_path, is_summary=is_artifact
+                result, func_name, self.llm._session_log_path, is_summary=is_artifact
             )
             is_truncated = not is_artifact and len(result) < pre_len
 
@@ -246,128 +233,4 @@ class ToolExecutor:
             )
 
         serialized = json.dumps(validate_tool_result(env), default=str)
-        content = self._apply_after_hook(tool_call_id, func_name, args, serialized)
-        return content, status, record
-
-    def _apply_after_hook(
-        self, tool_call_id: str, func_name: str, args: dict, result: str
-    ) -> str:
-        """Apply the user after-hook to the serialized result (recorder capture)."""
-        self.logger.tool(
-            "%s → after_hook %s(%s) → %s", tool_call_id, func_name, args, result
-        )
-        try:
-            modified = self.client._after_hook(func_name, args, result)
-        except Exception as exc:
-            self.logger.error(
-                "%s → after_hook raised %s for %s: %s",
-                tool_call_id,
-                type(exc).__name__,
-                func_name,
-                exc,
-            )
-            return result
-        if modified != result:
-            self.logger.tool(
-                "%s → after_hook modified result for %s", tool_call_id, func_name
-            )
-        return modified
-
-    @staticmethod
-    def _emit(
-        messages: list[dict[str, Any]],
-        records: list[dict[str, Any]],
-        tool_call_id: str,
-        content: str,
-        status: str,
-        record: dict[str, Any],
-    ) -> None:
-        """Append one tool-result message and its matching call-record."""
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": content,
-                "status": status,
-            }
-        )
-        records.append(record)
-
-    def execute_tool_calls(
-        self,
-        message: dict[str, Any],
-        conversation: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Dispatch all tool calls in message, returning (tool_messages, call_records).
-
-        Args:
-            message: The assistant message whose ``tool_calls`` are dispatched.
-            conversation: The conversation so far, threaded into the
-                argument-correction call (replaces the former ``self.messages``
-                reach-back).
-            tools: Tool schemas to expose during argument correction (replaces the
-                former ``self.tools`` reach-back).
-
-        Success record: {"name": str, "args": dict, "ok": True}
-        Failure record: {"name": str, "args": dict, "ok": False, "error": str}
-        """
-        tool_calls = message.get("tool_calls", []) or []
-        messages: list[dict[str, Any]] = []
-        records: list[dict[str, Any]] = []
-        registry = ToolsRegistry(artifacts=self.tool_artifacts, tools=tools or [])
-        self.logger.tool("dispatch: %d tool call(s)", len(tool_calls))
-
-        for tool_call in tool_calls:
-            # Parse and validate the raw tool call first, to catch issues
-            # before invoking any tools.
-            tool_call_id, func_name, args, error = arg_prep.parse_tool_call(tool_call)
-            if error:
-                name = func_name or "<unknown>"
-                env = build_tool_result(
-                    name, False, "", error, {"reason": "parse_error"}
-                )
-                record = error_record(name, {}, tool_call_id, error)
-                content = json.dumps(validate_tool_result(env), default=str)
-                self._emit(messages, records, tool_call_id, content, "error", record)
-                continue
-
-            # error is None here, so parse_tool_call gave a valid func_name and args.
-            assert func_name is not None and args is not None
-
-            # Run the before_tool_call hook, which can modify args or return
-            # None to skip the call.
-            args = self.before_tool_call(tool_call_id, func_name, args)
-            if args is None:
-                env = build_tool_result(
-                    func_name,
-                    False,
-                    "(tool call skipped)",
-                    "skipped",
-                    {"reason": "skipped"},
-                )
-                record = error_record(
-                    func_name, {}, tool_call_id, "skipped", status="skipped"
-                )
-                content = json.dumps(validate_tool_result(env), default=str)
-                self._emit(messages, records, tool_call_id, content, "skipped", record)
-                continue
-
-            # Call the tool (with arg-correction retries), then post-process its
-            # raw result (or failure) into the final message + record.
-            self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
-            raw, failure = self.invoke_tool(
-                tool_call_id,
-                func_name,
-                args,
-                registry,
-                tool_call,
-                conversation,
-                tools,
-            )
-            content, status, record = self.after_tool_call(
-                tool_call_id, func_name, args, raw, failure
-            )
-            self._emit(messages, records, tool_call_id, content, status, record)
-
-        return messages, records
+        return capture(serialized), status, record

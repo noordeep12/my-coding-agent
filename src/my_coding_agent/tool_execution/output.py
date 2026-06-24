@@ -73,6 +73,32 @@ def validate_tool_output(
     return result
 
 
+def describe_artifact(artifact: dict, tool_call_id: str) -> str:
+    """Deterministically describe an offloaded artifact (no LLM), with a pointer.
+
+    Reports just enough for the agent to decide whether to fetch the full output
+    via ``read_tool_artifact`` — file metadata for file reads, exit status and
+    byte counts for command output.
+    """
+    if "content" in artifact:
+        summary = json.dumps(
+            {"file_path": artifact.get("file_path"), "size": artifact.get("size")}
+        )
+    else:
+        summary = json.dumps(
+            {
+                "exit_code": artifact.get("exit_code"),
+                "ok": artifact.get("ok"),
+                "stdout_chars": len(artifact.get("stdout", "")),
+                "stderr_chars": len(artifact.get("stderr", "")),
+            }
+        )
+    return summary + (
+        f"\n\n[Full output stored as artifact — use read_tool_artifact("
+        f'tool_call_id="{tool_call_id}") to inspect it.]'
+    )
+
+
 def summarize_artifact(
     client: "LLM",
     artifact: dict,

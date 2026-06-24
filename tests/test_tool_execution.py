@@ -209,12 +209,12 @@ def _registry(executor, base_dir=None):
 def _invoke(executor, tool_call_id, func_name, call_args, registry):
     """Drive invoke_tool → after_tool_call and return (env, status, record).
 
-    The two-phase contract (invoke = call+retries, after = post-process) means
-    the final envelope only exists once both have run; this stitches them.
+    The two-phase contract (invoke = call, after = post-process) means the final
+    envelope only exists once both have run; this stitches them. The registry is
+    injected on the executor (instance attribute).
     """
-    raw, failure = executor.invoke_tool(
-        tool_call_id, func_name, call_args, registry, {"id": tool_call_id}, [], None
-    )
+    executor.registry = registry
+    raw, failure = executor.invoke_tool(tool_call_id, func_name, call_args)
     content, status, record = executor.after_tool_call(
         tool_call_id, func_name, call_args, raw, failure
     )
@@ -273,19 +273,12 @@ def test_invoke_tool_non_recoverable_exception_reraises(bare_executor, monkeypat
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(ToolsRegistry, "read_file", boom)
+    bare_executor.registry = _registry(bare_executor)
     with pytest.raises(RuntimeError, match="kaboom"):
-        bare_executor.invoke_tool(
-            "c1",
-            "read_file",
-            {"file_path": "x"},
-            _registry(bare_executor),
-            {"id": "c1"},
-            [],
-            None,
-        )
+        bare_executor.invoke_tool("c1", "read_file", {"file_path": "x"})
 
 
-# ── characterization: orchestration (execute_tool_calls) ──────────────────────
+# ── characterization: orchestration (run) ─────────────────────────────────────
 
 
 def _tool_call(name, args, call_id="c1"):
@@ -296,8 +289,8 @@ def _tool_call(name, args, call_id="c1"):
     }
 
 
-def test_execute_tool_calls_success(bare_executor, monkeypatch):
-    # execute_tool_calls builds its own registry (base = cwd); stub bash so the
+def test_run_success(bare_executor, monkeypatch):
+    # The executor's registry is a real ToolsRegistry; stub bash so the
     # orchestration path is exercised without a real shell or network.
     monkeypatch.setattr(
         ToolsRegistry,
@@ -306,23 +299,15 @@ def test_execute_tool_calls_success(bare_executor, monkeypatch):
             {"stdout": "hi", "stderr": "", "exit_code": 0, "ok": True}
         ),
     )
-    msg = {"tool_calls": [_tool_call("bash", {"command": "ls"})]}
-    messages, records = bare_executor.execute_tool_calls(msg, [], [])
+    bare_executor.tool_calls = [_tool_call("bash", {"command": "ls"})]
+    messages, records = bare_executor.run()
     assert messages[0]["role"] == "tool"
     assert messages[0]["status"] == "success"
     assert records[0]["ok"] is True
 
 
-def test_execute_tool_calls_parse_error(bare_executor):
-    msg = {"tool_calls": [{"id": "c1", "function": {"name": "bash"}}]}  # no type
-    messages, records = bare_executor.execute_tool_calls(msg, [], [])
+def test_run_parse_error(bare_executor):
+    bare_executor.tool_calls = [{"id": "c1", "function": {"name": "bash"}}]  # no type
+    messages, records = bare_executor.run()
     assert messages[0]["status"] == "error"
     assert records[0]["ok"] is False
-
-
-def test_execute_tool_calls_skip_when_before_hook_returns_none(bare_executor):
-    bare_executor.client._before_hook = lambda name, args: None
-    msg = {"tool_calls": [_tool_call("bash", {"command": "ls"})]}
-    messages, records = bare_executor.execute_tool_calls(msg, [], [])
-    assert messages[0]["status"] == "skipped"
-    assert records[0]["status"] == "skipped"

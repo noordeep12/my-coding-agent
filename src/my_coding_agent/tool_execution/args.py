@@ -6,14 +6,10 @@ state. Each takes the executor's logger so log output stays attributed to it.
 
 import inspect
 import json
-from typing import TYPE_CHECKING, Any
 
 from ..logger import get_logger
 from ..tools import ToolsRegistry
-from ..utils import extract_message, parse_tool_args
-
-if TYPE_CHECKING:
-    from ..llm import LLM
+from ..utils import parse_tool_args
 
 logger = get_logger(__name__)
 
@@ -129,64 +125,4 @@ def strip_unknown_args(func_name: str, args: dict) -> dict:
                 k,
             )
         args = {k: v for k, v in args.items() if k in valid}
-    return args
-
-
-def correct_args(
-    client: "LLM",
-    func_name: str,
-    args: dict,
-    exc: Exception,
-    sig: inspect.Signature,
-    tool_call: dict,
-    tool_call_id: str,
-    attempt: int,
-    conversation: list[dict[str, Any]],
-    tools: list[dict[str, Any]] | None,
-) -> dict | None:
-    """Ask the LLM to fix wrong args after a TypeError (client injected).
-
-    Returns corrected args, or None on failure.
-    """
-    correction_messages = list(conversation) + [
-        {"role": "assistant", "content": None, "tool_calls": [tool_call]},
-        {"role": "tool", "tool_call_id": tool_call_id, "content": f"Error: {exc}"},
-        {
-            "role": "user",
-            "content": (
-                f"Tool '{func_name}' was called with wrong arguments: {exc}. "
-                f"Expected signature: {func_name}{sig}. "
-                f"Please call '{func_name}' again with the correct arguments."
-            ),
-        },
-    ]
-    correction_resp = client.chat_completion(
-        correction_messages,
-        tools=tools,
-        kind="tool_arg_correction",
-    )
-    corrected = next(
-        (
-            c
-            for c in (extract_message(correction_resp).get("tool_calls") or [])
-            if c.get("function", {}).get("name") == func_name
-        ),
-        None,
-    )
-    if not corrected:
-        logger.warning(
-            "correction attempt %s: model did not return a %s call",
-            attempt + 1,
-            func_name,
-        )
-        return None
-    try:
-        args = parse_tool_args(corrected.get("function", {}).get("arguments", {}))
-    except json.JSONDecodeError:
-        logger.warning(
-            "correction attempt %s: could not parse corrected args", attempt + 1
-        )
-        return None
-    args = apply_arg_aliases(func_name, args)
-    logger.tool("corrected args (attempt %s): %s(%s)", attempt + 1, func_name, args)
     return args

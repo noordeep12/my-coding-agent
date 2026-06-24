@@ -15,7 +15,6 @@ import pytest
 
 from my_coding_agent.agent import Agent
 from my_coding_agent.llm import LLM
-from my_coding_agent.tool_execution import ToolExecutor
 from my_coding_agent.tool_routing import ToolRouter
 
 # --- helpers -----------------------------------------------------------------
@@ -54,11 +53,10 @@ def _make_agent(silent_logger, **overrides):
     for client_attr in ("model", "context_window", "llm_calls"):
         if client_attr in overrides:
             setattr(agent.llm, client_attr, overrides.pop(client_attr))
-    # Collaborators that __init__ would normally build; __init__ is skipped here.
+    # Collaborators/state that __init__ would normally build; __init__ is skipped.
     agent._router = ToolRouter(agent.llm)
     agent._router.logger = silent_logger
-    agent._executor = ToolExecutor(agent.llm)
-    agent._executor.logger = silent_logger
+    agent.tool_artifacts = {}  # a per-message ToolExecutor is built inside run()
     for key, value in overrides.items():
         setattr(agent, key, value)
     return agent
@@ -244,7 +242,9 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
         }
     )
     mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch("my_coding_agent.agent.ToolExecutor").return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
     agent.run(max_steps=5)
     assert agent.stop_reason == "stop"
@@ -265,7 +265,9 @@ def test_run_stops_at_max_steps(silent_logger, mocker):
         }
     )
     mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch("my_coding_agent.agent.ToolExecutor").return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
     agent.run(max_steps=1)
     assert agent.stop_reason == "max_steps"
@@ -293,7 +295,9 @@ def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
         }
     )
     chat = mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch("my_coding_agent.agent.ToolExecutor").return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
     agent.run(max_steps=max_steps)
 
@@ -318,7 +322,9 @@ def test_run_skips_step_on_empty_message(silent_logger, mocker):
         }
     )
     chat = mocker.patch.object(agent.llm, "chat_completion", side_effect=[empty, stop])
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch("my_coding_agent.agent.ToolExecutor").return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
     agent.run(max_steps=5)
     # First call returned empty (step skipped), second returned a stop.
