@@ -206,26 +206,36 @@ Bad engineering is hiding complexity without control.
 
 ### 25. Project Structure
 
-Use `src/` layout — prevents accidental imports of development code at test time.
+* Organize code by **feature/domain**, not file type, once the project is non-trivial.
+* Keep a clear split: **public API → services/orchestration → core logic → adapters (IO, DB, APIs, LLMs)**.
+* Ensure **one-way dependencies**; lower layers never import higher layers.
+* Keep **core logic pure**, without IO, side effects, or external systems.
+* Limit nesting depth (usually 3–4 levels max).
+* Schemas live with the **domain they belong to**, not in a global `schemas/` folder, and should use typed models (Pydantic/dataclasses/type hints) as the single source of truth.
+* Avoid “dump” modules like `utils/` or `helpers/` growing into unrelated code.
+* **Never use `setup.py` for new projects.** All config lives in `pyproject.toml`.
+
+#### Layered dependency order
+
+Arrange packages into responsibility layers and enforce strict one-way imports top-to-bottom:
 
 ```
-my-library/
-├── src/my_library/
-│   ├── __init__.py      # Public API exports only
-│   ├── _internal.py     # Private (underscore = not public API)
-│   ├── exceptions.py    # Custom exceptions
-│   ├── types.py         # Type definitions
-│   └── py.typed         # PEP 561 marker: signals type hints are present
-├── tests/
-│   ├── conftest.py      # Shared fixtures
-│   └── test_*.py
-├── pyproject.toml       # Single source of truth (NOT setup.py)
-├── Makefile
-├── .pre-commit-config.yaml
-└── .github/workflows/ci.yml
+generic helpers → passive capture → execution/domain → orchestration
 ```
 
-**Never use `setup.py` for new projects.** All config lives in `pyproject.toml`.
+Lower layers never import higher layers. If a layer must reference a higher layer at runtime, the import must be **lazy** (inside the function body, not at module level). Never suppress the linter warning without fixing the underlying coupling.
+
+#### `schema.py` per module
+
+Each package or subpackage that defines typed contracts (constants, type aliases, dataclasses, envelopes) collects them in a `schema.py`. Builder or executor logic stays in its own module. This keeps shape definitions discoverable and separates *what a thing looks like* from *how it works*.
+
+#### `__init__.py` = public surface only
+
+Re-export only the symbols that form the public API. Never pull underscore-prefixed private symbols up through `__init__.py` — even without `__all__`, they become importable and couple callers to internals. Tests that need private symbols import them directly from the submodule.
+
+#### Passive vs active in observability
+
+Observability code (recorders, event writers, metrics collectors) must only receive and record — it must never control execution flow. Active helpers that configure loggers, render output, or manage file handles belong in the utility layer, not in observability.
 
 ---
 
