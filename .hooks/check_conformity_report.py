@@ -111,11 +111,17 @@ def parse_gaps(text):
 
 
 def _build_audit_prompt(changed):
+    changed_files = "\n".join(f"  {f}" for f in changed.splitlines())
     return (
-        "You are a conformity auditor for this repository. Audit ONLY the code "
-        "changes in the diff below against the project policy documents: "
-        ".claude/CLAUDE.md, CONTRIBUTE.md, ARCHITECTURE.md, README.md. "
-        "Read those documents as needed.\n\n"
+        "You are a conformity auditor for this repository.\n\n"
+        "SCOPE — audit ONLY:\n"
+        "1. The diff provided below.\n"
+        f"2. The changed files listed here (you may Read these if you need "
+        f"more context beyond the diff):\n{changed_files}\n\n"
+        "DO NOT read any other source files. Do not follow imports, callers, "
+        "or related modules outside the changed files.\n\n"
+        "Policy documents you MUST read to audit against: "
+        ".claude/CLAUDE.md, CONTRIBUTE.md, ARCHITECTURE.md, README.md.\n\n"
         "Report ONLY deviations (gaps) present in the changed code. Pure "
         "observation — no fixes, no suggestions, no praise.\n\n"
         "Severity: CRITICAL (foundational rule / security / data loss / silent "
