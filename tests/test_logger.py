@@ -92,7 +92,7 @@ def test_teestream_getattr_delegates_to_original():
 
 def test_git_branch_returns_output(mocker):
     mocker.patch(
-        "my_coding_agent.logger.banner.subprocess.check_output",
+        "my_coding_agent.logger.terminal_ui.subprocess.check_output",
         return_value=b"feature-x\n",
     )
     assert lg._git_branch() == "feature-x"
@@ -100,7 +100,7 @@ def test_git_branch_returns_output(mocker):
 
 def test_git_branch_falls_back_to_unknown_on_error(mocker):
     mocker.patch(
-        "my_coding_agent.logger.banner.subprocess.check_output",
+        "my_coding_agent.logger.terminal_ui.subprocess.check_output",
         side_effect=OSError("git missing"),
     )
     assert lg._git_branch() == "unknown"

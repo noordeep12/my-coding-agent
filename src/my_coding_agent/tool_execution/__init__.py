@@ -13,7 +13,6 @@ import subprocess
 from typing import TYPE_CHECKING, Any
 
 from ..logger import get_logger
-from ..observability.records import call_record, error_record
 from ..tool_registry import ToolRegistry
 from . import args as arg_prep
 from .output import (
@@ -22,6 +21,7 @@ from .output import (
     describe_artifact,
     validate_tool_output,
 )
+from .records import call_record, error_record
 from .result_schema import (
     TOOL_SCHEMA_VERSION,
     build_tool_result,

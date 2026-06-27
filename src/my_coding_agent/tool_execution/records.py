@@ -1,9 +1,8 @@
 """Call-record builders for the agent's tool history.
 
 A *call record* is the per-tool-call dict the executor appends to
-``Agent.tool_records`` and persists in ``session_data.json`` — the observability
-view of what each tool did (``name``/``args``/``ok``/``status``/…). These builders
-own that record shape so it stays consistent across success, failure, skip, and
+``tool_records`` and persists in ``session_data.json``. These builders own that
+record shape so it stays consistent across success, failure, skip, and
 parse-error paths.
 """
 

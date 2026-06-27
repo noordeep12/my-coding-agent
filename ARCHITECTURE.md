@@ -31,21 +31,18 @@ src/my_coding_agent/
 │   ├── __init__.py              ← ToolExecutor: per-message run() (before/call/after)
 │   ├── result_schema.py         ← Canonical envelope: build/validate/normalize
 │   ├── args.py                  ← Tool-call parse + alias remap + kwarg strip
-│   └── output.py                ← Truncation + artifact description
+│   ├── output.py                ← Truncation + artifact description
+│   └── records.py               ← Call-record builders (error_record, call_record)
 ├── tool_registry/               ← ToolRegistry class + tool definition converter (package)
 │   ├── __init__.py              ← Re-export facade (ToolRegistry, tool)
 │   ├── converter.py             ← function_to_json + tool decorator
 │   └── registry.py             ← ToolRegistry: callable tool methods
 ├── logger/                      ← Logging, session-log capture, terminal UI (package)
 │   ├── __init__.py              ← Re-export facade
-│   ├── logging_core.py          ← Custom levels + ColoredFormatter
-│   ├── session_log.py           ← TeeStream + attach/detach_session_log
-│   ├── banner.py                ← print_banner renderer
-│   └── summary.py               ← print_run_summary renderer
+│   ├── logging_core.py          ← Custom levels, ColoredFormatter, TeeStream, attach/detach_session_log
+│   └── terminal_ui.py           ← print_banner + print_run_summary renderers, _git_branch
 ├── observability/               ← Structured session capture (package)
-│   ├── recorder.py              ← Recorder: events.jsonl writer + contextvars
-│   ├── records.py               ← Call-record builders
-│   └── events.py                ← Typed schema (Session/LLMCall/ToolCall/Handoff)
+│   └── recorder.py              ← Recorder: events.jsonl writer + event type constants + contextvars
 └── utils/                       ← Shared helpers (package)
     ├── __init__.py
     ├── exceptions.py            ← MyCodingAgentError hierarchy
@@ -129,18 +126,14 @@ The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatib
 
 ### `Logger` (`logger/` package)
 
-- **`logging_core.py`** — custom log levels `TOOL` (15), `API` (25), `LLM` (35); `ColoredFormatter`; `get_logger`.
-- **`session_log.py`** — `attach_session_log(path)` / `detach_session_log` tee stderr to per-session log files.
-- **`banner.py`** — `print_banner` renders the startup banner.
-- **`summary.py`** — `print_run_summary` renders the end-of-run summary with token chart.
+- **`logging_core.py`** — custom log levels `TOOL` (15), `API` (25), `LLM` (35); `ColoredFormatter`; `get_logger`; `_TeeStream` + `attach_session_log` / `detach_session_log` that tee stderr to per-session log files.
+- **`terminal_ui.py`** — `print_banner` (startup box) and `print_run_summary` (end-of-run box with token chart); shared `_git_branch` helper; all row/section/chart sub-helpers. Both renderers write directly to `sys.stderr`, bypassing the logger formatter.
 
 ### `Observability` (`observability/` package)
 
 A capture layer that writes a per-session `events.jsonl`.
 
-- **`recorder.py`** — `Recorder` appends events (LLM calls, tool I/O, handoffs, agent links) as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
-- **`records.py`** — `error_record()` / `call_record()` build the per-tool-call dicts appended to `tool_records` and persisted in `session_data.json`.
-- **`events.py`** — typed schema: `Session`, `LLMCall`, `ToolCall`, `Handoff`.
+- **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
 
 ---
 

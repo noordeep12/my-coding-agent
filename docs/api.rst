@@ -103,14 +103,6 @@ Observability
    :members:
    :show-inheritance:
 
-.. automodule:: my_coding_agent.observability.records
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.observability.events
-   :members:
-   :show-inheritance:
-
 
 Logger
 ------
@@ -119,15 +111,7 @@ Logger
    :members:
    :show-inheritance:
 
-.. automodule:: my_coding_agent.logger.session_log
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.logger.summary
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.logger.banner
+.. automodule:: my_coding_agent.logger.terminal_ui
    :members:
    :show-inheritance:
 

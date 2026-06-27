@@ -1,36 +1,212 @@
-"""End-of-run summary renderer.
+"""Terminal UI renderers: startup banner and end-of-run summary.
 
-Owns the rich box-drawn ``print_run_summary`` renderer and its row/section/chart/
-markdown sub-helpers, including a ``plotext`` token-consumption chart. Pure
-presentation — it reads no logging state and only writes formatted text to
-``sys.stderr``. The shared ``_git_branch`` helper is imported from
-``banner``.
+Both renderers share the same box-drawing design language and write directly to
+``sys.stderr``, bypassing the logger so the ANSI boxes are not prefixed by the
+``ColoredFormatter`` timestamp/level header (CONTRIBUTE.md §31/§36). The
+``_git_branch`` helper is shared between the two renderers and lives here.
 """
 
 import io
 import os
-import re
+import subprocess
 import sys
+import uuid
+from collections import defaultdict
+from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 
 from colorama import Fore, Style  # type: ignore[import-untyped]
 from rich.console import Console
 from rich.markdown import Markdown
 
-from .banner import _git_branch
+from .logging_core import _ANSI_RE as _ANSI
 
-# ── Run summary ───────────────────────────────────────────────────────────────
-_SUMMARY_W = 110  # box inner width (chart + session header)
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+try:
+    __version__ = version("my-coding-agent")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
+
+
+# ── Shared helper ─────────────────────────────────────────────────────────────
+
+
+def _git_branch() -> str:
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        return "unknown"
+
+
+# ── Startup banner ────────────────────────────────────────────────────────────
+
+
+def print_banner(  # noqa: C901
+    label: str,
+    model: str,
+    tools: list,
+    context_window: int | None = None,
+    n_messages: int = 0,
+    context_reset_threshold: float = 0.75,
+    session_id: str | None = None,
+) -> None:
+    """Render the startup banner box to stderr.
+
+    Draw the ASCII logo and a panel of run metadata — model, tool count, context
+    window, message count, reset threshold, workspace, git branch, session id, and
+    timestamp — using box-drawing characters and color.
+
+    Args:
+        label: Agent label shown in the banner title.
+        model: Model id being run.
+        tools: Tool definitions; their count and names are listed.
+        context_window: Model context window in tokens, or None if unknown.
+        n_messages: Number of seed messages already in the conversation.
+        context_reset_threshold: Fraction of the window that triggers a handoff.
+        session_id: Session identifier; a random one is shown if omitted.
+    """
+    W = 68
+    R: str = Style.RESET_ALL
+    BORDER: str = Fore.CYAN + Style.BRIGHT
+    LABEL: str = Fore.CYAN + Style.BRIGHT
+    VALUE: str = Fore.WHITE + Style.BRIGHT
+    LOGO_C: str = Fore.CYAN + Style.BRIGHT
+    TITLE_C: str = Fore.GREEN + Style.BRIGHT
+
+    ascii_logo = [
+        r"  ██████╗ ██████╗ ██████╗ ███████╗",
+        r" ██╔════╝██╔═══██╗██╔══██╗██╔════╝",
+        r" ██║     ██║   ██║██║  ██║█████╗  ",
+        r" ██║     ██║   ██║██║  ██║██╔══╝  ",
+        r" ╚██████╗╚██████╔╝██████╔╝███████╗",
+        r"  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
+        f"MY CODING AGENT  v{__version__}",
+    ]
+
+    branch = _git_branch()
+    session_id = session_id or uuid.uuid4().hex[:12]
+    workspace = os.getcwd()
+    ctx_str = f"{context_window:,}" if context_window else "unknown"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    reset_str = f"{context_reset_threshold * 100:.0f}%"
+
+    top = BORDER + "╔" + "═" * W + "╗" + R
+    bottom = BORDER + "╚" + "═" * W + "╝" + R
+    mid = BORDER + "╠" + "═" * W + "╣" + R
+
+    def empty_row() -> str:
+        return BORDER + "║" + " " * W + "║" + R
+
+    def logo_row(text: str) -> str:
+        pad_l = (W - len(text)) // 2
+        pad_r = W - pad_l - len(text)
+        return (
+            BORDER
+            + "║"
+            + " " * pad_l
+            + LOGO_C
+            + text
+            + R
+            + " " * pad_r
+            + BORDER
+            + "║"
+            + R
+        )
+
+    def title_row(text: str) -> str:
+        pad_l = (W - len(text)) // 2
+        pad_r = W - pad_l - len(text)
+        return (
+            BORDER
+            + "║"
+            + " " * pad_l
+            + TITLE_C
+            + text
+            + R
+            + " " * pad_r
+            + BORDER
+            + "║"
+            + R
+        )
+
+    def info_row(lbl1: str, val1: str, lbl2: str = "", val2: str = "") -> str:
+        HALF = W // 2
+        left_vis = f"  {lbl1}: {val1}"
+        left_pad = HALF - len(left_vis)
+        left_col = f"  {LABEL}{lbl1}{R}: {VALUE}{val1}{R}" + " " * max(left_pad, 1)
+        if lbl2:
+            right_vis = f"{lbl2}: {val2}  "
+            right_pad = HALF - len(right_vis)
+            right_col = (
+                " " * max(right_pad, 1) + f"{LABEL}{lbl2}{R}: {VALUE}{val2}{R}  "
+            )
+        else:
+            right_col = " " * HALF
+        return BORDER + "║" + left_col + right_col + BORDER + "║" + R
+
+    def full_row(lbl: str, val: str) -> str:
+        vis = f"  {lbl}: {val}"
+        pad = W - len(vis)
+        inner = f"  {LABEL}{lbl}{R}: {VALUE}{val}{R}" + " " * max(pad, 0)
+        return BORDER + "║" + inner + BORDER + "║" + R
+
+    def tool_row(t: dict) -> str:
+        name = t["function"]["name"]
+        params = ", ".join(t["function"]["parameters"]["properties"].keys())
+        sig = f"{name}({params})"
+        max_sig = W - 6
+        if len(sig) > max_sig:
+            sig = sig[: max_sig - 1] + "…"
+        vis = f"    {sig}"
+        pad = W - len(vis)
+        inner = f"    {VALUE}{sig}{R}" + " " * max(pad, 0)
+        return BORDER + "║" + inner + BORDER + "║" + R
+
+    lines = ["", top, empty_row()]
+    for line in ascii_logo:
+        lines.append(logo_row(line))
+    lines += [empty_row(), mid, empty_row()]
+
+    agent_title = f"▸  {label.upper()}"
+    lines.append(title_row(agent_title))
+    lines += [empty_row(), mid, empty_row()]
+
+    lines += [
+        info_row("MODEL", model[:28], "BRANCH", branch),
+        info_row("SESSION", session_id, "TIME", timestamp),
+        info_row("CONTEXT", ctx_str, "RESET AT", reset_str),
+        info_row("MESSAGES", str(n_messages), "TOOLS", str(len(tools))),
+        full_row(
+            "WORKSPACE",
+            workspace if len(workspace) <= W - 16 else "…" + workspace[-(W - 17) :],
+        ),
+    ]
+
+    if tools:
+        lines += [empty_row(), mid, empty_row()]
+        for t in tools:
+            lines.append(tool_row(t))
+
+    lines += [empty_row(), bottom, ""]
+    # Intentional terminal-UI output: render the ANSI box directly to stderr,
+    # deliberately bypassing the logger so the box is not prefixed by the
+    # ColoredFormatter's "timestamp | LEVEL |" header (CONTRIBUTE.md §31/§36).
+    sys.stderr.write("\n".join(lines) + "\n")
+
+
+# ── End-of-run summary ────────────────────────────────────────────────────────
+
+_SUMMARY_W = 110
 
 
 class _SummaryStyle:
-    """Shared box-drawing constants and primitive row builders for the summary.
-
-    Holds what was previously a block of closure locals inside
-    ``print_run_summary`` so the row helpers can live at module scope (keeping the
-    public function's McCabe complexity within the §38 ceiling). Output is byte
-    for byte identical to the former inline version.
-    """
+    """Box-drawing constants and primitive row builders for the summary."""
 
     def __init__(self) -> None:
         self.W = _SUMMARY_W
@@ -105,25 +281,22 @@ def _tool_call_rows(
     if truncated:
         badges_vis += " [truncated]"
         badges += f" {s.WARN}[truncated]{R}"
-    # margin: 2 left, 3 right (space + status + space)
     MARGIN = 5
     args_raw = ", ".join(f"{k}={repr(v)}" for k, v in args.items()) if args else ""
     prefix = f"{index:3}. {name}("
     suffix = ")" + badges_vis
     content_w = W - MARGIN - len(prefix) - len(suffix)
 
-    # split args_raw into lines of content_w
     chunks: list[str] = []
     remaining = args_raw
     while len(remaining) > content_w:
-        # try to break at a comma+space boundary within the limit
         cut = remaining.rfind(", ", 0, content_w)
         if cut == -1:
             cut = content_w
         else:
-            cut += 2  # include the ", "
+            cut += 2
         chunks.append(remaining[:cut])
-        remaining = "    " + remaining[cut:]  # indent continuation
+        remaining = "    " + remaining[cut:]
     chunks.append(remaining)
 
     colored_suffix = ")" + badges
@@ -189,7 +362,6 @@ def _token_chart_rows(s: _SummaryStyle, llm_calls: list | None) -> list[str]:
     if not main_calls:
         return [s.metric_row1("TOKEN CHART", "no main-agent calls recorded")]
 
-    # Sequential index (1-based) among main calls only
     main_x = list(range(1, len(main_calls) + 1))
     prompt_vals = [u["prompt"] for u in main_calls]
     comp_vals = [u["completion"] for u in main_calls]
@@ -217,11 +389,7 @@ def _token_chart_rows(s: _SummaryStyle, llm_calls: list | None) -> list[str]:
         pad = (W - 4) - visible
         rows.append(BORDER + "║  " + line + " " * max(pad, 0) + "  " + BORDER + "║" + R)
 
-    # Annotation row for internal (harness) calls
     if internal_calls:
-        # Group by kind, list call numbers
-        from collections import defaultdict
-
         by_kind: dict = defaultdict(list)
         for c in internal_calls:
             by_kind[c.get("kind", "internal")].append(str(c["call"]))
@@ -243,11 +411,10 @@ def _token_chart_rows(s: _SummaryStyle, llm_calls: list | None) -> list[str]:
 def _handoff_rows(
     s: _SummaryStyle, index: int, h: dict, context_window: int | None
 ) -> list[str]:
-    """Render one handoff (context reset) event as box rows."""
+    """Render one handoff event as box rows."""
     W, R, BORDER, VALUE, WARN = s.W, s.R, s.BORDER, s.VALUE, s.WARN
     rows: list[str] = []
 
-    # Line 1: index, step, context % at trigger
     line1_vis = (
         f"  {index}. step {h['step']} — {h['ctx_pct']:.1f}% ctx used "
         f"({h['ctx_tokens']:,} / {context_window:,} tok)"
@@ -263,7 +430,6 @@ def _handoff_rows(
         + R
     )
 
-    # Line 2: threshold that triggered it
     line2_vis = f"     trigger: prompt_tokens >= {h['threshold']:.0f}% threshold"
     pad2 = W - len(line2_vis)
     rows.append(
@@ -276,7 +442,6 @@ def _handoff_rows(
         + R
     )
 
-    # Line 3: saved path (truncated to fit)
     path_str = h.get("path", "")
     max_path = W - 12
     if len(path_str) > max_path:
@@ -297,7 +462,7 @@ def _handoff_rows(
 
 
 def _tool_calls_section(s: _SummaryStyle, records: list) -> list[str]:
-    """Box rows for the TOOL CALLS detail list (empty if there are no records)."""
+    """Box rows for the TOOL CALLS detail list."""
     if not records:
         return []
     lines = [s.empty_row()]
@@ -320,7 +485,7 @@ def _tool_calls_section(s: _SummaryStyle, records: list) -> list[str]:
 def _context_resets_section(
     s: _SummaryStyle, handoffs: list, context_window: int | None
 ) -> list[str]:
-    """Box rows for the CONTEXT RESETS section (one block per handoff)."""
+    """Box rows for the CONTEXT RESETS section."""
     if not handoffs:
         return [
             s.empty_row(),
@@ -379,10 +544,6 @@ def print_run_summary(
 ) -> None:
     """Render the end-of-run summary box to stderr.
 
-    Draw a box reporting the run outcome: step count, stop reason, elapsed time and
-    throughput, token totals, a per-call token-consumption chart, the last model
-    message, and the tool-call and context-reset sections.
-
     Args:
         steps: Number of loop steps executed.
         max_steps: Configured step budget.
@@ -399,7 +560,6 @@ def print_run_summary(
     s = _SummaryStyle()
     metric_row1 = s.metric_row1
 
-    # ── computed values ────────────────────────────────────────────────────────
     ctx_pct = (
         f" ({last_prompt_tokens / context_window * 100:.1f}% of {context_window:,})"
         if context_window and last_prompt_tokens
@@ -418,7 +578,6 @@ def print_run_summary(
     branch = _git_branch()
     workspace = os.getcwd()
 
-    # ── build box ──────────────────────────────────────────────────────────────
     ctx_str = f"{context_window:,}" if context_window else "unknown"
     ws_str = workspace if len(workspace) <= s.W - 16 else "…" + workspace[-(s.W - 17) :]
     tools_str = str(len(tools)) if tools is not None else "—"
@@ -431,7 +590,6 @@ def print_run_summary(
         s.empty_row(),
         s.mid,
         s.empty_row(),
-        # ── session header (mirrors banner) ───────────────────────────────────
         metric_row1("MODEL", model or "—"),
         metric_row1("SESSION", session_id or "—"),
         metric_row1("STARTED", started_at or "—"),
@@ -442,7 +600,6 @@ def print_run_summary(
         s.empty_row(),
         s.mid,
         s.empty_row(),
-        # ── run metrics ───────────────────────────────────────────────────────
         metric_row1("STEPS", f"{steps} / {max_steps}"),
         metric_row1("STOP REASON", stop_reason),
         metric_row1("ELAPSED", elapsed_str),
@@ -455,7 +612,6 @@ def print_run_summary(
         metric_row1("COMPLETION (all calls)", f"{completion_tokens:,} tok"),
         metric_row1("TOTAL BILLED", f"{total_tokens:,} tok"),
         s.mid,
-        # ── token chart ───────────────────────────────────────────────────────
         *_token_chart_rows(s, llm_calls),
         s.mid,
         metric_row1("TOOL CALLS", tool_count),

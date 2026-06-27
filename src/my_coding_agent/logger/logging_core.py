@@ -1,13 +1,16 @@
-"""Package logger: custom TOOL/API/LLM levels, colored formatter, stderr handler.
+"""Logging primitives and stderr session-log capture.
 
-Owns the logging primitives — the custom level numbers and their registration, the
-``_PackageLogger`` subclass that adds ``tool``/``api``/``llm`` convenience methods
-without mutating the global ``logging.Logger`` class, the ``ColoredFormatter`` that
-wraps each line in a per-level ANSI color, the ``DynamicStderrHandler`` that follows
-``sys.stderr`` replacement, and the public ``get_logger`` factory.
+Owns the custom level numbers and their registration, the ``_PackageLogger``
+subclass that adds ``tool``/``api``/``llm`` convenience methods without mutating
+the global ``logging.Logger`` class, the ``ColoredFormatter``, the
+``DynamicStderrHandler`` that follows ``sys.stderr`` replacement, the public
+``get_logger`` factory, and the ``_TeeStream`` / ``attach_session_log`` /
+``detach_session_log`` helpers that fan stderr writes to plain + colored log files.
 """
 
 import logging
+import os
+import re
 import sys
 from typing import Any, TextIO
 
@@ -139,3 +142,80 @@ def _get_package_logger(name: str) -> _PackageLogger:
         logger.api = _PackageLogger.api.__get__(logger)  # type: ignore[attr-defined]
         logger.llm = _PackageLogger.llm.__get__(logger)  # type: ignore[attr-defined]
     return logger  # type: ignore[return-value]
+
+
+# ── Session-log capture (stderr tee) ──────────────────────────────────────────
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class _TeeStream:
+    """Wraps the original stderr and tees every write to two extra files."""
+
+    def __init__(
+        self, original: TextIO, plain_file: TextIO, colored_file: TextIO
+    ) -> None:
+        self._orig = original
+        self._plain = plain_file
+        self._colored = colored_file
+
+    def write(self, data: str) -> int:
+        self._orig.write(data)
+        self._colored.write(data)
+        self._plain.write(_ANSI_RE.sub("", data))
+        return len(data)
+
+    def flush(self) -> None:
+        self._orig.flush()
+        self._colored.flush()
+        self._plain.flush()
+
+    def fileno(self) -> int:
+        return self._orig.fileno()
+
+    def isatty(self) -> bool:
+        return self._orig.isatty()
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._orig, "encoding", "utf-8")
+
+    @property
+    def errors(self) -> str:
+        return getattr(self._orig, "errors", "replace")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._orig, name)
+
+
+# Opaque handle returned by attach_session_log and consumed by detach_session_log.
+_SessionLogHandle = tuple[TextIO, TextIO, TextIO]
+
+
+def attach_session_log(path: str | os.PathLike[str]) -> _SessionLogHandle:
+    """Replace sys.stderr with a TeeStream writing to plain + colored log files."""
+    import pathlib
+
+    plain_path = pathlib.Path(path)
+    colored_path = plain_path.with_name("stderr_colored.log")
+    plain_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plain_file = open(plain_path, "a", encoding="utf-8")
+    try:
+        colored_file = open(colored_path, "a", encoding="utf-8")
+    except Exception:
+        plain_file.close()
+        raise
+
+    original = sys.stderr
+    sys.stderr = _TeeStream(original, plain_file, colored_file)
+    return (original, plain_file, colored_file)
+
+
+def detach_session_log(handle: _SessionLogHandle) -> None:
+    """Restore sys.stderr and close the log files."""
+    original, plain_file, colored_file = handle
+    sys.stderr.flush()
+    sys.stderr = original
+    plain_file.close()
+    colored_file.close()
