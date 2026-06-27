@@ -33,7 +33,7 @@ docs/_build/
 .codex/
 
 gap.md
-conformity.md
+.hooks/.conformity_state.json
 RESEARCH.md
 PLAN.md
 PLAN-CHECKLIST.md
