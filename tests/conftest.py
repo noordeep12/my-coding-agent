@@ -8,9 +8,9 @@ import logging
 
 import pytest
 
-from my_coding_agent.llm import LLM
+from my_coding_agent.engine.llm import LLM
+from my_coding_agent.engine.tool_execution import ToolExecutor
 from my_coding_agent.pipeline.nodes.router import ToolRouter
-from my_coding_agent.tool_execution import ToolExecutor
 
 
 class _FakeResponse:

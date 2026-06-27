@@ -9,9 +9,9 @@ import json
 import re
 from typing import TYPE_CHECKING
 
-from ..observability import get_logger
+from ...utils import get_logger
+from ...utils.parsing import extract_message
 from ..tool_registry import ARTIFACT_THRESHOLD
-from ..utils.parsing import extract_message
 
 if TYPE_CHECKING:
     from ..llm import LLM

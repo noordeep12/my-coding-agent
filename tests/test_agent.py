@@ -13,9 +13,9 @@ import json
 
 import pytest
 
-from my_coding_agent.llm import LLM
+from my_coding_agent.engine.agent import AgentNode as Agent
+from my_coding_agent.engine.llm import LLM
 from my_coding_agent.pipeline.context import RunContext
-from my_coding_agent.pipeline.nodes.agent_node import AgentNode as Agent
 from my_coding_agent.pipeline.nodes.context_preflight import ContextPreflightNode
 from my_coding_agent.pipeline.nodes.token_tracking import TokenTrackingNode
 from my_coding_agent.pipeline.nodes.tool_routing import _routing_signal
@@ -243,13 +243,11 @@ def _stub_run_internals(agent, mocker):
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
     # Banner is emitted at the start of run() (not __init__) — stub its output.
-    mocker.patch("my_coding_agent.pipeline.nodes.agent_node.print_banner")
-    mocker.patch("my_coding_agent.pipeline.nodes.agent_node.detach_session_log")
+    mocker.patch("my_coding_agent.engine.agent.print_banner")
+    mocker.patch("my_coding_agent.engine.agent.detach_session_log")
     # session_data.json existence check in finally → pretend it already exists so
     # the finally block does not try to save/summarize/detach again.
-    mocker.patch(
-        "my_coding_agent.pipeline.nodes.agent_node.Path.exists", return_value=True
-    )
+    mocker.patch("my_coding_agent.engine.agent.Path.exists", return_value=True)
     agent._session_log_handler = (None, None, None)
     agent.session_id = "testsession"
     # Observability recorder is read by run() (start/finish/record_handoff); stub
@@ -274,7 +272,7 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
     )
     mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
     _exec = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_dispatch.ToolExecutor"
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
     ).return_value
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
@@ -299,7 +297,7 @@ def test_run_stops_at_max_steps(silent_logger, mocker):
     )
     mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
     _exec = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_dispatch.ToolExecutor"
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
     ).return_value
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
@@ -329,7 +327,7 @@ def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
     )
     chat = mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
     _exec = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_dispatch.ToolExecutor"
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
     ).return_value
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
@@ -358,7 +356,7 @@ def test_run_skips_step_on_empty_message(silent_logger, mocker):
     )
     chat = mocker.patch.object(agent.llm, "chat_completion", side_effect=[empty, stop])
     _exec = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_dispatch.ToolExecutor"
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
     ).return_value
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
@@ -406,7 +404,7 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
         return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
     )
     saved = mocker.patch(
-        "my_coding_agent.pipeline.nodes.agent_node.ContextHandoff.save",
+        "my_coding_agent.engine.agent.ContextHandoff.save",
         return_value="/tmp/h.json",
     )
     handoff = agent._generate_handoff(step_num=2, prompt_tokens=8000)
@@ -429,7 +427,7 @@ def test_print_summary_forwards_aggregates(silent_logger, mocker):
         session_id="s1",
         started_at="2026-06-12",
     )
-    spy = mocker.patch("my_coding_agent.pipeline.nodes.agent_node.print_run_summary")
+    spy = mocker.patch("my_coding_agent.engine.agent.print_run_summary")
     agent._print_summary(max_steps=5)
     kwargs = spy.call_args.kwargs
     assert kwargs["prompt_tokens"] == 100
@@ -452,7 +450,7 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
         started_at="2026-06-12",
     )
     mocker.patch(
-        "my_coding_agent.pipeline.nodes.agent_node.Path",
+        "my_coding_agent.engine.agent.Path",
         lambda *a: tmp_path.joinpath(*a),
     )
     agent._save_session_data(max_steps=5)
@@ -484,7 +482,7 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     fake_cont = mocker.Mock()
     fake_cont.execute.return_value = [{"role": "assistant", "content": "cont done"}]
     cont_cls = mocker.patch(
-        "my_coding_agent.pipeline.nodes.agent_node.AgentNode", return_value=fake_cont
+        "my_coding_agent.engine.agent.AgentNode", return_value=fake_cont
     )
 
     result = agent._spawn_continuation(handoff, max_steps=5)

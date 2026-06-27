@@ -9,9 +9,9 @@ paths of ``ToolRouter.route_tools`` (via ``bare_router``), and the client's
 import httpx
 import pytest
 
-from my_coding_agent.llm import _HTTP_RETRIES
+from my_coding_agent.engine.llm import _HTTP_RETRIES
+from my_coding_agent.engine.tool_execution import args as arg_prep
 from my_coding_agent.pipeline.nodes.router import _BASELINE_TOOLS
-from my_coding_agent.tool_execution import args as arg_prep
 
 # --- helpers -----------------------------------------------------------------
 
@@ -133,14 +133,14 @@ class _FlakySession:
 
 
 def test_request_with_retry_succeeds_after_transient_failures(bare_llm, mocker):
-    mocker.patch("my_coding_agent.llm.time.sleep")  # don't actually wait
+    mocker.patch("my_coding_agent.engine.llm.time.sleep")  # don't actually wait
     bare_llm.session = _FlakySession(fail_times=_HTTP_RETRIES - 1)
     assert bare_llm._request_with_retry("GET", "http://x/models") == "OK"
     assert bare_llm.session.calls == _HTTP_RETRIES
 
 
 def test_request_with_retry_raises_after_exhausting_attempts(bare_llm, mocker):
-    mocker.patch("my_coding_agent.llm.time.sleep")
+    mocker.patch("my_coding_agent.engine.llm.time.sleep")
     bare_llm.session = _FlakySession(fail_times=_HTTP_RETRIES)
     with pytest.raises(httpx.ConnectError):
         bare_llm._request_with_retry("GET", "http://x/models")
@@ -148,7 +148,7 @@ def test_request_with_retry_raises_after_exhausting_attempts(bare_llm, mocker):
 
 
 def test_request_with_retry_does_not_retry_non_transient(bare_llm, mocker):
-    sleep = mocker.patch("my_coding_agent.llm.time.sleep")
+    sleep = mocker.patch("my_coding_agent.engine.llm.time.sleep")
 
     class _ProtocolErrorSession:
         def request(self, method, url, **kwargs):

@@ -5,10 +5,8 @@ import warnings
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from .llm import LLM
-from .pipeline.nodes.agent_node import AgentNode
+from .engine import LLM, AgentNode, ToolRegistry, tool
 from .pipeline.nodes.handoff import ContextHandoff
-from .tool_registry import ToolRegistry, tool
 from .utils.exceptions import (
     APIResponseError,
     MyCodingAgentError,
@@ -18,7 +16,7 @@ from .utils.exceptions import (
 
 
 def Agent(*args: Any, **kwargs: Any) -> "AgentNode":
-    """Construct an AgentNode. Deprecated — use AgentNode directly; removed in v0.2.0."""
+    """Construct an AgentNode. Deprecated: use AgentNode directly (removed v0.2.0)."""
     warnings.warn(
         "Agent is deprecated and will be removed in v0.2.0. Use AgentNode instead.",
         DeprecationWarning,

@@ -16,8 +16,8 @@ import httpx
 from dotenv import load_dotenv
 from httpx import Response
 
-from ..observability import get_logger
-from ..utils.exceptions import APIResponseError
+from ...utils import get_logger
+from ...utils.exceptions import APIResponseError
 
 load_dotenv()
 OMLX_API_URL = os.environ.get("OMLX_API_URL", "http://127.0.0.1:8321/v1")

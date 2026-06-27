@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from my_coding_agent.tool_execution import (
+from my_coding_agent.engine.tool_execution import (
     MAX_TOOL_OUTPUT_CHARS,
     TOOL_SCHEMA_VERSION,
     _extract_summary,
@@ -20,8 +20,8 @@ from my_coding_agent.tool_execution import (
     output,
     validate_tool_result,
 )
-from my_coding_agent.tool_execution.result_schema import result_envelope
-from my_coding_agent.tool_registry import ToolRegistry as ToolsRegistry
+from my_coding_agent.engine.tool_execution.schema import result_envelope
+from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 
 
 def test_extract_summary_prefers_summary_tags():

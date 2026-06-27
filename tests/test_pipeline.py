@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unittest.mock as mock
 
-from my_coding_agent.llm import LLM
+from my_coding_agent.engine.llm import LLM
 from my_coding_agent.pipeline.context import RunContext
 from my_coding_agent.pipeline.dag import Pipeline
 from my_coding_agent.pipeline.node import BaseNode
@@ -145,7 +145,7 @@ def test_tool_dispatch_node_runs_executor(mocker):
     ctx = _make_ctx()
     ctx.messages = [{"role": "assistant", "content": "x", "tool_calls": []}]
     _exec = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_dispatch.ToolExecutor"
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
     ).return_value
     tool_msg = {"role": "tool", "content": "result", "tool_call_id": "1"}
     _exec.run.return_value = ([tool_msg], [{"name": "bash", "ok": True}])

@@ -89,3 +89,7 @@ source = ["src/my_coding_agent"]
 
 [tool.coverage.report]
 show_missing = true
+omit = [
+    "*/schema.py",
+    "*/examples/simple.py",
+]

@@ -19,8 +19,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 
-from my_coding_agent import ToolRegistry, __version__, tool
-from my_coding_agent.pipeline.nodes.agent_node import AgentNode
+from my_coding_agent import AgentNode, ToolRegistry, __version__, tool
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "

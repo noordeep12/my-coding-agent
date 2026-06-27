@@ -8,7 +8,7 @@ import inspect
 import re
 from typing import Any, Callable
 
-from ..utils.exceptions import ToolDefinitionError
+from ...utils.exceptions import ToolDefinitionError
 
 
 def _parse_tags_section(docstring: str) -> list[str]:

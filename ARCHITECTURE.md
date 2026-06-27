@@ -7,13 +7,32 @@
 ```
 src/my_coding_agent/
 │
-├── pipeline/                    ← Node-based DAG execution engine (package)
-│   ├── __init__.py              ← Public surface: RunContext, Pipeline, AgentNode, build_default_pipeline
+├── engine/                      ← Owns execution: LLM client, tools, and AgentNode
+│   ├── __init__.py              ← Public surface: AgentNode, LLM, ToolRegistry, tool
+│   ├── agent.py                 ← AgentNode: session bookkeeping + pipeline runner (main entry)
+│   ├── schema.py                ← Engine event type constants (SESSION_START, LLM_CALL, etc.)
+│   ├── llm/                     ← LLM HTTP client
+│   │   ├── __init__.py          ← LLM class, OMLX_* constants
+│   │   └── schema.py            ← LLM request/response shape constants
+│   ├── tool_execution/          ← ToolExecutor + pure helpers
+│   │   ├── __init__.py          ← ToolExecutor: per-message run() (before/call/after)
+│   │   ├── schema.py            ← Canonical envelope: build/validate/normalize
+│   │   ├── args.py              ← Tool-call parse + alias remap + kwarg strip
+│   │   ├── output.py            ← Truncation + artifact description
+│   │   └── records.py           ← Call-record builders (error_record, call_record)
+│   └── tool_registry/           ← ToolRegistry class + tool definition converter
+│       ├── __init__.py          ← Re-export facade (ToolRegistry, tool)
+│       ├── converter.py         ← function_to_json + tool decorator
+│       ├── registry.py          ← ToolRegistry: callable tool methods
+│       └── schema.py            ← Tool definition JSON shape constants
+│
+├── pipeline/                    ← Pure DAG building and execution
+│   ├── __init__.py              ← Public surface: RunContext, Pipeline, build_default_pipeline
 │   ├── context.py               ← RunContext dataclass: explicit data contract between nodes
 │   ├── node.py                  ← Node protocol + BaseNode ABC
 │   ├── dag.py                   ← Pipeline: ordered node list + step-loop execution engine
+│   ├── schema.py                ← Pipeline event type constants (ROUTER)
 │   ├── nodes/                   ← One module per pipeline stage
-│   │   ├── agent_node.py        ← AgentNode: session bookkeeping + pipeline runner (main entry)
 │   │   ├── handoff.py           ← ContextHandoff: context reset state transfer
 │   │   ├── router.py            ← ToolRouter: two-phase tool selection
 │   │   ├── context_preflight.py ← ContextPreflightNode: context-window check + handoff trigger
@@ -25,34 +44,28 @@ src/my_coding_agent/
 │   └── examples/
 │       └── simple.py            ← CLI entry point (Click)
 │
-├── llm/                         ← LLM HTTP client (package)
-│   └── __init__.py              ← LLM class, OMLX_* constants
-├── tool_execution/              ← ToolExecutor + pure helpers (package)
-│   ├── __init__.py              ← ToolExecutor: per-message run() (before/call/after)
-│   ├── result_schema.py         ← Canonical envelope: build/validate/normalize
-│   ├── args.py                  ← Tool-call parse + alias remap + kwarg strip
-│   ├── output.py                ← Truncation + artifact description
-│   └── records.py               ← Call-record builders (error_record, call_record)
-├── tool_registry/               ← ToolRegistry class + tool definition converter (package)
-│   ├── __init__.py              ← Re-export facade (ToolRegistry, tool)
-│   ├── converter.py             ← function_to_json + tool decorator
-│   └── registry.py             ← ToolRegistry: callable tool methods
-├── observability/               ← Logging, terminal UI, and structured event capture (package)
-│   ├── __init__.py              ← Re-export facade
-│   ├── logging_core.py          ← Custom levels, ColoredFormatter, TeeStream, attach/detach_session_log
-│   ├── terminal_ui.py           ← print_banner + print_run_summary renderers, _git_branch
-│   └── recorder.py              ← Recorder: events.jsonl writer + event type constants + contextvars
-└── utils/                       ← Shared helpers (package)
-    ├── __init__.py
+├── observability/               ← Passive event capture (never controls execution)
+│   ├── __init__.py              ← Re-export facade (Recorder, current_session_id, current_recorder)
+│   ├── recorder.py              ← Recorder: events.jsonl writer + event type constants + contextvars
+│   └── schema.py                ← JSONL event row shape constants
+│
+└── utils/                       ← Generic helpers
+    ├── __init__.py              ← Re-export facade (get_logger, print_banner, etc.)
     ├── exceptions.py            ← MyCodingAgentError hierarchy
-    └── parsing.py               ← Response-parsing helpers (extract_message, etc.)
+    ├── parsing.py               ← Response-parsing helpers (extract_message, etc.)
+    ├── logging_core.py          ← Custom levels, ColoredFormatter, TeeStream, attach/detach_session_log
+    └── terminal_ui.py           ← print_banner + print_run_summary renderers, _git_branch
 ```
 
 ---
 
 ## Core Layers
 
-### `LLM` (`llm/`)
+### `engine/` — Execution Owner
+
+The engine package owns all execution concerns: the LLM HTTP client, tool dispatch, tool definitions, and the top-level `AgentNode` that drives the agentic loop.
+
+### `LLM` (`engine/llm/`)
 
 The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, and tracks every call in `self.llm_calls`. Construction performs no network I/O — the model's context window is probed lazily on first access to `context_window`. Key responsibilities:
 
@@ -64,13 +77,13 @@ The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, an
 
 Holds the LLM client and selects the relevant tool subset for a message via **`route_tools(message, all_tools)`** — two-phase selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included.
 
-### `ToolExecutor` (`tool_execution/` package)
+### `ToolExecutor` (`engine/tool_execution/` package)
 
 Constructed **per assistant message** (`ToolExecutor(message, llm)`). Runs `before_tool_call` → `invoke_tool` → `after_tool_call` per call. Returns tool messages and records. Normalizes all results into the canonical `{schema_version, tool, ok, output, error, metadata}` envelope.
 
-### `Pipeline` (`pipeline/` package)
+### `pipeline/` — DAG Building and Execution
 
-The node-based DAG execution engine.
+The node-based DAG execution engine. `pipeline/` only knows how to build and execute a DAG — it has no knowledge of LLM client internals or session management.
 
 **`RunContext` (`context.py`)** — the explicit data contract that flows through the pipeline. Holds immutable run config (session id, max steps, LLM client, recorder, all tools) and mutable state fields (messages, step_num, last_prompt_tokens, tool_records, tool_artifacts, handoff_records). Control signals (`signal`, `stop_reason`) are written by nodes and read by `Pipeline.execute`.
 
@@ -89,7 +102,7 @@ The node-based DAG execution engine.
 | `TokenTrackingNode` | 5 | Reads `ctx.last_response`, updates `ctx.last_prompt_tokens`, logs usage |
 | `FinishCheckNode` | 6 | Reads finish_reason from `ctx.last_response`; sets STOP on stop/exit/quit |
 
-### `AgentNode` (`pipeline/nodes/agent_node.py`)
+### `AgentNode` (`engine/agent.py`)
 
 The top-level entry point. Holds an `LLM` client via composition (`self.llm`) — not a subclass. `__init__` builds the client, assigns a session id, attaches the session log, and initializes run stats.
 
@@ -108,7 +121,7 @@ When `ContextPreflightNode` detects that `prompt_tokens / context_window >= cont
 
 `ContextPreflightNode` stores the result in `ctx.continuation_messages` and sets `ctx.signal = "RESET"`, which causes `Pipeline.execute` to return those messages immediately.
 
-### `ToolRegistry` (`tool_registry/` package)
+### `ToolRegistry` (`engine/tool_registry/` package)
 
 A plain class whose methods are the tools the LLM can call:
 
@@ -123,13 +136,31 @@ A plain class whose methods are the tools the LLM can call:
 
 The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings.
 
-### `Observability` (`observability/` package)
+### `observability/` — Passive Event Capture
 
-All runtime visibility concerns live here: structured logging, terminal UI, and the event capture layer.
+Receives events emitted by `engine/` and `pipeline/`; never controls execution. Writing directly to `events.jsonl` is its only side-effect.
+
+- **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
+
+### `utils/` — Generic Helpers
+
+Active utilities that configure loggers and render to stderr — not passive, so they live outside `observability/`.
 
 - **`logging_core.py`** — custom log levels `TOOL` (15), `API` (25), `LLM` (35); `ColoredFormatter`; `get_logger`; `_TeeStream` + `attach_session_log` / `detach_session_log` that tee stderr to per-session log files.
 - **`terminal_ui.py`** — `print_banner` (startup box) and `print_run_summary` (end-of-run box with token chart); shared `_git_branch` helper; all row/section/chart sub-helpers. Both renderers write directly to `sys.stderr`, bypassing the logger formatter.
-- **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
+
+### Schema Convention
+
+Every module and sub-module owns a `schema.py` for its typed contracts and shape definitions. Builder logic stays in its own module; `schema.py` holds constants, type aliases, and dataclasses only.
+
+| Module | `schema.py` contents |
+|---|---|
+| `engine/schema.py` | Session/LLM/tool/handoff event type constants |
+| `engine/llm/schema.py` | LLM call kind constants, usage field names |
+| `engine/tool_execution/schema.py` | Canonical tool-result envelope |
+| `engine/tool_registry/schema.py` | OpenAI tool definition JSON key names |
+| `pipeline/schema.py` | ROUTER event type constant |
+| `observability/schema.py` | JSONL row top-level key names |
 
 ---
 
@@ -138,7 +169,7 @@ All runtime visibility concerns live here: structured logging, terminal UI, and 
 ```
 CLI (Click)
   │
-  └── AgentNode
+  └── AgentNode (engine/agent.py)
         System prompt: workspace state + tool list
         User prompt: task from --prompt / --interactive / default
         Tools: all ToolRegistry methods

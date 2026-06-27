@@ -12,7 +12,7 @@ import json
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-from ..observability import get_logger
+from ...utils import get_logger
 from ..tool_registry import ToolRegistry
 from . import args as arg_prep
 from .output import (
@@ -22,7 +22,7 @@ from .output import (
     validate_tool_output,
 )
 from .records import call_record, error_record
-from .result_schema import (
+from .schema import (
     TOOL_SCHEMA_VERSION,
     build_tool_result,
     result_envelope,
@@ -53,7 +53,7 @@ _RECOVERABLE_EXCEPTIONS = (
 )
 
 # Data contract, output post-processing, and argument prep live in the sibling
-# modules result_schema / output / args; the executor below composes them. The
+# modules schema / output / args; the executor below composes them. The
 # canonical schema (build/validate/envelope), the truncation limit
 # (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported above.
 

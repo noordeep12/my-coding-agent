@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ..llm import LLM
+    from ..engine.llm import LLM
     from ..observability import Recorder
 
 

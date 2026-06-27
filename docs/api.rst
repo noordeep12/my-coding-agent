@@ -8,10 +8,38 @@ The package ``my_coding_agent`` re-exports the core types listed in its
    :no-members:
 
 
-LLM client
-----------
+Engine
+------
 
-.. automodule:: my_coding_agent.llm
+.. automodule:: my_coding_agent.engine.agent
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.engine.llm
+   :members:
+   :show-inheritance:
+
+
+Tool registry
+-------------
+
+.. automodule:: my_coding_agent.engine.tool_registry.registry
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.engine.tool_registry.converter
+   :members:
+   :show-inheritance:
+
+
+Tool execution
+--------------
+
+.. automodule:: my_coding_agent.engine.tool_execution
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.engine.tool_execution.schema
    :members:
    :show-inheritance:
 
@@ -34,10 +62,6 @@ Pipeline
 
 Pipeline nodes
 --------------
-
-.. automodule:: my_coding_agent.pipeline.nodes.agent_node
-   :members:
-   :show-inheritance:
 
 .. automodule:: my_coding_agent.pipeline.nodes.handoff
    :members:
@@ -72,30 +96,6 @@ Pipeline nodes
    :show-inheritance:
 
 
-Tool registry
--------------
-
-.. automodule:: my_coding_agent.tool_registry.registry
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.tool_registry.converter
-   :members:
-   :show-inheritance:
-
-
-Tool execution
---------------
-
-.. automodule:: my_coding_agent.tool_execution
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.tool_execution.result_schema
-   :members:
-   :show-inheritance:
-
-
 Observability
 -------------
 
@@ -104,20 +104,16 @@ Observability
    :show-inheritance:
 
 
-Logger
-------
+Utils
+-----
 
-.. automodule:: my_coding_agent.observability.logging_core
+.. automodule:: my_coding_agent.utils.logging_core
    :members:
    :show-inheritance:
 
-.. automodule:: my_coding_agent.observability.terminal_ui
+.. automodule:: my_coding_agent.utils.terminal_ui
    :members:
    :show-inheritance:
-
-
-Utilities
----------
 
 .. automodule:: my_coding_agent.utils.exceptions
    :members:

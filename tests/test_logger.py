@@ -8,24 +8,27 @@ fan-out, the git-branch fallback, and the custom-level logger methods.
 
 import io
 import logging
+import sys
 
-from my_coding_agent import observability as lg
+from my_coding_agent import utils as lg
+from my_coding_agent.utils.logging_core import _register_level_names, _TeeStream
+from my_coding_agent.utils.terminal_ui import _git_branch, _tool_count_label
 
 # --- _tool_count_label -------------------------------------------------------
 
 
 def test_tool_count_label_empty():
-    assert lg._tool_count_label([]) == "0"
+    assert _tool_count_label([]) == "0"
 
 
 def test_tool_count_label_all_ok():
     records = [{"ok": True}, {"ok": True}]
-    assert lg._tool_count_label(records) == "2 (2 ok)"
+    assert _tool_count_label(records) == "2 (2 ok)"
 
 
 def test_tool_count_label_mixed_ok_and_failed():
     records = [{"ok": True}, {"ok": False}]
-    assert lg._tool_count_label(records) == "2 (1 ok, 1 failed)"
+    assert _tool_count_label(records) == "2 (1 ok, 1 failed)"
 
 
 def test_tool_count_label_counts_skipped_separately():
@@ -35,7 +38,7 @@ def test_tool_count_label_counts_skipped_separately():
         {"ok": False},
     ]
     # 1 ok, 1 failed (the plain False), 1 skipped.
-    assert lg._tool_count_label(records) == "3 (1 ok, 1 failed, 1 skipped)"
+    assert _tool_count_label(records) == "3 (1 ok, 1 failed, 1 skipped)"
 
 
 # --- custom level numbers / _register_level_names ----------------------------
@@ -46,7 +49,7 @@ def test_custom_level_numbers_are_between_debug_and_info():
 
 
 def test_register_level_names_maps_numbers_to_names():
-    lg._register_level_names()
+    _register_level_names()
     assert logging.getLevelName(lg.TOOL) == "TOOL"
     assert logging.getLevelName(lg.API) == "API"
     assert logging.getLevelName(lg.LLM) == "LLM"
@@ -57,7 +60,7 @@ def test_register_level_names_maps_numbers_to_names():
 
 def test_teestream_write_fans_out_and_strips_ansi():
     orig, plain, colored = io.StringIO(), io.StringIO(), io.StringIO()
-    tee = lg._TeeStream(orig, plain, colored)
+    tee = _TeeStream(orig, plain, colored)
     colored_text = "\x1b[31mred\x1b[0m text"
 
     n = tee.write(colored_text)
@@ -76,14 +79,14 @@ def test_teestream_flush_propagates():
             self.flushed = True
 
     orig, plain, colored = _Track(), _Track(), _Track()
-    lg._TeeStream(orig, plain, colored).flush()
+    _TeeStream(orig, plain, colored).flush()
     assert orig.flushed and plain.flushed and colored.flushed
 
 
 def test_teestream_getattr_delegates_to_original():
     orig = io.StringIO()
     orig.custom_attr = "from original"  # type: ignore[attr-defined]
-    tee = lg._TeeStream(orig, io.StringIO(), io.StringIO())
+    tee = _TeeStream(orig, io.StringIO(), io.StringIO())
     assert tee.custom_attr == "from original"
 
 
@@ -92,18 +95,18 @@ def test_teestream_getattr_delegates_to_original():
 
 def test_git_branch_returns_output(mocker):
     mocker.patch(
-        "my_coding_agent.observability.terminal_ui.subprocess.check_output",
+        "my_coding_agent.utils.terminal_ui.subprocess.check_output",
         return_value=b"feature-x\n",
     )
-    assert lg._git_branch() == "feature-x"
+    assert _git_branch() == "feature-x"
 
 
 def test_git_branch_falls_back_to_unknown_on_error(mocker):
     mocker.patch(
-        "my_coding_agent.observability.terminal_ui.subprocess.check_output",
+        "my_coding_agent.utils.terminal_ui.subprocess.check_output",
         side_effect=OSError("git missing"),
     )
-    assert lg._git_branch() == "unknown"
+    assert _git_branch() == "unknown"
 
 
 # --- get_logger custom methods -----------------------------------------------
@@ -127,15 +130,15 @@ def test_get_logger_emits_at_custom_level(caplog):
 
 
 def test_attach_then_detach_session_log_tees_and_restores(tmp_path, monkeypatch):
-    original = lg.sys.stderr
+    original = sys.stderr
     plain_path = tmp_path / "logs" / "stderr.log"
     handle = lg.attach_session_log(plain_path)
     try:
         # stderr is now a TeeStream; a write fans out to the plain log file.
-        lg.sys.stderr.write("hello\n")
-        lg.sys.stderr.flush()
+        sys.stderr.write("hello\n")
+        sys.stderr.flush()
     finally:
         lg.detach_session_log(handle)
-    assert lg.sys.stderr is original  # stderr restored
+    assert sys.stderr is original  # stderr restored
     assert "hello" in plain_path.read_text()  # plain log captured the write
     assert (tmp_path / "logs" / "stderr_colored.log").exists()

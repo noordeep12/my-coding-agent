@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...observability import get_logger
+from ...utils import get_logger
 from ...utils.parsing import extract_message
 from ..context import RunContext
 from ..node import BaseNode

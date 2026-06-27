@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from ...observability import get_logger
-from ...tool_execution import ToolExecutor
+from ...utils import get_logger
 from ..context import RunContext
 from ..node import BaseNode
 
@@ -16,6 +15,8 @@ class ToolDispatchNode(BaseNode):
     name = "tool_dispatch"
 
     def run(self, ctx: RunContext) -> None:
+        from ...engine.tool_execution import ToolExecutor  # noqa: PLC0415 (lazy import)
+
         if not ctx.messages:
             ctx.signal = "CONTINUE"
             return

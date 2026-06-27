@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from my_coding_agent.tool_execution import MAX_TOOL_OUTPUT_CHARS, output
-from my_coding_agent.tool_registry import ToolRegistry as ToolsRegistry
+from my_coding_agent.engine.tool_execution import MAX_TOOL_OUTPUT_CHARS, output
+from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 
 
 class _Resp:
@@ -89,7 +89,7 @@ def test_available_models_uses_alternate_context_keys(bare_llm, mocker):
 
 def test_construction_makes_no_http_request(mocker):
     """Regression (G-09): constructing LLM probes nothing — no /models call."""
-    from my_coding_agent.llm import LLM
+    from my_coding_agent.engine.llm import LLM
 
     probe = mocker.patch.object(LLM, "available_models")
     request = mocker.patch.object(LLM, "_request_with_retry")

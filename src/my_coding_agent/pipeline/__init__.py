@@ -15,7 +15,6 @@ from .nodes import (
     ToolDispatchNode,
     ToolRoutingNode,
 )
-from .nodes.agent_node import AgentNode
 from .nodes.handoff import ContextHandoff
 from .nodes.router import ToolRouter
 
@@ -24,7 +23,6 @@ __all__ = [
     "Pipeline",
     "Node",
     "BaseNode",
-    "AgentNode",
     "ContextHandoff",
     "ToolRouter",
     "ContextPreflightNode",

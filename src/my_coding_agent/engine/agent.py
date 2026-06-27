@@ -9,21 +9,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ...llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
-from ...observability import (
-    Recorder,
+from ..observability import Recorder, current_session_id
+from ..observability.recorder import current_recorder
+from ..pipeline.context import RunContext
+from ..pipeline.node import BaseNode
+from ..pipeline.nodes.handoff import ContextHandoff
+from ..utils import (
     attach_session_log,
-    current_session_id,
     detach_session_log,
     get_logger,
     print_banner,
     print_run_summary,
 )
-from ...observability.recorder import current_recorder
-from ...utils.parsing import extract_message
-from ..context import RunContext
-from ..node import BaseNode
-from .handoff import ContextHandoff
+from ..utils.parsing import extract_message
+from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 
 _HANDOFF_PROMPT = (
     "CONTEXT RESET REQUIRED: your context window is nearly full. "
@@ -110,7 +109,7 @@ class AgentNode(BaseNode):
 
     def execute(self, max_steps: int = 5) -> list[dict[str, Any]]:
         """Drive the agentic pipeline and return the final message list."""
-        from .. import build_default_pipeline
+        from ..pipeline import build_default_pipeline
 
         self.step_num = 0
         self.stop_reason = "max_steps"

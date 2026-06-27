@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from ...observability import get_logger
+from ...utils import get_logger
 from ..context import RunContext
 from ..node import BaseNode
 

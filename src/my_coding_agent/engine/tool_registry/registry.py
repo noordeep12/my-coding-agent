@@ -12,8 +12,8 @@ from pathlib import Path
 import html2text
 import httpx
 
-from ..observability.recorder import current_recorder
-from ..utils.exceptions import PathTraversalError
+from ...observability.recorder import current_recorder
+from ...utils.exceptions import PathTraversalError
 
 # Single source of truth for the large-tool-output boundary (chars). bash output
 # above this triggers artifact separation; tool_execution.MAX_TOOL_OUTPUT_CHARS
@@ -153,10 +153,10 @@ class ToolRegistry:
                 goal, and key names. Example: 'We are adding a hook to the agent
                 loop. Relevant files: agent.py, llm.py at /abs/path/'
         """
-        from my_coding_agent.llm import OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
-        from my_coding_agent.pipeline.nodes.agent_node import (
+        from my_coding_agent.engine.agent import (
             AgentNode,  # lazy import — avoids circular dependency
         )
+        from my_coding_agent.engine.llm import OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
         system_prompt = (
