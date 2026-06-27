@@ -9,7 +9,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
-from ..logger import get_logger
+from ..observability import get_logger
 from ..tool_registry import ARTIFACT_THRESHOLD
 from ..utils.parsing import extract_message
 

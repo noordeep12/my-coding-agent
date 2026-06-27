@@ -107,11 +107,11 @@ Observability
 Logger
 ------
 
-.. automodule:: my_coding_agent.logger.logging_core
+.. automodule:: my_coding_agent.observability.logging_core
    :members:
    :show-inheritance:
 
-.. automodule:: my_coding_agent.logger.terminal_ui
+.. automodule:: my_coding_agent.observability.terminal_ui
    :members:
    :show-inheritance:
 

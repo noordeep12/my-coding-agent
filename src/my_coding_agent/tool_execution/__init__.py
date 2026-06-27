@@ -12,7 +12,7 @@ import json
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-from ..logger import get_logger
+from ..observability import get_logger
 from ..tool_registry import ToolRegistry
 from . import args as arg_prep
 from .output import (

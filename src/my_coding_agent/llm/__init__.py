@@ -16,7 +16,7 @@ import httpx
 from dotenv import load_dotenv
 from httpx import Response
 
-from ..logger import get_logger
+from ..observability import get_logger
 from ..utils.exceptions import APIResponseError
 
 load_dotenv()

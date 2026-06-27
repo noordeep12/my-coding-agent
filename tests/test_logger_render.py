@@ -10,7 +10,7 @@ ANSI colour codes are stripped before assertions so the checks are stable.
 import io
 import re
 
-from my_coding_agent import logger as lg
+from my_coding_agent import observability as lg
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 

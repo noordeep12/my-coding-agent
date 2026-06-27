@@ -37,11 +37,10 @@ src/my_coding_agent/
 │   ├── __init__.py              ← Re-export facade (ToolRegistry, tool)
 │   ├── converter.py             ← function_to_json + tool decorator
 │   └── registry.py             ← ToolRegistry: callable tool methods
-├── logger/                      ← Logging, session-log capture, terminal UI (package)
+├── observability/               ← Logging, terminal UI, and structured event capture (package)
 │   ├── __init__.py              ← Re-export facade
 │   ├── logging_core.py          ← Custom levels, ColoredFormatter, TeeStream, attach/detach_session_log
-│   └── terminal_ui.py           ← print_banner + print_run_summary renderers, _git_branch
-├── observability/               ← Structured session capture (package)
+│   ├── terminal_ui.py           ← print_banner + print_run_summary renderers, _git_branch
 │   └── recorder.py              ← Recorder: events.jsonl writer + event type constants + contextvars
 └── utils/                       ← Shared helpers (package)
     ├── __init__.py
@@ -124,15 +123,12 @@ A plain class whose methods are the tools the LLM can call:
 
 The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings.
 
-### `Logger` (`logger/` package)
+### `Observability` (`observability/` package)
+
+All runtime visibility concerns live here: structured logging, terminal UI, and the event capture layer.
 
 - **`logging_core.py`** — custom log levels `TOOL` (15), `API` (25), `LLM` (35); `ColoredFormatter`; `get_logger`; `_TeeStream` + `attach_session_log` / `detach_session_log` that tee stderr to per-session log files.
 - **`terminal_ui.py`** — `print_banner` (startup box) and `print_run_summary` (end-of-run box with token chart); shared `_git_branch` helper; all row/section/chart sub-helpers. Both renderers write directly to `sys.stderr`, bypassing the logger formatter.
-
-### `Observability` (`observability/` package)
-
-A capture layer that writes a per-session `events.jsonl`.
-
 - **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
 
 ---

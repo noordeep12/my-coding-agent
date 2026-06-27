@@ -7,7 +7,7 @@ state. Each takes the executor's logger so log output stays attributed to it.
 import inspect
 import json
 
-from ..logger import get_logger
+from ..observability import get_logger
 from ..tool_registry import ToolRegistry
 from ..utils.parsing import parse_tool_args
 

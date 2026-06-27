@@ -10,14 +10,15 @@ from pathlib import Path
 from typing import Any
 
 from ...llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
-from ...logger import (
+from ...observability import (
+    Recorder,
     attach_session_log,
+    current_session_id,
     detach_session_log,
     get_logger,
     print_banner,
     print_run_summary,
 )
-from ...observability import Recorder, current_session_id
 from ...observability.recorder import current_recorder
 from ...utils.parsing import extract_message
 from ..context import RunContext

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...logger import get_logger
+from ...observability import get_logger
 from ...tool_execution import ToolExecutor
 from ..context import RunContext
 from ..node import BaseNode
