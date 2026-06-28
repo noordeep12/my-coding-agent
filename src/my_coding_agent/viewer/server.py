@@ -49,7 +49,7 @@ EMBEDDED_HTML = """<!DOCTYPE html>
   --bg:#ffffff; --bg2:#f5f5f7; --panel:#fbfbfd; --line:#e5e5ea;
   --text:#1d1d1f; --muted:#86868b; --accent:#0071e3; --accent-soft:#e8f1fd;
   --pos:#1a7f37; --pos-bg:#e7f6ec; --neg:#d70015; --neg-bg:#fdeaec;
-  --amber:#b25000; --radius:12px;
+  --amber:#b25000; --sub:#8b7bd8; --sub-soft:#efeafb; --radius:12px;
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Monaco,monospace;
 }
@@ -100,8 +100,14 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 
 /* ── tree ── */
 .tree{display:flex;flex-direction:column;gap:1px}
-.tree-group{display:flex;align-items:center;gap:8px;padding:8px 12px;font-weight:600;font-size:12px;color:var(--muted);cursor:pointer;border-radius:8px}
-.tree-group:hover{background:var(--bg2)}
+.agroup-body{display:flex;flex-direction:column;gap:1px;padding-left:16px}
+.agroup.sub>.agroup-body{border-left:2px solid var(--sub);margin-left:9px;padding-left:7px}
+.agent-head{display:flex;align-items:center;gap:9px;padding:7px 12px;border-radius:8px;cursor:pointer}
+.agent-head:hover{background:var(--bg2)}
+.agent-head.sel{background:var(--accent-soft)}
+.agent-name{font-weight:600;font-size:12px}
+.agroup.sub>.agent-head .agent-name{color:var(--sub)}
+.sub-tag{font-size:10px;font-weight:600;color:var(--sub);background:var(--sub-soft);border-radius:5px;padding:1px 6px}
 .tleaf{display:flex;align-items:center;gap:9px;padding:7px 12px;border-radius:8px;cursor:pointer}
 .tleaf:hover{background:var(--bg2)}
 .tleaf.sel{background:var(--accent-soft)}
@@ -120,6 +126,8 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 
 /* ── context window card ── */
 .ctxcard{margin:16px 22px;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
+.ctxcard.sub{border-left:3px solid var(--sub)}
+.ctx-sub{font-weight:600;font-size:11px;color:var(--sub)}
 .ctx-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
 .ctx-label{font-weight:600;font-size:12px}
 .ctx-figs{font-family:var(--mono);font-size:12px;color:var(--muted)}
@@ -256,7 +264,7 @@ function App(){
       </div>
       <div class="detail">
         ${data && sel && data.nodes[sel]
-          ? html`<${Detail} node=${data.nodes[sel]}/>`
+          ? html`<${Detail} node=${data.nodes[sel]} mainAgent=${data.session_id}/>`
           : html`<div class="empty">Select a node to inspect how it processes the RunContext.</div>`}
       </div>
     </div>
@@ -338,43 +346,66 @@ function addedText(cs){
 }
 
 function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
+  // Keep the selected node reachable: expand its owning agent if collapsed.
   useEffect(()=>{
     const n = data.nodes[sel];
-    const step = n && n.attributes && n.attributes.step;
-    if(step && collapsed.has(step)){ const c=new Set(collapsed); c.delete(step); setCollapsed(c); }
+    if(n && collapsed.has(n.agent)){ const c=new Set(collapsed); c.delete(n.agent); setCollapsed(c); }
   },[sel]);
 
-  const top=[], end=[], byStep=new Map();
-  data.order.forEach(id=>{
-    const n = data.nodes[id]; if(!n || hidden.has(n.type)) return;
-    if(n.type==='session') top.push(id);
-    else if(n.type==='session_end') end.push(id);
-    else { const s = n.attributes && n.attributes.step;
-      if(s){ if(!byStep.has(s)) byStep.set(s,[]); byStep.get(s).push(id); } else top.push(id); }
-  });
-  const toggle = k=>{ const c=new Set(collapsed); c.has(k)?c.delete(k):c.add(k); setCollapsed(c); };
+  // Build a nested forest from each node's depth: a `session` node opens an
+  // agent group whose members are the following deeper nodes (recursive).
+  const visible = data.order.map(id=>data.nodes[id])
+    .filter(n=>n && (n.type==='session' || !hidden.has(n.type)));
+  let i = 0;
+  const build = minDepth=>{
+    const out=[];
+    while(i<visible.length){
+      const n = visible[i];
+      if(n.depth < minDepth) break;
+      if(n.type==='session'){ i++; out.push({node:n, children:build(n.depth+1)}); }
+      else { i++; out.push({node:n, children:null}); }
+    }
+    return out;
+  };
+  const forest = build(0);
+  const toggle = a=>{ const c=new Set(collapsed); c.has(a)?c.delete(a):c.add(a); setCollapsed(c); };
 
   return html`<div class="tree">
-    ${top.map(id=>html`<${TreeLeaf} key=${id} node=${data.nodes[id]} depth=${0} sel=${sel} onSel=${onSel}/>`)}
-    ${[...byStep.keys()].sort((a,b)=>a-b).map(step=>{
-      const open = !collapsed.has(step);
-      return html`<div key=${'g'+step}>
-        <div class="tree-group" onClick=${()=>toggle(step)}>
-          <span class=${'twist'+(open?' open':'')}>▸</span> Step ${step}
-        </div>
-        ${open ? byStep.get(step).map(id=>html`<${TreeLeaf} key=${id} node=${data.nodes[id]} depth=${1} sel=${sel} onSel=${onSel}/>`) : null}
-      </div>`;
-    })}
-    ${end.map(id=>html`<${TreeLeaf} key=${id} node=${data.nodes[id]} depth=${0} sel=${sel} onSel=${onSel}/>`)}
+    <${TreeNodes} entries=${forest} data=${data} sel=${sel} onSel=${onSel}
+                  collapsed=${collapsed} toggle=${toggle}/>
   </div>`;
 }
 
-function TreeLeaf({node,depth,sel,onSel}){
+function TreeNodes({entries,data,sel,onSel,collapsed,toggle}){
+  return html`${entries.map(e=> e.children!=null
+    ? html`<${AgentGroup} key=${e.node.id} node=${e.node} kids=${e.children} data=${data}
+              sel=${sel} onSel=${onSel} collapsed=${collapsed} toggle=${toggle}/>`
+    : html`<${TreeLeaf} key=${e.node.id} node=${e.node} sel=${sel} onSel=${onSel}/>`)}`;
+}
+
+function AgentGroup({node,kids,data,sel,onSel,collapsed,toggle}){
+  const isMain = node.agent===data.session_id;
+  const open = !collapsed.has(node.agent);
+  const name = isMain ? node.label : 'Subagent '+node.agent.slice(0,8);
+  return html`<div class=${'agroup'+(isMain?'':' sub')}>
+    <div class=${'agent-head'+(node.id===sel?' sel':'')}>
+      <span class=${'twist'+(open?' open':'')} onClick=${()=>toggle(node.agent)}>▸</span>
+      <span class="row-dot sm" style=${{background:meta(node.type).dot}}></span>
+      <span class="agent-name" onClick=${()=>onSel(node.id)}>${name}</span>
+      ${isMain ? null : html`<span class="sub-tag">subagent</span>`}
+    </div>
+    ${open ? html`<div class="agroup-body">
+      <${TreeNodes} entries=${kids} data=${data} sel=${sel} onSel=${onSel}
+                    collapsed=${collapsed} toggle=${toggle}/>
+    </div>` : null}
+  </div>`;
+}
+
+function TreeLeaf({node,sel,onSel}){
   const ref = useRef(), selected = node.id===sel, m = meta(node.type);
   useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
   const summary = addedText(node.ctx_state);
-  return html`<div ref=${ref} class=${'tleaf'+(selected?' sel':'')}
-                   style=${{paddingLeft:(12+depth*18)+'px'}} onClick=${()=>onSel(node.id)}>
+  return html`<div ref=${ref} class=${'tleaf'+(selected?' sel':'')} onClick=${()=>onSel(node.id)}>
     <span class="row-dot sm" style=${{background:m.dot}}></span>
     <span class="tleaf-name">${m.name}</span>
     <span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary || '—'}</span>
@@ -388,11 +419,13 @@ function displayAttrs(node){
   return a;
 }
 
-function Detail({node}){
+function Detail({node,mainAgent}){
   const m = meta(node.type), a = node.attributes||{};
+  const subAgent = node.agent && node.agent!==mainAgent ? node.agent : null;
   return html`<div class="dwrap">
     <div class="dhead">
       <span class="dbadge" style=${{background:m.dot}}>${m.name}</span>
+      ${subAgent ? html`<span class="sub-tag">subagent ${subAgent.slice(0,8)}</span>` : null}
       ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
       <h2>${node.label}</h2>
       <div class="dmeta">
@@ -402,7 +435,7 @@ function Detail({node}){
         ${node.type==='router' && a.phase ? html`<span>🧭 ${phaseLabel(a.phase)}</span>` : null}
       </div>
     </div>
-    <${CtxCard} cs=${node.ctx_state}/>
+    <${CtxCard} cs=${node.ctx_state} agent=${subAgent}/>
     <${Section} title="Outputs" data=${node.outputs} body=${outputsBody(node)} open=${true}/>
     <${Section} title="Inputs" data=${node.inputs} open=${true}/>
     <${Section} title="Attributes" data=${displayAttrs(node)} open=${false}/>
@@ -489,14 +522,14 @@ function LogBlock({text,kind}){
   </div>`;
 }
 
-function CtxCard({cs}){
+function CtxCard({cs,agent}){
   if(!cs || cs.tokens==null) return null;
   const comp = cs.composition || {};
   const total = cs.tokens || 0;
   const segs = ROLE_ORDER.filter(r=>comp[r]);
-  return html`<div class="ctxcard">
+  return html`<div class=${'ctxcard'+(agent?' sub':'')}>
     <div class="ctx-top">
-      <span class="ctx-label">Context window</span>
+      <span class="ctx-label">Context window${agent ? html` <span class="ctx-sub">· subagent ${agent.slice(0,8)}</span>` : null}</span>
       <span class="ctx-figs">${fmtNum(total)}${cs.window ? ' / '+fmtNum(cs.window) : ''}${cs.pct!=null ? ' · '+cs.pct+'%' : ''}</span>
     </div>
     <div class="ctx-bar">

@@ -106,11 +106,11 @@ my-coding-agent-traces --port 8080 --dir /path/to/.my_coding_agent
 
 Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, served fully offline) shows:
 
-- **Left pane** — a **Tree** of the pipeline grouped by step (collapsible); each node label summarises what it added to the context window (e.g. *+196 assistant*, *+1,501 tool*)
+- **Left pane** — a nested **Tree** of the run: the Main Agent's pipeline, with each delegated **subagent** nested (collapsible, with a coloured rail and badge) where it was spawned; each node label summarises what it added to the context window (e.g. *+196 assistant*, *+1,501 tool*)
   - Navigate with **↑/↓ (or j/k)** arrow keys; the focused node auto-selects
   - **Filters** button — show/hide nodes by type
 - **Right pane** — node detail:
-  - a single **Context window** box: the running window (total / max · %) and a composition bar + legend split into **system / user / assistant / tool** tokens, so you can see which role is inflating the window
+  - a single **Context window** box: the running window (total / max · %) and a composition bar + legend split into **system / user / assistant / tool** tokens, so you can see which role is inflating the window — subagent nodes show that subagent's **own** window, badged with its id
   - every node has the same three collapsible sections — **Outputs**, **Inputs**, **Attributes**
   - in **Outputs**, **Tool Dispatch** nodes render a status badge (**✓ success** / **✗ error**), the command that ran, and the output/error in dedicated log blocks; **LLM Call** nodes render the response text and each tool call (function + parsed arguments) instead of raw JSON — for fast debugging
 - The current **session id** is shown in the header (click to copy); the picker dropdown lists all sessions

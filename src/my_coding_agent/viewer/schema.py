@@ -26,6 +26,12 @@ class TraceNode:
         outputs: Structured outputs (LLM response, tool result, …).
         attributes: Scalar metadata (step, latency_s, tokens, phase, …).
         parent_id: Parent (session root) node ID, or ``None`` for the root.
+        agent: Session id of the agent that owns this node. Main-agent nodes
+            share the top-level session id; sub-agent (delegate) nodes carry the
+            spawned session's id, so the UI can group and badge by agent.
+        depth: Nesting level in the call tree — ``0`` for the main session root,
+            ``1`` for its pipeline nodes (and sub-agent headers), deeper for
+            nested sub-agents. Drives the Tree view's indentation.
         loop_flag: ``True`` when this tool_call repeats an earlier (name, args)
             combination — signals a potential agent loop.
         ctx_state: Per-node snapshot of the session context window after this
@@ -44,6 +50,8 @@ class TraceNode:
     outputs: dict[str, Any] = field(default_factory=dict)
     attributes: dict[str, Any] = field(default_factory=dict)
     parent_id: str | None = None
+    agent: str = ""
+    depth: int = 0
     loop_flag: bool = False
     ctx_state: dict[str, Any] = field(default_factory=dict)
 

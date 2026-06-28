@@ -32,12 +32,18 @@ class _Graph:
 
     Bundles ``nodes`` and the execution ``order`` so callers wire a new node
     with a single ``add`` call instead of threading both through every builder.
+    Each added node is stamped with its owning ``agent`` and call-tree ``depth``
+    so the UI can nest and badge sub-agent traces.
 
     Args:
         root_id: ID of the session root node; every added node parents to it.
+        agent: Owning session id stamped onto every node.
+        base_depth: Depth of this session's root; pipeline nodes sit one deeper.
     """
 
     root_id: str
+    agent: str
+    base_depth: int = 0
     nodes: dict[str, TraceNode] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
 
@@ -47,6 +53,8 @@ class _Graph:
         Args:
             node: The session root ``TraceNode``.
         """
+        node.agent = self.agent
+        node.depth = self.base_depth
         self.nodes[node.id] = node
         self.order.append(node.id)
 
@@ -61,6 +69,8 @@ class _Graph:
         if step is not None:
             node.attributes["step"] = step
         node.parent_id = self.root_id
+        node.agent = self.agent
+        node.depth = self.base_depth + 1
         self.nodes[node_id] = node
         self.order.append(node_id)
 
@@ -101,6 +111,7 @@ def list_sessions(base_dir: Path) -> list[dict[str, Any]]:
 def load_session(
     events_path: Path,
     _seen: set[str] | None = None,
+    _depth: int = 0,
 ) -> TraceSession:
     """Parse *events_path* (``events.jsonl``) into a ``TraceSession``.
 
@@ -114,6 +125,8 @@ def load_session(
     Args:
         events_path: Path to the ``events.jsonl`` file.
         _seen: Set of already-visited session IDs (internal recursion guard).
+        _depth: Call-tree depth of this session's root (0 for the top-level
+            agent; incremented when recursing into a delegate sub-agent).
 
     Returns:
         Fully parsed ``TraceSession`` with nodes in execution order.
@@ -127,21 +140,21 @@ def load_session(
     session_dir = events_path.parent
 
     if not events_path.exists():
-        return _fallback_session(session_dir)
+        return _fallback_session(session_dir, _depth)
 
     events = _read_events(events_path)
     start_ev = _find_start(events)
     session_id = start_ev.get("session_id", session_dir.name)
 
     if session_id in seen:
-        return _stub_session(session_id)
+        return _stub_session(session_id, _depth)
     seen.add(session_id)
 
     end_ev = _find_end(events)
     steps_groups = _group_into_steps(events)
 
     root_id = f"{session_id}::session"
-    graph = _Graph(root_id=root_id)
+    graph = _Graph(root_id=root_id, agent=session_id, base_depth=_depth)
     graph.add_root(
         _make_node(
             id=root_id,
@@ -185,7 +198,11 @@ def load_session(
 
     model = start_ev.get("model", "")
     _detect_loops(graph.nodes)
-    _assign_ctx_state(graph.nodes, graph.order, start_ev.get("context_window"))
+    # Only this session's own nodes; embedded sub-agent nodes already carry the
+    # ctx_state computed by their own recursive load, with their own window.
+    _assign_ctx_state(
+        graph.nodes, graph.order, start_ev.get("context_window"), session_id
+    )
     analytics = _compute_analytics(graph.nodes, model, end_ev)
 
     return TraceSession(
@@ -454,7 +471,9 @@ def _embed_child_session(
     """Load a delegate child session and graft its nodes into *graph*.
 
     The child's nodes are appended to the parent's execution order right after
-    the delegating ``tool_call`` node, so the sub-agent's steps appear inline.
+    the delegating ``tool_call`` node, so the sub-agent's trace appears inline.
+    They arrive one call-tree level deeper, carrying their own ``agent`` id and
+    their own per-agent ``ctx_state`` (computed by the recursive load).
 
     Args:
         child_sid: Session ID of the spawned sub-agent.
@@ -464,7 +483,7 @@ def _embed_child_session(
     """
     child_dir = session_dir.parent / child_sid
     child_events = child_dir / "events.jsonl"
-    child_session = load_session(child_events, _seen=seen)
+    child_session = load_session(child_events, _seen=seen, _depth=graph.base_depth + 1)
     graph.nodes.update(child_session.nodes)
     graph.order.extend(child_session.order)
 
@@ -528,21 +547,21 @@ def _role_split(
     return out
 
 
-def _tokens_per_char(nodes: dict[str, TraceNode]) -> float:
-    """Estimate a session-wide tokens-per-character ratio from the LLM calls.
+def _tokens_per_char(nodes: list[TraceNode]) -> float:
+    """Estimate a tokens-per-character ratio from a session's LLM calls.
 
     Used to size token figures for messages the provider never counted on their
     own — chiefly tool results.
 
     Args:
-        nodes: All trace nodes.
+        nodes: One agent's trace nodes (in any order).
 
     Returns:
         Ratio of measured prompt tokens to input characters across main LLM
         calls, or ``_DEFAULT_TPC`` when nothing is measurable.
     """
     chars = toks = 0
-    for node in nodes.values():
+    for node in nodes:
         if node.type != "llm_call" or node.attributes.get("kind") != "main":
             continue
         prompt = node.attributes.get("prompt_tokens")
@@ -555,24 +574,20 @@ def _tokens_per_char(nodes: dict[str, TraceNode]) -> float:
     return toks / chars if chars else _DEFAULT_TPC
 
 
-def _first_input_split(
-    nodes: dict[str, TraceNode], order: list[str]
-) -> dict[str, int] | None:
+def _first_input_split(nodes: list[TraceNode]) -> dict[str, int] | None:
     """Return the role split of the first main LLM call's input window.
 
     That window — system prompt plus the opening user message — is what the
     session node seeds the context with before any node runs.
 
     Args:
-        nodes: All trace nodes.
-        order: Node IDs in execution order.
+        nodes: One agent's trace nodes in execution order.
 
     Returns:
         ``{role: tokens}`` for the first call's input, or ``None``.
     """
-    for nid in order:
-        node = nodes.get(nid)
-        if node and node.type == "llm_call" and node.attributes.get("kind") == "main":
+    for node in nodes:
+        if node.type == "llm_call" and node.attributes.get("kind") == "main":
             return _role_split(
                 node.inputs.get("messages") or [],
                 node.attributes.get("prompt_tokens"),
@@ -642,28 +657,29 @@ def _assign_ctx_state(
     nodes: dict[str, TraceNode],
     order: list[str],
     default_window: int | None,
+    owner: str,
 ) -> None:
-    """Compute each node's context-window composition, in execution order.
+    """Compute *owner*'s context-window composition, in execution order.
 
-    Walks *order* maintaining the running window as four role buckets
-    (system/user/assistant/tool).  Each node contributes the message(s) it pushes
-    onto the window (``_node_added``); the cumulative composition and the
-    per-node delta are stored on ``node.ctx_state`` for the UI.
+    Walks only the nodes belonging to *owner* (sub-agent nodes already carry the
+    ctx_state from their own recursive load), maintaining the running window as
+    four role buckets (system/user/assistant/tool).  Each node contributes the
+    message(s) it pushes onto the window (``_node_added``); the cumulative
+    composition and the per-node delta are stored on ``node.ctx_state``.
 
     Args:
-        nodes: All trace nodes; each gains a ``ctx_state`` dict in-place.
-        order: Node IDs in execution order.
+        nodes: All trace nodes; *owner*'s nodes gain a ``ctx_state`` in-place.
+        order: Node IDs in execution order (may include sub-agent nodes).
         default_window: Session context window size used when a node omits it.
+        owner: Session id whose nodes this call should process.
     """
-    tpc = _tokens_per_char(nodes)
-    first_snap = _first_input_split(nodes, order)
+    own = [nodes[nid] for nid in order if nodes.get(nid) and nodes[nid].agent == owner]
+    tpc = _tokens_per_char(own)
+    first_snap = _first_input_split(own)
     comp = {r: 0 for r in _ROLES}
     window = default_window
 
-    for nid in order:
-        node = nodes.get(nid)
-        if node is None:
-            continue
+    for node in own:
         own_window = node.attributes.get("context_window")
         if own_window:
             window = own_window
@@ -839,13 +855,14 @@ def _summarise_from_data(session_id: str, path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _fallback_session(session_dir: Path) -> TraceSession:
+def _fallback_session(session_dir: Path, depth: int = 0) -> TraceSession:
     """Build a minimal ``TraceSession`` from ``session_data.json``.
 
     Used when ``events.jsonl`` does not exist (pre-recorder sessions).
 
     Args:
         session_dir: Session directory containing ``session_data.json``.
+        depth: Call-tree depth of this session's root.
 
     Returns:
         Two-node session (root + end) marked with ``source=session_data_fallback``.
@@ -886,6 +903,9 @@ def _fallback_session(session_dir: Path) -> TraceSession:
         parent_id=root_id,
     )
 
+    root.agent = end.agent = session_id
+    root.depth, end.depth = depth, depth + 1
+
     return TraceSession(
         session_id=session_id,
         label=data.get("label", "Session"),
@@ -900,11 +920,12 @@ def _fallback_session(session_dir: Path) -> TraceSession:
     )
 
 
-def _stub_session(session_id: str) -> TraceSession:
+def _stub_session(session_id: str, depth: int = 0) -> TraceSession:
     """Return an empty session stub used to break circular delegate chains.
 
     Args:
         session_id: The already-visited session ID.
+        depth: Call-tree depth of this session's root.
 
     Returns:
         Minimal ``TraceSession`` with a single root node.
@@ -918,6 +939,8 @@ def _stub_session(session_id: str) -> TraceSession:
         outputs={},
         attributes={"note": "circular reference — skipped"},
     )
+    root.agent = session_id
+    root.depth = depth
     return TraceSession(
         session_id=session_id,
         label="[recursive]",

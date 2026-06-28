@@ -188,6 +188,75 @@ def _composition_events(session_id: str = "aabbccdd1234") -> list:
     ]
 
 
+def _delegate_parent_events(parent: str, child: str) -> list:
+    """Main-agent session that delegates one step to *child*."""
+    return [
+        _ev(
+            "session_start",
+            session_id=parent,
+            label="Main Agent",
+            model="m",
+            context_window=8192,
+            started_at="2026-01-01T10:00:00",
+            parent_session_id=None,
+        ),
+        _ev("router", signal="go", selected=["delegate"], phase="p1", used_llm=False),
+        _ev(
+            "llm_call",
+            call=1,
+            kind="main",
+            prompt=100,
+            completion=50,
+            total=150,
+            context_window=8192,
+            messages=[
+                {"role": "system", "content": "s" * 80},
+                {"role": "user", "content": "u" * 20},
+            ],
+            response={"content": "", "reasoning": "", "tool_calls": [], "raw": {}},
+        ),
+        _ev(
+            "tool_call",
+            name="delegate",
+            args={"task": "explore"},
+            result="report",
+            child_session_id=child,
+        ),
+        _ev("session_end", stop_reason="stop", steps=1, elapsed_s=1.0),
+    ]
+
+
+def _subagent_events(child: str, parent: str) -> list:
+    """Spawned sub-agent session with its own (smaller) context window."""
+    return [
+        _ev(
+            "session_start",
+            session_id=child,
+            label="Subagent",
+            model="m",
+            context_window=8192,
+            started_at="2026-01-01T10:00:02",
+            parent_session_id=parent,
+        ),
+        _ev("router", signal="go", selected=["bash"], phase="p1", used_llm=False),
+        _ev(
+            "llm_call",
+            call=1,
+            kind="main",
+            prompt=60,
+            completion=30,
+            total=90,
+            context_window=8192,
+            messages=[
+                {"role": "system", "content": "s" * 40},
+                {"role": "user", "content": "u" * 20},
+            ],
+            response={"content": "", "reasoning": "", "tool_calls": [], "raw": {}},
+        ),
+        _ev("session_end", stop_reason="stop", steps=1, elapsed_s=1.0),
+    ]
+
+
 # ── _group_into_steps ─────────────────────────────────────────────────────────
 
 
@@ -533,6 +602,42 @@ class TestLoadSession:
         # Pass sid in _seen to simulate a circular reference
         session = load_session(ep, _seen={sid})
         assert session.label == "[recursive]"
+
+
+class TestSubagentNesting:
+    def _setup(self, tmp_path):
+        parent, child = "parent000001", "child0000002"
+        (tmp_path / parent).mkdir()
+        (tmp_path / child).mkdir()
+        _write_events(
+            tmp_path / parent / "events.jsonl", _delegate_parent_events(parent, child)
+        )
+        _write_events(
+            tmp_path / child / "events.jsonl", _subagent_events(child, parent)
+        )
+        return parent, child, load_session(tmp_path / parent / "events.jsonl")
+
+    def test_nodes_carry_owning_agent_and_depth(self, tmp_path):
+        parent, child, session = self._setup(tmp_path)
+        # Main-agent nodes: agent == parent, depth 0 (root) / 1 (pipeline).
+        assert session.nodes[f"{parent}::session"].agent == parent
+        assert session.nodes[f"{parent}::session"].depth == 0
+        assert session.nodes[f"{parent}::step1::llm::1"].depth == 1
+        # Sub-agent nodes: agent == child, nested one level deeper.
+        assert session.nodes[f"{child}::session"].agent == child
+        assert session.nodes[f"{child}::session"].depth == 1
+        assert session.nodes[f"{child}::step1::llm::1"].agent == child
+        assert session.nodes[f"{child}::step1::llm::1"].depth == 2
+
+    def test_context_windows_are_per_agent(self, tmp_path):
+        parent, child, session = self._setup(tmp_path)
+        # Parent window: system 80 + user 20 = 100, then +50 assistant = 150.
+        parent_llm = session.nodes[f"{parent}::step1::llm::1"]
+        assert parent_llm.ctx_state["tokens"] == 150
+        # Child window is independent: 40 + 20 = 60, then +30 = 90 — NOT mixed in.
+        child_llm = session.nodes[f"{child}::step1::llm::1"]
+        assert child_llm.ctx_state["tokens"] == 90
+        assert child_llm.ctx_state["composition"]["system"] == 40
 
 
 class TestRoleSplit:
