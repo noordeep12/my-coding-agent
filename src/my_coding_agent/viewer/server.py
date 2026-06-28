@@ -196,7 +196,7 @@ function makeNodeG(node){
   }
   g.appendChild(makeShape(node));
   const abbr=svgEl('text'); abbr.classList.add('node-abbr'); abbr.setAttribute('y','0'); abbr.textContent=nodeAbbr(node.type); g.appendChild(abbr);
-  const lbl=svgEl('text'); lbl.classList.add('node-label'); lbl.setAttribute('y','34'); lbl.textContent=truncate(node.label,14); g.appendChild(lbl);
+  const lbl=svgEl('text'); lbl.classList.add('node-label'); lbl.setAttribute('y','34'); lbl.textContent=truncate(node.label,22); g.appendChild(lbl);
   g.addEventListener('click',e=>{e.stopPropagation(); selectNode(node.id);});
   return g;
 }
@@ -217,7 +217,7 @@ function makeShape(node){
 }
 
 function nodeAbbr(type){
-  return {session:'S',step:'St',router:'R',llm_call:'L',tool_call:'T',handoff:'H',session_end:'E'}[type]||'?';
+  return {session:'S',step:'St',router:'TR',llm_call:'LC',tool_call:'TD',handoff:'CP',session_end:'E',token_tracking:'TT',finish_check:'FC'}[type]||'?';
 }
 
 function truncate(s,n){return s&&s.length>n?s.slice(0,n-1)+'…':s||'';}

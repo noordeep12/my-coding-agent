@@ -65,6 +65,23 @@ def _minimal_events(session_id: str = "aabbccdd1234") -> list:
             started_at="2026-01-01T10:00:03",
         ),
         _ev(
+            "token_tracking",
+            step=1,
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=150,
+            ctx_pct=1.2,
+            context_window=8192,
+            started_at="2026-01-01T10:00:03.5",
+        ),
+        _ev(
+            "finish_check",
+            step=1,
+            finish_reason="tool_use",
+            signal="CONTINUE",
+            started_at="2026-01-01T10:00:03.6",
+        ),
+        _ev(
             "router",
             signal="next step",
             selected=["bash"],

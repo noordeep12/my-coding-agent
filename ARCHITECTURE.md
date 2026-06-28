@@ -155,7 +155,7 @@ The read-side of the observability system. Separated from `observability/` becau
 
 - **`schema.py`** — `TraceNode` and `TraceSession` dataclasses: the typed contracts produced by `reader.py` and consumed by `server.py`.
 - **`pricing.py`** — model price table (USD per 1M tokens) and `compute_cost()` helper.
-- **`reader.py`** — parses `events.jsonl` into a `TraceSession` with a full node graph, SVG layout coordinates, loop detection, and aggregate analytics. Groups events into step buckets, builds a `TraceNode` per event, assigns `(x, y)` via a top-down fixed-column layout, and recursively loads delegate child sessions. Falls back to `session_data.json` for sessions without `events.jsonl`.
+- **`reader.py`** — parses `events.jsonl` into a `TraceSession` with a full node graph, SVG layout coordinates, loop detection, and aggregate analytics. Each pipeline `BaseNode` subclass (`ToolRoutingNode`, `LLMCallNode`, `ToolDispatchNode`, `ContextPreflightNode`, `TokenTrackingNode`, `FinishCheckNode`) maps to a `TraceNode` labelled with the class name. Assigns `(x, y)` via a top-down fixed-column layout; recursively loads delegate child sessions; falls back to `session_data.json` for sessions without `events.jsonl`.
 - **`server.py`** — minimal stdlib `http.server` with three routes (`/`, `/api/sessions`, `/api/session/{id}`) and an embedded single-page Trace Explorer UI (vanilla JS + SVG). CLI entry point: `my-coding-agent-traces [--port 7474] [--dir .my_coding_agent]`.
 
 ### `utils/` — Generic Helpers

@@ -31,6 +31,8 @@ _SHAPE: dict[str, str] = {
     "tool_call": "square",
     "handoff": "rect",
     "session_end": "circle",
+    "token_tracking": "circle",
+    "finish_check": "diamond",
 }
 
 _COLOR: dict[str, str] = {
@@ -41,6 +43,8 @@ _COLOR: dict[str, str] = {
     "tool_call": "#8E44AD",
     "handoff": "#E74C3C",
     "session_end": "#7F8C8D",
+    "token_tracking": "#1A7F5A",
+    "finish_check": "#C0392B",
 }
 
 # Fixed column x-positions (px)
@@ -266,7 +270,7 @@ def _build_step_nodes(
             nodes[node_id] = _make_node(
                 id=node_id,
                 type="router",
-                label="Router",
+                label="ToolRoutingNode",
                 inputs={"signal": ev.get("signal", "")[:120]},
                 outputs={"selected": ev.get("selected", [])},
                 attributes={
@@ -284,7 +288,7 @@ def _build_step_nodes(
             llm_counter += 1
             kind = ev.get("kind", "main")
             node_id = f"{session_id}::step{step_idx + 1}::llm::{llm_counter}"
-            label = f"LLM #{ev.get('call', llm_counter)}"
+            label = "LLMCallNode"
             if kind != "main":
                 label += f" ({kind})"
             resp = ev.get("response") or {}
@@ -318,15 +322,15 @@ def _build_step_nodes(
             tool_counter += 1
             node_id = f"{session_id}::step{step_idx + 1}::tool::{tool_counter}"
             child_sid = ev.get("child_session_id")
-            label = ev.get("name", "tool")
+            tool_name = ev.get("name", "tool")
             nodes[node_id] = _make_node(
                 id=node_id,
                 type="tool_call",
-                label=label,
+                label=f"ToolDispatchNode ({tool_name})",
                 inputs={"args": ev.get("args", {})},
                 outputs={"result": ev.get("result", "")},
                 attributes={
-                    "name": ev.get("name", ""),
+                    "name": tool_name,
                     "latency_s": ev.get("latency_s"),
                     "started_at": ev.get("started_at", ""),
                     "child_session_id": child_sid,
@@ -347,7 +351,7 @@ def _build_step_nodes(
             nodes[node_id] = _make_node(
                 id=node_id,
                 type="handoff",
-                label="Handoff",
+                label="ContextPreflightNode",
                 inputs={},
                 outputs={"content": ev.get("content", "")},
                 attributes={
@@ -364,23 +368,45 @@ def _build_step_nodes(
             prev_id = node_id
 
         elif ev_type == "token_tracking":
-            nodes[step_id].attributes.update(
-                {
+            node_id = f"{session_id}::step{step_idx + 1}::token_tracking"
+            nodes[node_id] = _make_node(
+                id=node_id,
+                type="token_tracking",
+                label="TokenTrackingNode",
+                inputs={},
+                outputs={},
+                attributes={
                     "prompt_tokens": ev.get("prompt_tokens"),
                     "completion_tokens": ev.get("completion_tokens"),
                     "total_tokens": ev.get("total_tokens"),
                     "ctx_pct": ev.get("ctx_pct"),
                     "context_window": ev.get("context_window"),
-                }
+                    "started_at": ev.get("started_at", ""),
+                },
+                parent_id=step_id,
             )
+            nodes[step_id].children.append(node_id)
+            edges.append((prev_id, node_id))
+            prev_id = node_id
 
         elif ev_type == "finish_check":
-            nodes[step_id].attributes.update(
-                {
+            node_id = f"{session_id}::step{step_idx + 1}::finish_check"
+            nodes[node_id] = _make_node(
+                id=node_id,
+                type="finish_check",
+                label="FinishCheckNode",
+                inputs={},
+                outputs={},
+                attributes={
                     "finish_reason": ev.get("finish_reason"),
                     "signal": ev.get("signal"),
-                }
+                    "started_at": ev.get("started_at", ""),
+                },
+                parent_id=step_id,
             )
+            nodes[step_id].children.append(node_id)
+            edges.append((prev_id, node_id))
+            prev_id = node_id
 
 
 def _embed_child_session(
