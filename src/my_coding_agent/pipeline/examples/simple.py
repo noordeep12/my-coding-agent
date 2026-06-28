@@ -125,7 +125,7 @@ def _read_interactive_prompt() -> str:
 )
 @click.option(
     "--max-steps",
-    default=20,
+    default=50,
     show_default=True,
     type=click.IntRange(1, 100),
     help="Maximum agent loop steps.",

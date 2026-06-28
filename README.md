@@ -73,7 +73,7 @@ uv run my-coding-agent --help
 |---|---|---|
 | `--prompt`, `-p` | default commit-and-push task | Task for the agent |
 | `--interactive`, `-i` | `False` | Read the task prompt interactively (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel) |
-| `--max-steps` | `20` | Maximum pipeline step iterations |
+| `--max-steps` | `50` | Maximum pipeline step iterations |
 
 ## Configuration
 
