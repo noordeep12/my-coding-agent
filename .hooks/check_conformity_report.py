@@ -90,12 +90,16 @@ def write_state(state):
         json.dump(state, f, indent=2)
 
 
+MAX_STOP_HOOK_RUNS = 2
+
+
 def fresh_state(hash_):
     return {
         "diff_hash": hash_,
         "status": "pending",
         "mode": None,
         "auto_iterations": 0,
+        "stop_hook_runs": 0,
         "dispositioned_gaps": [],
     }
 
@@ -281,6 +285,19 @@ def _dispatch_gaps(state, remaining, body):
     _block(_interactive_instruction(remaining, body, mode_unknown, auto_exhausted))
 
 
+def _load_state_for_hash(current_hash):
+    prev = read_state()
+    if prev is None or prev["diff_hash"] != current_hash:
+        state = fresh_state(current_hash)
+        state["stop_hook_runs"] = prev.get("stop_hook_runs", 0) if prev else 0
+    else:
+        state = prev
+        state.setdefault("stop_hook_runs", 0)
+    state["stop_hook_runs"] += 1
+    write_state(state)
+    return state
+
+
 def run_report():
     if os.environ.get("CONFORMITY_HOOK_RUNNING"):
         sys.exit(0)
@@ -296,12 +313,12 @@ def run_report():
     if not current_hash:
         sys.exit(0)  # no code changes under src/
 
-    state = read_state()
-    if state is None or state["diff_hash"] != current_hash:
-        state = fresh_state(current_hash)
-        write_state(state)
+    state = _load_state_for_hash(current_hash)
 
     if state["status"] == "resolved":
+        sys.exit(0)
+
+    if state["stop_hook_runs"] > MAX_STOP_HOOK_RUNS:
         sys.exit(0)
 
     changed = subprocess.run(
