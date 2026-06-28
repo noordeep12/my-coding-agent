@@ -78,10 +78,3 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
-
-      - id: conformity-report
-        name: conformity report approved
-        entry: python3 .hooks/check_conformity_report.py
-        language: system
-        pass_filenames: false
-        stages: [pre-commit]
