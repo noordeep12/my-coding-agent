@@ -1,16 +1,13 @@
 """Structured observability recorder — writes a per-session ``events.jsonl``.
 
-The recorder is the capture layer. It is attached to an :class:`Agent` (and its
-held ``LLM`` client) and emits one JSON object per line as the run proceeds, so a
-session that crashes mid-run still leaves a diagnosable trail. It never touches
-the ``logger`` package — capture is entirely separate from logging.
+The recorder is the capture layer. It emits one JSON object per line as the run
+proceeds, so a session that crashes mid-run still leaves a diagnosable trail. It
+never touches the ``logger`` package — capture is entirely separate from logging.
 
-Wiring (see ``agent.py`` / ``llm.py``):
-- ``record_llm_call`` is called at the single LLM choke point, capturing every
-  call kind with full conversation snapshots for payload-bearing kinds.
-- ``before_tool`` / ``after_tool`` are installed as the agent's tool hooks to
-  time and capture each tool's full input/output.
-- ``record_handoff`` captures context-reset (compression/eviction) events.
+Wiring:
+- ``record_llm_call`` captures every LLM call with full conversation snapshots.
+- ``before_tool`` / ``after_tool`` time and capture each tool's full input/output.
+- ``record_handoff`` captures context-reset events.
 - ``current_session_id`` lets a delegated subagent link back to its parent.
 """
 
@@ -23,7 +20,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import events
+# ── Event type tags written as the first key of every JSONL row ───────────────
+SESSION_START = "session_start"
+LLM_CALL = "llm_call"
+TOOL_CALL = "tool_call"
+ROUTER = "router"
+HANDOFF = "handoff"
+SESSION_END = "session_end"
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -99,7 +102,7 @@ class Recorder:
         """Emit the session-start event with run metadata."""
         self._emit(
             {
-                "type": events.SESSION_START,
+                "type": SESSION_START,
                 "session_id": self.session_id,
                 "parent_session_id": self.parent_session_id,
                 "label": label,
@@ -113,7 +116,7 @@ class Recorder:
         """Emit the session-end event with the final outcome."""
         self._emit(
             {
-                "type": events.SESSION_END,
+                "type": SESSION_END,
                 "stop_reason": stop_reason,
                 "steps": steps,
                 "elapsed_s": elapsed_s,
@@ -136,7 +139,7 @@ class Recorder:
         keep_messages = messages if kind in FULL_PAYLOAD_KINDS else None
         self._emit(
             {
-                "type": events.LLM_CALL,
+                "type": LLM_CALL,
                 "call": call,
                 "kind": kind,
                 "started_at": _now(),
@@ -150,7 +153,7 @@ class Recorder:
             }
         )
 
-    # ── tool hooks (installed as the agent's before/after_tool_call) ───────────
+    # ── tool capture (called directly by the ToolExecutor) ─────────────────────
     def before_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Pre-dispatch hook: stamp the start time. Returns args unchanged."""
         self._pending = (time.monotonic(), name)
@@ -164,7 +167,7 @@ class Recorder:
             latency = 0.0
         self._pending = None
         event: dict[str, Any] = {
-            "type": events.TOOL_CALL,
+            "type": TOOL_CALL,
             "name": name,
             "args": args,
             "result": result,
@@ -188,7 +191,7 @@ class Recorder:
         """Record the ToolRouter's selected tool subset for a step."""
         self._emit(
             {
-                "type": events.ROUTER,
+                "type": ROUTER,
                 "started_at": _now(),
                 "signal": signal[:500],
                 "selected": selected,
@@ -204,7 +207,7 @@ class Recorder:
         """Record a context-reset event (window full → summarized/evicted)."""
         self._emit(
             {
-                "type": events.HANDOFF,
+                "type": HANDOFF,
                 "step": step,
                 "ctx_tokens": ctx_tokens,
                 "ctx_pct": round(ctx_pct, 1),

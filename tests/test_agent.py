@@ -13,10 +13,12 @@ import json
 
 import pytest
 
-from my_coding_agent.agent import Agent
-from my_coding_agent.llm import LLM
-from my_coding_agent.tool_execution import ToolExecutor
-from my_coding_agent.tool_routing import ToolRouter
+from my_coding_agent.engine.agent import AgentNode as Agent
+from my_coding_agent.engine.llm import LLM
+from my_coding_agent.pipeline.context import RunContext
+from my_coding_agent.pipeline.nodes.context_preflight import ContextPreflightNode
+from my_coding_agent.pipeline.nodes.token_tracking import TokenTrackingNode
+from my_coding_agent.pipeline.nodes.tool_routing import _routing_signal
 
 # --- helpers -----------------------------------------------------------------
 
@@ -42,7 +44,6 @@ def _make_agent(silent_logger, **overrides):
     agent.tool_records = []
     agent.handoff_records = []
     agent.elapsed_seconds = 0.0
-    agent._continuation_result = []
     # Held LLM client (composition). LLM.__init__ is network-free; swap in the
     # silent logger and set the state the agent loop reads off the client.
     agent.llm = LLM()
@@ -54,11 +55,7 @@ def _make_agent(silent_logger, **overrides):
     for client_attr in ("model", "context_window", "llm_calls"):
         if client_attr in overrides:
             setattr(agent.llm, client_attr, overrides.pop(client_attr))
-    # Collaborators that __init__ would normally build; __init__ is skipped here.
-    agent._router = ToolRouter(agent.llm)
-    agent._router.logger = silent_logger
-    agent._executor = ToolExecutor(agent.llm)
-    agent._executor.logger = silent_logger
+    agent.tool_artifacts = {}  # a per-message ToolExecutor is built inside run()
     for key, value in overrides.items():
         setattr(agent, key, value)
     return agent
@@ -74,136 +71,162 @@ class _Resp:
         return self._payload
 
 
-# --- add_message -------------------------------------------------------------
+# --- _routing_signal (now in pipeline.nodes.tool_routing) --------------------
 
 
-def test_add_message_appends_in_place(silent_logger):
-    agent = _make_agent(silent_logger)
-    agent.add_message({"role": "user", "content": "hi"})
-    assert agent.messages == [{"role": "user", "content": "hi"}]
+def test_routing_signal_joins_last_user_and_assistant():
+    messages = [
+        {"role": "user", "content": "first task"},
+        {"role": "assistant", "content": "doing it"},
+    ]
+    assert _routing_signal(messages) == "first task doing it"
 
 
-def test_add_message_handles_missing_role(silent_logger):
-    agent = _make_agent(silent_logger)
-    agent.add_message({"content": "no role"})  # must not raise
-    assert agent.messages[-1] == {"content": "no role"}
+def test_routing_signal_uses_most_recent_of_each_role():
+    messages = [
+        {"role": "user", "content": "old"},
+        {"role": "user", "content": "new user"},
+        {"role": "assistant", "content": "new assistant"},
+    ]
+    assert _routing_signal(messages) == "new user new assistant"
 
 
-# --- _routing_signal ---------------------------------------------------------
+def test_routing_signal_empty_when_no_messages():
+    assert _routing_signal([]) == ""
 
 
-def test_routing_signal_joins_last_user_and_assistant(silent_logger):
-    agent = _make_agent(
-        silent_logger,
-        messages=[
-            {"role": "user", "content": "first task"},
-            {"role": "assistant", "content": "doing it"},
-        ],
-    )
-    assert agent._routing_signal() == "first task doing it"
+def test_routing_signal_skips_none_content():
+    messages = [
+        {"role": "user", "content": None},
+        {"role": "assistant", "content": "only this"},
+    ]
+    assert _routing_signal(messages) == "only this"
 
 
-def test_routing_signal_uses_most_recent_of_each_role(silent_logger):
-    agent = _make_agent(
-        silent_logger,
-        messages=[
-            {"role": "user", "content": "old"},
-            {"role": "user", "content": "new user"},
-            {"role": "assistant", "content": "new assistant"},
-        ],
-    )
-    assert agent._routing_signal() == "new user new assistant"
+# --- TokenTrackingNode (previously _track_step_usage on Agent) ---------------
 
 
-def test_routing_signal_empty_when_no_messages(silent_logger):
-    agent = _make_agent(silent_logger)
-    assert agent._routing_signal() == ""
+def _make_ctx(llm, messages=None, **kwargs):
+    """Minimal RunContext for node unit tests — skips full Agent init."""
+    import unittest.mock as mock
 
-
-def test_routing_signal_skips_none_content(silent_logger):
-    agent = _make_agent(
-        silent_logger,
-        messages=[
-            {"role": "user", "content": None},
-            {"role": "assistant", "content": "only this"},
-        ],
-    )
-    assert agent._routing_signal() == "only this"
-
-
-# --- _track_step_usage -------------------------------------------------------
+    ctx = object.__new__(RunContext)
+    ctx.llm = llm
+    ctx.messages = messages or []
+    ctx.step_num = 1
+    ctx.last_prompt_tokens = 0
+    ctx.signal = "CONTINUE"
+    ctx.recorder = mock.Mock()
+    for k, v in kwargs.items():
+        setattr(ctx, k, v)
+    return ctx
 
 
 def test_track_step_usage_records_last_prompt_tokens(silent_logger):
-    agent = _make_agent(silent_logger)
-    resp = _Resp(
+    llm = LLM()
+    llm.context_window = 1000
+    ctx = _make_ctx(llm)
+    ctx.last_response = _Resp(
         {"usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}}
     )
-    agent._track_step_usage(resp)
-    assert agent.last_prompt_tokens == 120
+    TokenTrackingNode().run(ctx)
+    assert ctx.last_prompt_tokens == 120
 
 
 def test_track_step_usage_missing_usage_defaults_zero(silent_logger):
-    agent = _make_agent(silent_logger)
-    agent._track_step_usage(_Resp({}))
-    assert agent.last_prompt_tokens == 0
+    llm = LLM()
+    llm.context_window = 1000
+    ctx = _make_ctx(llm)
+    ctx.last_response = _Resp({})
+    TokenTrackingNode().run(ctx)
+    assert ctx.last_prompt_tokens == 0
 
 
 def test_track_step_usage_handles_no_context_window(silent_logger):
-    # 0 is the falsy "window unknown" sentinel — must not raise or probe.
-    agent = _make_agent(silent_logger, context_window=0)
-    agent._track_step_usage(_Resp({"usage": {"prompt_tokens": 50}}))
-    assert agent.last_prompt_tokens == 50  # ctx_str branch must not raise
+    llm = LLM()
+    llm.context_window = 0
+    ctx = _make_ctx(llm)
+    ctx.last_response = _Resp({"usage": {"prompt_tokens": 50}})
+    TokenTrackingNode().run(ctx)
+    assert ctx.last_prompt_tokens == 50
 
 
-# --- _context_preflight ------------------------------------------------------
+# --- ContextPreflightNode (previously _context_preflight on Agent) -----------
 
 
-def test_preflight_ok_when_below_all_thresholds(silent_logger):
-    agent = _make_agent(silent_logger, context_window=1000, last_prompt_tokens=100)
-    assert agent._context_preflight(max_steps=5, t_start=0.0) == "ok"
+def _make_preflight_ctx(context_window, last_prompt_tokens=0, messages=None):
+    """Minimal RunContext for ContextPreflightNode tests."""
+    import unittest.mock as mock
+
+    llm = LLM()
+    llm.context_window = context_window
+    ctx = object.__new__(RunContext)
+    ctx.llm = llm
+    ctx.messages = messages or []
+    ctx.step_num = 0
+    ctx.last_prompt_tokens = last_prompt_tokens
+    ctx.context_reset_threshold = 0.75
+    ctx.signal = "CONTINUE"
+    ctx.stop_reason = "max_steps"
+    ctx.continuation_messages = []
+    ctx.recorder = mock.Mock()
+    return ctx
 
 
-def test_preflight_ok_when_no_context_window(silent_logger):
-    agent = _make_agent(silent_logger, context_window=0)
-    assert agent._context_preflight(max_steps=5, t_start=0.0) == "ok"
+def test_preflight_ok_when_below_all_thresholds():
+    ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=100)
+    ContextPreflightNode().run(ctx)
+    assert ctx.signal == "CONTINUE"
 
 
-def test_preflight_warn_path_still_ok(silent_logger):
+def test_preflight_ok_when_no_context_window():
+    ctx = _make_preflight_ctx(context_window=0)
+    ContextPreflightNode().run(ctx)
+    assert ctx.signal == "CONTINUE"
+
+
+def test_preflight_warn_path_still_ok():
     # 0.6 <= pct < threshold(0.75) → warns but proceeds.
-    agent = _make_agent(silent_logger, context_window=1000, last_prompt_tokens=650)
-    assert agent._context_preflight(max_steps=5, t_start=0.0) == "ok"
+    ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=650)
+    ContextPreflightNode().run(ctx)
+    assert ctx.signal == "CONTINUE"
 
 
-def test_preflight_stop_when_context_exhausted(silent_logger):
-    agent = _make_agent(silent_logger, context_window=1000, last_prompt_tokens=1000)
-    assert agent._context_preflight(max_steps=5, t_start=0.0) == "stop"
-    assert agent.stop_reason == "context_limit"
+def test_preflight_stop_when_context_exhausted():
+    ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=1000)
+    ContextPreflightNode().run(ctx)
+    assert ctx.signal == "STOP"
+    assert ctx.stop_reason == "context_limit"
 
 
-def test_preflight_reset_triggers_continuation(silent_logger, mocker):
-    agent = _make_agent(silent_logger, context_window=1000, last_prompt_tokens=800)
-    # Stub the heavy reset path so no handoff/continuation network work happens.
-    mocker.patch.object(
-        Agent,
-        "_handle_context_reset",
-        return_value=[{"role": "assistant", "content": "done"}],
-    )
-    assert agent._context_preflight(max_steps=5, t_start=0.0) == "reset"
-    assert agent._continuation_result == [{"role": "assistant", "content": "done"}]
+def test_preflight_reset_triggers_spawn():
+    ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=800)
+    cont = [{"role": "assistant", "content": "done"}]
+    node = ContextPreflightNode(spawn_fn=lambda: cont)
+    node.run(ctx)
+    assert ctx.signal == "RESET"
+    assert ctx.continuation_messages == cont
 
 
-def test_preflight_estimates_tokens_when_no_last_prompt(silent_logger):
+def test_preflight_reset_without_spawn_fn_stops():
+    # When no spawn_fn is provided, a reset threshold hit becomes a STOP.
+    ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=800)
+    ContextPreflightNode(spawn_fn=None).run(ctx)
+    assert ctx.signal == "STOP"
+    assert ctx.stop_reason == "context_limit"
+
+
+def test_preflight_estimates_tokens_when_no_last_prompt():
     # last_prompt_tokens == 0 → falls back to a char estimate of json(messages)//2.
     big = "x" * 4000
-    agent = _make_agent(
-        silent_logger,
+    ctx = _make_preflight_ctx(
         context_window=1000,
         last_prompt_tokens=0,
         messages=[{"role": "user", "content": big}],
     )
     # len(json.dumps(messages)) // 2 is well over 1000 → hard stop.
-    assert agent._context_preflight(max_steps=5, t_start=0.0) == "stop"
+    ContextPreflightNode().run(ctx)
+    assert ctx.signal == "STOP"
 
 
 # --- run loop ----------------------------------------------------------------
@@ -211,22 +234,26 @@ def test_preflight_estimates_tokens_when_no_last_prompt(silent_logger):
 
 def _stub_run_internals(agent, mocker):
     """Neutralize the I/O-heavy parts of run() so the loop logic can be tested."""
-    mocker.patch.object(
-        agent._router, "route_tools", side_effect=lambda signal, tools: tools
+    # ToolRouter is now instantiated per step inside ToolRoutingNode; patch at the
+    # class level so every instance's route_tools passes all tools through.
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
+        return_value=[],
     )
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
     # Banner is emitted at the start of run() (not __init__) — stub its output.
-    mocker.patch("my_coding_agent.agent.print_banner")
-    mocker.patch("my_coding_agent.agent.detach_session_log")
+    mocker.patch("my_coding_agent.engine.agent.print_banner")
+    mocker.patch("my_coding_agent.engine.agent.detach_session_log")
     # session_data.json existence check in finally → pretend it already exists so
     # the finally block does not try to save/summarize/detach again.
-    mocker.patch("my_coding_agent.agent.Path.exists", return_value=True)
+    mocker.patch("my_coding_agent.engine.agent.Path.exists", return_value=True)
     agent._session_log_handler = (None, None, None)
     agent.session_id = "testsession"
     # Observability recorder is read by run() (start/finish/record_handoff); stub
     # it so the loop logic is exercised without writing events.jsonl.
     agent.recorder = mocker.Mock()
+    agent.llm._recorder = agent.recorder
 
 
 def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
@@ -244,9 +271,13 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
         }
     )
     mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
-    agent.run(max_steps=5)
+    agent.execute(max_steps=5)
     assert agent.stop_reason == "stop"
 
 
@@ -265,9 +296,13 @@ def test_run_stops_at_max_steps(silent_logger, mocker):
         }
     )
     mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
-    agent.run(max_steps=1)
+    agent.execute(max_steps=1)
     assert agent.stop_reason == "max_steps"
 
 
@@ -279,8 +314,6 @@ def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
     """
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
-    # finish_reason "tool_calls" never matches the early-stop set, so the loop
-    # only ever exits via the max_steps bound.
     resp = _Resp(
         {
             "choices": [
@@ -293,9 +326,13 @@ def test_run_executes_exactly_max_steps(silent_logger, mocker, max_steps):
         }
     )
     chat = mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
-    agent.run(max_steps=max_steps)
+    agent.execute(max_steps=max_steps)
 
     assert chat.call_count == max_steps
     assert agent.step_num == max_steps
@@ -318,9 +355,13 @@ def test_run_skips_step_on_empty_message(silent_logger, mocker):
         }
     )
     chat = mocker.patch.object(agent.llm, "chat_completion", side_effect=[empty, stop])
-    mocker.patch.object(agent._executor, "execute_tool_calls", return_value=([], []))
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
 
-    agent.run(max_steps=5)
+    agent.execute(max_steps=5)
     # First call returned empty (step skipped), second returned a stop.
     assert chat.call_count == 2
     assert agent.stop_reason == "stop"
@@ -331,16 +372,19 @@ def test_run_returns_continuation_result_on_reset(silent_logger, mocker):
     _stub_run_internals(agent, mocker)
     cont = [{"role": "assistant", "content": "continuation finished"}]
 
-    # Make the first preflight fire a reset and stash the continuation result,
-    # mirroring _handle_context_reset's contract.
-    def _fake_preflight(max_steps, t_start):
-        agent._continuation_result = cont
-        return "reset"
+    # Patch ContextPreflightNode.run to immediately signal RESET with the
+    # continuation result — this replaces patching the old _context_preflight.
+    def _fake_preflight(ctx):
+        ctx.signal = "RESET"
+        ctx.continuation_messages = cont
 
-    mocker.patch.object(agent, "_context_preflight", side_effect=_fake_preflight)
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.context_preflight.ContextPreflightNode.run",
+        side_effect=_fake_preflight,
+    )
     mocker.patch.object(agent.llm, "chat_completion")  # must not be reached
 
-    result = agent.run(max_steps=5)
+    result = agent.execute(max_steps=5)
     assert result == cont
     agent.llm.chat_completion.assert_not_called()
 
@@ -360,7 +404,8 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
         return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
     )
     saved = mocker.patch(
-        "my_coding_agent.agent.ContextHandoff.save", return_value="/tmp/h.json"
+        "my_coding_agent.engine.agent.ContextHandoff.save",
+        return_value="/tmp/h.json",
     )
     handoff = agent._generate_handoff(step_num=2, prompt_tokens=8000)
     assert handoff.content == "handoff summary"
@@ -382,7 +427,7 @@ def test_print_summary_forwards_aggregates(silent_logger, mocker):
         session_id="s1",
         started_at="2026-06-12",
     )
-    spy = mocker.patch("my_coding_agent.agent.print_run_summary")
+    spy = mocker.patch("my_coding_agent.engine.agent.print_run_summary")
     agent._print_summary(max_steps=5)
     kwargs = spy.call_args.kwargs
     assert kwargs["prompt_tokens"] == 100
@@ -404,7 +449,10 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
         session_id="sess9",
         started_at="2026-06-12",
     )
-    mocker.patch("my_coding_agent.agent.Path", lambda *a: tmp_path.joinpath(*a))
+    mocker.patch(
+        "my_coding_agent.engine.agent.Path",
+        lambda *a: tmp_path.joinpath(*a),
+    )
     agent._save_session_data(max_steps=5)
     out = tmp_path / ".my_coding_agent" / "sess9" / "session_data.json"
     data = json.loads(out.read_text())
@@ -429,13 +477,13 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     # The continuation is built from client-side state read off the held client.
     agent.llm.api_url = "http://x"
     agent.llm.api_key = "k"
-    agent.llm._before_hook = lambda n, a: a
-    agent.llm._after_hook = lambda n, a, r: r
     handoff = mocker.Mock()
     handoff.to_user_message.return_value = {"role": "user", "content": "HANDOFF"}
     fake_cont = mocker.Mock()
-    fake_cont.run.return_value = [{"role": "assistant", "content": "cont done"}]
-    cont_cls = mocker.patch("my_coding_agent.agent.Agent", return_value=fake_cont)
+    fake_cont.execute.return_value = [{"role": "assistant", "content": "cont done"}]
+    cont_cls = mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode", return_value=fake_cont
+    )
 
     result = agent._spawn_continuation(handoff, max_steps=5)
     assert result == [{"role": "assistant", "content": "cont done"}]

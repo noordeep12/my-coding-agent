@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "my-coding-agent"
-version = "0.1.0"
+version = "1.1"
 description = "Minimal Python agent for local LLMs with decorator-based tool calling"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,6 +16,7 @@ dependencies = [
     "colorama>=0.4.6",
     "html2text>=2025.4.15",
     "httpx>=0.28.1",
+    "msgpack>=1.2.1",
     "plotext>=5.0",
     "prompt-toolkit>=3.0",
     "python-dotenv>=1.0",
@@ -23,8 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-my-coding-agent = "my_coding_agent.workflows.main:main"
-my-coding-agent-viewer = "my_coding_agent.observability.report:main"
+my-coding-agent = "my_coding_agent.pipeline.examples.simple:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/my_coding_agent"]
@@ -89,3 +89,7 @@ source = ["src/my_coding_agent"]
 
 [tool.coverage.report]
 show_missing = true
+omit = [
+    "*/schema.py",
+    "*/examples/simple.py",
+]

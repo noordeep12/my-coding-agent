@@ -9,8 +9,7 @@
 # Wrap lines at ~72 chars.
 # (enforced by commit-body-required hook)
 #
-# Refs: https://github.com/users/noordeep12/projects/1
-# (or Refs: #<issue-number>)
+# Refs: #<issue-number>   ← must reference an existing GitHub issue
 # (enforced by commit-refs-footer hook)
 #
 # Enable this template locally:  git config commit.template .gitmessage

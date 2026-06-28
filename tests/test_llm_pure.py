@@ -9,8 +9,9 @@ paths of ``ToolRouter.route_tools`` (via ``bare_router``), and the client's
 import httpx
 import pytest
 
-from my_coding_agent.llm import _HTTP_RETRIES
-from my_coding_agent.tool_routing import _BASELINE_TOOLS
+from my_coding_agent.engine.llm import _HTTP_RETRIES
+from my_coding_agent.engine.tool_execution import args as arg_prep
+from my_coding_agent.pipeline.nodes.router import _BASELINE_TOOLS
 
 # --- helpers -----------------------------------------------------------------
 
@@ -19,100 +20,98 @@ def _tool_def(name, tags=None):
     return {"function": {"name": name}, "tags": tags or []}
 
 
-# --- _apply_arg_aliases ------------------------------------------------------
+# --- apply_arg_aliases -------------------------------------------------------
 
 
-def test_apply_arg_aliases_bash_path_to_command(bare_executor):
-    out = bare_executor._apply_arg_aliases("bash", {"path": "ls"})
+def test_apply_arg_aliases_bash_path_to_command():
+    out = arg_prep.apply_arg_aliases("bash", {"path": "ls"})
     assert out == {"command": "ls"}
 
 
-def test_apply_arg_aliases_does_not_override_existing(bare_executor):
-    out = bare_executor._apply_arg_aliases("bash", {"path": "ls", "command": "pwd"})
+def test_apply_arg_aliases_does_not_override_existing():
+    out = arg_prep.apply_arg_aliases("bash", {"path": "ls", "command": "pwd"})
     # command already present — alias must not clobber it.
     assert out["command"] == "pwd"
 
 
-def test_apply_arg_aliases_unknown_tool_unchanged(bare_executor):
+def test_apply_arg_aliases_unknown_tool_unchanged():
     args = {"foo": "bar"}
-    assert bare_executor._apply_arg_aliases("read_article", dict(args)) == args
+    assert arg_prep.apply_arg_aliases("read_article", dict(args)) == args
 
 
-def test_apply_arg_aliases_read_file_variants(bare_executor):
-    assert bare_executor._apply_arg_aliases("read_file", {"filename": "x"}) == {
+def test_apply_arg_aliases_read_file_variants():
+    assert arg_prep.apply_arg_aliases("read_file", {"filename": "x"}) == {
         "file_path": "x"
     }
 
 
-# --- _strip_unknown_args -----------------------------------------------------
+# --- strip_unknown_args ------------------------------------------------------
 
 
-def test_strip_unknown_args_drops_hallucinated_kwargs(bare_executor):
-    out = bare_executor._strip_unknown_args("bash", {"command": "ls", "file_path": "x"})
+def test_strip_unknown_args_drops_hallucinated_kwargs():
+    out = arg_prep.strip_unknown_args("bash", {"command": "ls", "file_path": "x"})
     assert out == {"command": "ls"}
 
 
-def test_strip_unknown_args_keeps_valid(bare_executor):
-    out = bare_executor._strip_unknown_args(
-        "write_file", {"file_path": "p", "content": "c"}
-    )
+def test_strip_unknown_args_keeps_valid():
+    out = arg_prep.strip_unknown_args("write_file", {"file_path": "p", "content": "c"})
     assert out == {"file_path": "p", "content": "c"}
 
 
-def test_strip_unknown_args_unknown_func_returns_unchanged(bare_executor):
+def test_strip_unknown_args_unknown_func_returns_unchanged():
     args = {"whatever": 1}
-    assert bare_executor._strip_unknown_args("does_not_exist", dict(args)) == args
+    assert arg_prep.strip_unknown_args("does_not_exist", dict(args)) == args
 
 
 # --- parse_tool_call ---------------------------------------------------------
 
 
-def test_parse_tool_call_valid(bare_executor):
+def test_parse_tool_call_valid():
     tc = {
         "id": "call_1",
         "type": "function",
         "function": {"name": "bash", "arguments": '{"command": "ls"}'},
     }
-    tid, name, args, err = bare_executor.parse_tool_call(tc)
+    tid, name, args, err = arg_prep.parse_tool_call(tc)
     assert (tid, name, args, err) == ("call_1", "bash", {"command": "ls"}, None)
 
 
-def test_parse_tool_call_missing_type(bare_executor):
+def test_parse_tool_call_missing_type():
     tc = {"id": "c2", "function": {"name": "bash"}}
-    tid, name, args, err = bare_executor.parse_tool_call(tc)
+    tid, name, args, err = arg_prep.parse_tool_call(tc)
     assert name is None
     assert "missing 'type'" in err
 
 
-def test_parse_tool_call_wrong_type(bare_executor):
+def test_parse_tool_call_wrong_type():
     tc = {"id": "c3", "type": "retrieval", "function": {"name": "bash"}}
-    _, name, _, err = bare_executor.parse_tool_call(tc)
+    _, name, _, err = arg_prep.parse_tool_call(tc)
     assert name is None
     assert "not supported" in err
 
 
-def test_parse_tool_call_missing_function_name(bare_executor):
+def test_parse_tool_call_missing_function_name():
     tc = {"id": "c4", "type": "function", "function": {}}
-    _, name, _, err = bare_executor.parse_tool_call(tc)
+    _, name, _, err = arg_prep.parse_tool_call(tc)
     assert name is None
     assert "function.name" in err
 
 
-def test_parse_tool_call_malformed_json_args(bare_executor):
+def test_parse_tool_call_malformed_json_args():
     tc = {
         "id": "c5",
         "type": "function",
         "function": {"name": "bash", "arguments": "{not json}"},
     }
-    tid, name, args, err = bare_executor.parse_tool_call(tc)
+    tid, name, args, err = arg_prep.parse_tool_call(tc)
     assert name == "bash"  # name preserved for record creation
     assert args is None
     assert "could not parse" in err
 
 
-def test_parse_tool_call_missing_id_uses_unknown(bare_executor):
+def test_parse_tool_call_missing_id_uses_unknown():
     tc = {"type": "function", "function": {"name": "bash", "arguments": "{}"}}
-    tid, _, _, _ = bare_executor.parse_tool_call(tc)
+    tid, _, _, _ = arg_prep.parse_tool_call(tc)
     assert tid == "unknown_id"
 
 
@@ -134,14 +133,14 @@ class _FlakySession:
 
 
 def test_request_with_retry_succeeds_after_transient_failures(bare_llm, mocker):
-    mocker.patch("my_coding_agent.llm.time.sleep")  # don't actually wait
+    mocker.patch("my_coding_agent.engine.llm.time.sleep")  # don't actually wait
     bare_llm.session = _FlakySession(fail_times=_HTTP_RETRIES - 1)
     assert bare_llm._request_with_retry("GET", "http://x/models") == "OK"
     assert bare_llm.session.calls == _HTTP_RETRIES
 
 
 def test_request_with_retry_raises_after_exhausting_attempts(bare_llm, mocker):
-    mocker.patch("my_coding_agent.llm.time.sleep")
+    mocker.patch("my_coding_agent.engine.llm.time.sleep")
     bare_llm.session = _FlakySession(fail_times=_HTTP_RETRIES)
     with pytest.raises(httpx.ConnectError):
         bare_llm._request_with_retry("GET", "http://x/models")
@@ -149,7 +148,7 @@ def test_request_with_retry_raises_after_exhausting_attempts(bare_llm, mocker):
 
 
 def test_request_with_retry_does_not_retry_non_transient(bare_llm, mocker):
-    sleep = mocker.patch("my_coding_agent.llm.time.sleep")
+    sleep = mocker.patch("my_coding_agent.engine.llm.time.sleep")
 
     class _ProtocolErrorSession:
         def request(self, method, url, **kwargs):

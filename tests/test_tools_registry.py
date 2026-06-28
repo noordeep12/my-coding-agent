@@ -10,7 +10,8 @@ import subprocess
 import httpx
 import pytest
 
-from my_coding_agent.tools import ARTIFACT_THRESHOLD, ToolsRegistry
+from my_coding_agent.engine.tool_registry import ARTIFACT_THRESHOLD
+from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 
 # --- read_file / write_file --------------------------------------------------
 
@@ -85,7 +86,7 @@ def test_read_tool_artifact_missing():
 
 def test_bash_success_returns_json(mocker):
     mocker.patch(
-        "my_coding_agent.tools.subprocess.run",
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
         return_value=subprocess.CompletedProcess(
             args="echo hi", returncode=0, stdout="hi\n", stderr=""
         ),
@@ -97,7 +98,7 @@ def test_bash_success_returns_json(mocker):
 
 def test_bash_nonzero_exit_sets_ok_false(mocker):
     mocker.patch(
-        "my_coding_agent.tools.subprocess.run",
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
         return_value=subprocess.CompletedProcess(
             args="false", returncode=1, stdout="", stderr="boom"
         ),
@@ -110,7 +111,7 @@ def test_bash_nonzero_exit_sets_ok_false(mocker):
 
 def test_bash_timeout_returns_error_json(mocker):
     mocker.patch(
-        "my_coding_agent.tools.subprocess.run",
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="sleep 99", timeout=60),
     )
     parsed = json.loads(ToolsRegistry().bash("sleep 99"))
@@ -122,7 +123,7 @@ def test_bash_timeout_returns_error_json(mocker):
 def test_bash_large_output_returns_artifact_tuple(mocker):
     big = "x" * (ARTIFACT_THRESHOLD + 1)
     mocker.patch(
-        "my_coding_agent.tools.subprocess.run",
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
         return_value=subprocess.CompletedProcess(
             args="cat big", returncode=0, stdout=big, stderr=""
         ),
@@ -138,7 +139,7 @@ def test_bash_at_threshold_boundary_returns_json(mocker):
     """Exactly at threshold (not above) stays inline as JSON, not an artifact."""
     exact = "x" * ARTIFACT_THRESHOLD
     mocker.patch(
-        "my_coding_agent.tools.subprocess.run",
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
         return_value=subprocess.CompletedProcess(
             args="cat", returncode=0, stdout=exact, stderr=""
         ),
@@ -154,7 +155,9 @@ def test_read_article_converts_html(mocker):
     resp = mocker.Mock()
     resp.text = "<h1>Title</h1><p>Body</p>"
     resp.raise_for_status = mocker.Mock()
-    mocker.patch("my_coding_agent.tools.httpx.get", return_value=resp)
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
+    )
     out = ToolsRegistry.read_article("https://example.com")
     assert "Title" in out
     assert "Body" in out
@@ -163,7 +166,7 @@ def test_read_article_converts_html(mocker):
 def test_read_article_http_error(mocker):
     err_resp = mocker.Mock(status_code=404)
     mocker.patch(
-        "my_coding_agent.tools.httpx.get",
+        "my_coding_agent.engine.tool_registry.registry.httpx.get",
         side_effect=httpx.HTTPStatusError(
             "nf", request=mocker.Mock(), response=err_resp
         ),
@@ -174,7 +177,8 @@ def test_read_article_http_error(mocker):
 
 def test_read_article_generic_error(mocker):
     mocker.patch(
-        "my_coding_agent.tools.httpx.get", side_effect=httpx.ConnectError("down")
+        "my_coding_agent.engine.tool_registry.registry.httpx.get",
+        side_effect=httpx.ConnectError("down"),
     )
     out = ToolsRegistry.read_article("https://example.com")
     assert out.startswith("Error fetching")
@@ -184,6 +188,69 @@ def test_read_article_truncates_long_content(mocker):
     resp = mocker.Mock()
     resp.text = "<p>" + ("word " * 20000) + "</p>"
     resp.raise_for_status = mocker.Mock()
-    mocker.patch("my_coding_agent.tools.httpx.get", return_value=resp)
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
+    )
     out = ToolsRegistry.read_article("https://example.com")
     assert "truncated" in out
+
+
+# --- delegate ----------------------------------------------------------------
+
+
+def _make_fake_agent(mocker, messages):
+    """Return a mock AgentNode whose execute() returns *messages*."""
+    fake = mocker.Mock()
+    fake.execute.return_value = messages
+    fake.session_id = "abc123"
+    return fake
+
+
+def test_delegate_returns_last_assistant_content(mocker):
+    fake_agent = _make_fake_agent(
+        mocker,
+        [
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "report text"},
+        ],
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    assert out == "report text"
+    fake_agent.execute.assert_called_once_with(max_steps=5)
+
+
+def test_delegate_no_report_fallback(mocker):
+    fake_agent = _make_fake_agent(
+        mocker, [{"role": "user", "content": "only user msg"}]
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    assert out == "(subagent produced no report)"
+
+
+def test_delegate_excludes_delegate_tool_from_subagent(mocker):
+    """The subagent must not receive the delegate tool to prevent recursion."""
+    fake_agent = _make_fake_agent(mocker, [{"role": "assistant", "content": "ok"}])
+    spy = mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    tools = [
+        {"function": {"name": "bash"}},
+        {"function": {"name": "delegate"}},
+    ]
+    reg = ToolsRegistry()
+    reg._tools = tools
+    ToolsRegistry.delegate(reg, task="t", context="c")
+    _, kwargs = spy.call_args
+    passed_tools = kwargs["tools"]
+    names = [t["function"]["name"] for t in passed_tools]
+    assert "delegate" not in names
+    assert "bash" in names

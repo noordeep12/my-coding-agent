@@ -206,26 +206,36 @@ Bad engineering is hiding complexity without control.
 
 ### 25. Project Structure
 
-Use `src/` layout — prevents accidental imports of development code at test time.
+* Organize code by **feature/domain**, not file type, once the project is non-trivial.
+* Keep a clear split: **public API → services/orchestration → core logic → adapters (IO, DB, APIs, LLMs)**.
+* Ensure **one-way dependencies**; lower layers never import higher layers.
+* Keep **core logic pure**, without IO, side effects, or external systems.
+* Limit nesting depth (usually 3–4 levels max).
+* Schemas live with the **domain they belong to**, not in a global `schemas/` folder, and should use typed models (Pydantic/dataclasses/type hints) as the single source of truth.
+* Avoid “dump” modules like `utils/` or `helpers/` growing into unrelated code.
+* **Never use `setup.py` for new projects.** All config lives in `pyproject.toml`.
+
+#### Layered dependency order
+
+Arrange packages into responsibility layers and enforce strict one-way imports top-to-bottom:
 
 ```
-my-library/
-├── src/my_library/
-│   ├── __init__.py      # Public API exports only
-│   ├── _internal.py     # Private (underscore = not public API)
-│   ├── exceptions.py    # Custom exceptions
-│   ├── types.py         # Type definitions
-│   └── py.typed         # PEP 561 marker: signals type hints are present
-├── tests/
-│   ├── conftest.py      # Shared fixtures
-│   └── test_*.py
-├── pyproject.toml       # Single source of truth (NOT setup.py)
-├── Makefile
-├── .pre-commit-config.yaml
-└── .github/workflows/ci.yml
+generic helpers → passive capture → execution/domain → orchestration
 ```
 
-**Never use `setup.py` for new projects.** All config lives in `pyproject.toml`.
+Lower layers never import higher layers. If a layer must reference a higher layer at runtime, the import must be **lazy** (inside the function body, not at module level). Never suppress the linter warning without fixing the underlying coupling.
+
+#### `schema.py` per module
+
+Each package or subpackage that defines typed contracts (constants, type aliases, dataclasses, envelopes) collects them in a `schema.py`. Builder or executor logic stays in its own module. This keeps shape definitions discoverable and separates *what a thing looks like* from *how it works*.
+
+#### `__init__.py` = public surface only
+
+Re-export only the symbols that form the public API. Never pull underscore-prefixed private symbols up through `__init__.py` — even without `__all__`, they become importable and couple callers to internals. Tests that need private symbols import them directly from the submodule.
+
+#### Passive vs active in observability
+
+Observability code (recorders, event writers, metrics collectors) must only receive and record — it must never control execution flow. Active helpers that configure loggers, render output, or manage file handles belong in the utility layer, not in observability.
 
 ---
 
@@ -658,7 +668,45 @@ Documentation is not optional — it is the difference between a library that ge
 
 ---
 
-### 41. Security: Additional Patterns
+### 41. Documentation Update Policy
+
+Every change to `src/` **must** be accompanied by a documentation update in the same commit. This is enforced by the `docs-updated` pre-commit hook.
+
+#### What counts as a documentation update
+
+| What changed | Minimum doc to update |
+|---|---|
+| New public function / class / module | Docstring + `docs/` API reference |
+| Behaviour or interface change | `README.md` usage section |
+| Architectural decision or new component | `ARCHITECTURE.md` |
+| Config or CLI flag change | `README.md` |
+| Internal refactor with no observable change | `ARCHITECTURE.md` (note the restructure) |
+
+#### Files the hook monitors
+
+- `README.md` — user-facing usage and behaviour
+- `ARCHITECTURE.md` — structural decisions and component layout
+- `docs/` — Sphinx source (API reference, guides)
+
+#### If a change genuinely needs no doc update
+
+Stage a no-op touch to the most relevant file and explain **why** in the commit body. The hook checks presence, not content depth — the commit body carries the justification.
+
+```bash
+# Example: internal test helper refactor with no observable change
+touch ARCHITECTURE.md
+git add ARCHITECTURE.md
+# commit body: "Internal helper extraction in tests/; no public API or
+# structure change. ARCHITECTURE.md touched to satisfy docs-updated hook."
+```
+
+#### Why this matters
+
+Documentation debt accumulates silently. By the time it is noticed it is expensive to reconstruct — especially for architectural decisions where the original reasoning is lost. Keeping docs in sync at commit time costs seconds; reconstructing them later costs hours.
+
+---
+
+### 42. Security: Additional Patterns
 
 #### Log Injection Prevention
 
@@ -737,7 +785,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
 ---
 
-### 42. Testing: Coverage and Multi-Environment
+### 43. Testing: Coverage and Multi-Environment
 
 #### Coverage: Quality over Quantity
 
@@ -792,7 +840,7 @@ commands = pytest
 
 ---
 
-### 43. Performance: Benchmark → Profile → Optimize
+### 44. Performance: Benchmark → Profile → Optimize
 
 The correct order is always:
 
@@ -819,7 +867,7 @@ Never optimize speculatively. Never rely on intuition about which code is slow.
 
 ---
 
-### 44. Versioning and Release Discipline
+### 45. Versioning and Release Discipline
 
 #### Semantic Versioning Commitment
 
@@ -847,7 +895,7 @@ If you knowingly defer a vulnerability, **document it** with justification and a
 
 ---
 
-### 45. pyproject.toml: Why It Replaced setup.py
+### 46. pyproject.toml: Why It Replaced setup.py
 
 `setup.py` ran arbitrary Python code during installation — a security risk and a source of fragile bootstrapping bugs. `pyproject.toml` is declarative (states *what* the project needs, not *how* to build it), which is:
 
@@ -862,7 +910,7 @@ Key PEPs behind modern packaging:
 
 ---
 
-### 46. Commit Standards
+### 47. Commit Standards
 
 Every commit must answer four questions so any reader — future-self, collaborators,
 AI agents, CI tooling — can understand it in isolation without tracing code.
@@ -872,7 +920,7 @@ AI agents, CI tooling — can understand it in isolation without tracing code.
 | **What** changed | Subject: `type(scope): description` | `commit-subject-format`, `commit-subject-length` |
 | **Why** it was needed | Body: non-empty explanation of the problem | `commit-body-required` |
 | **For whom** it matters | Implicit in a complete body written for all readers | — (style, not a separate field) |
-| **Which issue** it addresses | Footer: `Refs: <url or #issue>` | `commit-refs-footer` |
+| **Which issue** it addresses | Footer: `Refs: #<issue>` | `commit-refs-footer` |
 
 **Subject rules:**
 - Use **Conventional Commits**: `type(scope): description`
@@ -885,7 +933,8 @@ AI agents, CI tooling — can understand it in isolation without tracing code.
 - Wrap lines at ~72 chars
 
 **Footer rules:**
-- Must include `Refs: https://github.com/users/noordeep12/projects/1` or `Refs: #<issue>`
+- Must include `Refs: #<issue-number>` referencing an **existing** GitHub issue
+- If no issue exists for the change, the Claude agent must create one before committing
 
 All four constraints are enforced locally by pre-commit hooks at `commit-msg` stage
 (`.pre-commit-config.yaml`). A commit missing any element is rejected before it lands.
@@ -896,4 +945,30 @@ this convention. Enable it locally:
 ```bash
 git config commit.template .gitmessage
 ```
+
+---
+
+### 48. Conformity Enforcement
+
+Every code change is checked against the project's policy documents (`.claude/CLAUDE.md`,
+`CONTRIBUTE.md`, `ARCHITECTURE.md`, `README.md`) before it can be committed locally. A
+single script, `.hooks/check_conformity_report.py`, runs in two modes:
+
+| Mode | Trigger | Role |
+|------|---------|------|
+| `--report` | Claude Code **Stop** hook (end of each turn) | If code under `src/` changed vs HEAD, a headless `claude -p` auditor applies the gap-audit criteria scoped to the changed files and writes `conformity.md` (gitignored) with a verdict and a diff-bound meta block. Fail-closed: state `blocked` if the auditor can't run. |
+| _(default)_ | git **pre-commit** | Blocks the commit when `conformity.md` is missing, stale (diff-hash mismatch), or in a state other than `pass`/`approved`. |
+
+`conformity.md` carries a machine-readable meta block read by both hooks:
+
+```
+<!-- conformity-meta
+diff_hash: <sha256 of `git diff HEAD -- src/`>
+state: pass | blocked | approved
+-->
+```
+
+The user keeps the final word: a `blocked` report stays blocked until the user reviews it
+and sets `state: approved`. The Stop hook is registered in `.claude/settings.local.json`;
+the pre-commit gate is registered in `.pre-commit-config.yaml`.
 
