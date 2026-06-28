@@ -227,12 +227,20 @@ function App(){
     if(data && visibleIds.length && (!sel || !visibleIds.includes(sel))) setSel(visibleIds[0]);
   },[data,visibleIds]);
 
+  // Hold a live ref to the visible ids so the (once-bound) key handler and the
+  // functional setSel updater always see the current list — this keeps rapid
+  // auto-repeat key presses from reading a stale selection before re-render.
+  const visRef = useRef(visibleIds);
+  visRef.current = visibleIds;
+
   const move = useCallback(dir=>{
-    if(!visibleIds.length) return;
-    const i = visibleIds.indexOf(sel);
-    const ni = Math.max(0, Math.min(visibleIds.length-1, (i<0?0:i+dir)));
-    setSel(visibleIds[ni]);
-  },[visibleIds,sel]);
+    setSel(prev=>{
+      const ids = visRef.current;
+      if(!ids.length) return prev;
+      const i = ids.indexOf(prev);
+      return ids[Math.max(0, Math.min(ids.length-1, (i<0?0:i+dir)))];
+    });
+  },[]);
 
   useEffect(()=>{
     const onKey = e=>{
