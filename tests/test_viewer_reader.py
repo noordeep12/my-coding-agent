@@ -6,6 +6,7 @@ from pathlib import Path
 from my_coding_agent.viewer.reader import (
     _detect_loops,
     _group_into_steps,
+    _role_split,
     list_sessions,
     load_session,
 )
@@ -86,6 +87,81 @@ def _minimal_events(session_id: str = "aabbccdd1234") -> list:
             signal="next step",
             selected=["bash"],
             phase="phase1_keyword",
+            used_llm=False,
+            started_at="2026-01-01T10:00:04",
+        ),
+        _ev(
+            "llm_call",
+            call=2,
+            kind="main",
+            latency_s=0.8,
+            prompt=200,
+            completion=30,
+            total=230,
+            context_window=8192,
+            messages=None,
+            response={"content": "done", "reasoning": "", "tool_calls": [], "raw": {}},
+            started_at="2026-01-01T10:00:05",
+        ),
+        _ev(
+            "session_end",
+            stop_reason="stop",
+            steps=2,
+            elapsed_s=5.0,
+            ended_at="2026-01-01T10:00:06",
+        ),
+    ]
+
+
+def _composition_events(session_id: str = "aabbccdd1234") -> list:
+    """Two-step session whose first LLM call carries a real message snapshot."""
+    return [
+        _ev(
+            "session_start",
+            session_id=session_id,
+            label="Test",
+            model="gpt-4o-mini",
+            context_window=8192,
+            started_at="2026-01-01T10:00:00",
+            parent_session_id=None,
+        ),
+        _ev(
+            "router",
+            signal="go",
+            selected=["bash"],
+            phase="p1",
+            used_llm=False,
+            started_at="2026-01-01T10:00:01",
+        ),
+        _ev(
+            "llm_call",
+            call=1,
+            kind="main",
+            latency_s=1.0,
+            prompt=100,
+            completion=50,
+            total=150,
+            context_window=8192,
+            messages=[
+                {"role": "system", "content": "s" * 80},
+                {"role": "user", "content": "u" * 20},
+            ],
+            response={"content": "ok", "reasoning": "", "tool_calls": [], "raw": {}},
+            started_at="2026-01-01T10:00:02",
+        ),
+        _ev(
+            "tool_call",
+            name="bash",
+            args={"command": "echo hi"},
+            result="hello world",
+            latency_s=0.1,
+            started_at="2026-01-01T10:00:03",
+        ),
+        _ev(
+            "router",
+            signal="next",
+            selected=["bash"],
+            phase="p1",
             used_llm=False,
             started_at="2026-01-01T10:00:04",
         ),
@@ -419,26 +495,34 @@ class TestLoadSession:
         assert session.order[-1] == f"{sid}::session_end"
         assert len(session.order) == len(session.nodes)
 
-    def test_ctx_state_tracks_token_deltas(self, tmp_path):
+    def test_ctx_state_tracks_composition_and_added(self, tmp_path):
         sid = "aabbccdd1234"
         sdir = tmp_path / sid
         sdir.mkdir()
         ep = sdir / "events.jsonl"
-        _write_events(ep, _minimal_events(sid))
+        _write_events(ep, _composition_events(sid))
         session = load_session(ep)
-        # First main LLM call: prompt 100, from a baseline of 0 → +100 added.
+
+        # Session seeds the window with the first call's system + user input.
+        sess = session.nodes[f"{sid}::session"]
+        assert sess.ctx_state["composition"] == {"system": 80, "user": 20}
+        assert sess.ctx_state["added"] == {"system": 80, "user": 20}
+
+        # The LLM call appends its own assistant output (completion tokens).
         llm1 = session.nodes[f"{sid}::step1::llm::1"]
-        assert llm1.ctx_state["tokens"] == 100
-        assert llm1.ctx_state["added"] == 100
-        assert llm1.ctx_state["removed"] == 0
+        assert llm1.ctx_state["added"] == {"assistant": 50}
+        assert llm1.ctx_state["composition"]["assistant"] == 50
         assert llm1.ctx_state["window"] == 8192
-        # Second main LLM call: prompt 200 → +100 over the previous fill.
-        llm2 = session.nodes[f"{sid}::step2::llm::1"]
-        assert llm2.ctx_state["delta"] == 100
-        # A router carries the fill forward with no measured change.
+
+        # A tool dispatch appends an estimated tool-result token figure.
+        tool1 = session.nodes[f"{sid}::step1::tool::1"]
+        assert tool1.ctx_state["added"].get("tool", 0) > 0
+        assert tool1.ctx_state["estimated"] is True
+
+        # A router adds nothing to the window.
         router2 = session.nodes[f"{sid}::step2::router"]
-        assert router2.ctx_state["measured"] is False
-        assert router2.ctx_state["delta"] == 0
+        assert router2.ctx_state["added_total"] == 0
+        assert router2.ctx_state["removed"] == 0
 
     def test_circular_delegate_guard(self, tmp_path):
         sid = "aabbccdd1234"
@@ -449,3 +533,40 @@ class TestLoadSession:
         # Pass sid in _seen to simulate a circular reference
         session = load_session(ep, _seen={sid})
         assert session.label == "[recursive]"
+
+
+class TestRoleSplit:
+    def test_splits_across_four_roles_and_sums_to_total(self):
+        messages = [
+            {"role": "system", "content": "x" * 100},
+            {"role": "user", "content": "y" * 60},
+            {"role": "assistant", "content": "z" * 40},
+            {"role": "tool", "content": "t" * 200},
+        ]
+        split = _role_split(messages, 1000)
+        # 400 chars total → system 25%, user 15%, assistant 10%, tool 50%.
+        assert split == {"system": 250, "user": 150, "assistant": 100, "tool": 500}
+        assert sum(split.values()) == 1000
+
+    def test_drift_absorbed_so_parts_equal_total(self):
+        # Char shares that don't divide evenly must still sum to the total.
+        messages = [
+            {"role": "system", "content": "x" * 33},
+            {"role": "user", "content": "y" * 33},
+            {"role": "tool", "content": "t" * 34},
+        ]
+        split = _role_split(messages, 1000)
+        assert sum(split.values()) == 1000
+
+    def test_unknown_role_counts_as_user(self):
+        messages = [{"role": "developer", "content": "hi there"}]
+        assert _role_split(messages, 50) == {"user": 50}
+
+    def test_non_string_content_counted_via_json(self):
+        messages = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+        assert _role_split(messages, 50) == {"user": 50}
+
+    def test_returns_none_without_messages_or_tokens(self):
+        assert _role_split([], 100) is None
+        assert _role_split([{"role": "user", "content": "hi"}], None) is None
+        assert _role_split([{"role": "user", "content": "hi"}], 0) is None

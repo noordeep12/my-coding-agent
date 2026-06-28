@@ -469,25 +469,173 @@ def _embed_child_session(
     graph.order.extend(child_session.order)
 
 
-# ── Context-window state ──────────────────────────────────────────────────────
+# ── Context-window composition ────────────────────────────────────────────────
+
+# The four message roles the context window is composed of, in display order.
+_ROLES: tuple[str, ...] = ("system", "user", "assistant", "tool")
+# Tokens-per-character fallback (~4 chars/token) when no LLM call lets us measure.
+_DEFAULT_TPC = 0.25
 
 
-def _node_fill(node: TraceNode) -> int | None:
-    """Return the context-window fill (in tokens) this node reports, if any.
+def _content_len(content: Any) -> int:
+    """Return a character length for a message ``content`` of any shape.
 
     Args:
-        node: The trace node to inspect.
+        content: A message's ``content`` — a string, ``None``, or a structured
+            value (list/dict of content parts).
 
     Returns:
-        Token count of the context the node operated on, or ``None`` when the
-        node carries no token figure (e.g. router, finish_check).
+        Character count used as the attribution weight for this message.
     """
-    a = node.attributes
-    if node.type in ("llm_call", "token_tracking"):
-        return a.get("prompt_tokens")
-    if node.type == "handoff":
-        return a.get("ctx_tokens")
+    if isinstance(content, str):
+        return len(content)
+    if content is None:
+        return 0
+    return len(json.dumps(content, default=str))
+
+
+def _role_split(
+    messages: list[dict[str, Any]], total_tokens: int | None
+) -> dict[str, int] | None:
+    """Split *total_tokens* across the four message roles by character share.
+
+    Providers report one flat prompt-token total, so we attribute it to the
+    ``system``/``user``/``assistant``/``tool`` roles by each role's share of the
+    input characters.  Approximate, but always sums to the reported total.
+
+    Args:
+        messages: The call's input messages (each a ``{"role", "content"}`` dict).
+        total_tokens: Provider-reported token total to distribute.
+
+    Returns:
+        ``{role: tokens}`` for non-empty roles, or ``None`` when there is nothing
+        to attribute (no messages or no token total).
+    """
+    if not messages or not total_tokens:
+        return None
+    chars = {r: 0 for r in _ROLES}
+    for msg in messages:
+        role = msg.get("role", "")
+        chars[role if role in chars else "user"] += _content_len(msg.get("content"))
+    total = sum(chars.values())
+    if total == 0:
+        return None
+    out = {r: round(total_tokens * chars[r] / total) for r in _ROLES if chars[r]}
+    # Absorb rounding drift into the largest role so the parts sum exactly.
+    drift = total_tokens - sum(out.values())
+    if drift and out:
+        out[max(out, key=lambda r: out[r])] += drift
+    return out
+
+
+def _tokens_per_char(nodes: dict[str, TraceNode]) -> float:
+    """Estimate a session-wide tokens-per-character ratio from the LLM calls.
+
+    Used to size token figures for messages the provider never counted on their
+    own — chiefly tool results.
+
+    Args:
+        nodes: All trace nodes.
+
+    Returns:
+        Ratio of measured prompt tokens to input characters across main LLM
+        calls, or ``_DEFAULT_TPC`` when nothing is measurable.
+    """
+    chars = toks = 0
+    for node in nodes.values():
+        if node.type != "llm_call" or node.attributes.get("kind") != "main":
+            continue
+        prompt = node.attributes.get("prompt_tokens")
+        msgs = node.inputs.get("messages") or []
+        if prompt and msgs:
+            c = sum(_content_len(m.get("content")) for m in msgs)
+            if c:
+                chars += c
+                toks += prompt
+    return toks / chars if chars else _DEFAULT_TPC
+
+
+def _first_input_split(
+    nodes: dict[str, TraceNode], order: list[str]
+) -> dict[str, int] | None:
+    """Return the role split of the first main LLM call's input window.
+
+    That window — system prompt plus the opening user message — is what the
+    session node seeds the context with before any node runs.
+
+    Args:
+        nodes: All trace nodes.
+        order: Node IDs in execution order.
+
+    Returns:
+        ``{role: tokens}`` for the first call's input, or ``None``.
+    """
+    for nid in order:
+        node = nodes.get(nid)
+        if node and node.type == "llm_call" and node.attributes.get("kind") == "main":
+            return _role_split(
+                node.inputs.get("messages") or [],
+                node.attributes.get("prompt_tokens"),
+            )
     return None
+
+
+def _node_added(
+    node: TraceNode, comp: dict[str, int], first_snap: dict[str, int] | None, tpc: float
+) -> tuple[dict[str, int], int, bool]:
+    """Return what *node* appends to the context window.
+
+    Each pipeline node may push one kind of message onto the running window: the
+    session seeds it with the system prompt and opening user message, an LLM call
+    appends its assistant reply, a tool dispatch appends its result.  Nodes that
+    add nothing (router, finish_check, …) return an empty delta.
+
+    Args:
+        node: The node being placed.
+        comp: Running cumulative composition (mutated by the caller, read here).
+        first_snap: Role split of the first LLM call's input (session seed).
+        tpc: Tokens-per-character ratio for estimating uncounted text.
+
+    Returns:
+        ``(added, removed, estimated)`` — the per-role tokens this node added,
+        tokens it compacted away, and whether any added figure is an estimate.
+    """
+    if node.type == "session":
+        if first_snap:
+            return (
+                {r: first_snap[r] for r in ("system", "user") if first_snap.get(r)},
+                0,
+                False,
+            )
+        return {}, 0, False
+    if node.type == "llm_call" and node.attributes.get("kind") == "main":
+        snap = _role_split(
+            node.inputs.get("messages") or [], node.attributes.get("prompt_tokens")
+        )
+        if snap:
+            # Re-anchor the input roles to the real snapshot; the call's own new
+            # output is layered on top below.
+            for r in ("system", "user", "tool"):
+                comp[r] = snap.get(r, 0)
+            comp["assistant"] = snap.get("assistant", 0)
+        completion = node.attributes.get("completion_tokens") or 0
+        return ({"assistant": completion} if completion else {}), 0, False
+    if node.type == "tool_call":
+        tok = round(_content_len(node.outputs.get("result")) * tpc)
+        return ({"tool": tok} if tok else {}), 0, bool(tok)
+    if node.type == "handoff":
+        ctx_tokens = node.attributes.get("ctx_tokens")
+        old_total = sum(comp.values())
+        if ctx_tokens is not None and old_total > ctx_tokens:
+            sys_t = comp["system"]
+            comp.update(
+                system=sys_t,
+                user=max(0, ctx_tokens - sys_t),
+                assistant=0,
+                tool=0,
+            )
+            return {}, old_total - ctx_tokens, False
+    return {}, 0, False
 
 
 def _assign_ctx_state(
@@ -495,21 +643,23 @@ def _assign_ctx_state(
     order: list[str],
     default_window: int | None,
 ) -> None:
-    """Compute each node's context-window snapshot, in execution order.
+    """Compute each node's context-window composition, in execution order.
 
-    Walks *order* tracking the running context fill.  Nodes that report a token
-    figure get a signed ``delta`` versus the previous reporting node — positive
-    when the window grew (tokens added), negative after a compaction (tokens
-    removed).  Nodes without their own figure inherit the carried fill with a
-    zero delta so the UI can still draw the bar.
+    Walks *order* maintaining the running window as four role buckets
+    (system/user/assistant/tool).  Each node contributes the message(s) it pushes
+    onto the window (``_node_added``); the cumulative composition and the
+    per-node delta are stored on ``node.ctx_state`` for the UI.
 
     Args:
         nodes: All trace nodes; each gains a ``ctx_state`` dict in-place.
         order: Node IDs in execution order.
         default_window: Session context window size used when a node omits it.
     """
-    prev = 0
+    tpc = _tokens_per_char(nodes)
+    first_snap = _first_input_split(nodes, order)
+    comp = {r: 0 for r in _ROLES}
     window = default_window
+
     for nid in order:
         node = nodes.get(nid)
         if node is None:
@@ -517,25 +667,22 @@ def _assign_ctx_state(
         own_window = node.attributes.get("context_window")
         if own_window:
             window = own_window
-        if node.type == "session":
-            tokens, delta, measured = 0, 0, True
-            prev = 0
-        else:
-            fill = _node_fill(node)
-            if fill is None:
-                tokens, delta, measured = prev, 0, False
-            else:
-                tokens, delta, measured = fill, fill - prev, True
-                prev = fill
+
+        added, removed, estimated = _node_added(node, comp, first_snap, tpc)
+        for role, tok in added.items():
+            comp[role] = comp.get(role, 0) + tok
+
+        tokens = sum(comp.values())
         pct = round(tokens / window * 100, 1) if window else None
         node.ctx_state = {
             "tokens": tokens,
             "window": window,
             "pct": pct,
-            "delta": delta,
-            "added": max(delta, 0),
-            "removed": max(-delta, 0),
-            "measured": measured,
+            "composition": {r: comp[r] for r in _ROLES if comp[r]},
+            "added": added,
+            "added_total": sum(added.values()),
+            "removed": removed,
+            "estimated": estimated,
         }
 
 

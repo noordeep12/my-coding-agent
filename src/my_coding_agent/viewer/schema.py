@@ -30,9 +30,11 @@ class TraceNode:
             combination — signals a potential agent loop.
         ctx_state: Per-node snapshot of the session context window after this
             node ran. Keys: ``tokens`` (current fill), ``window`` (max size),
-            ``pct`` (fill percentage), ``added``/``removed`` (tokens grown or
-            compacted at this node), ``delta`` (signed net change), ``measured``
-            (``True`` when the node carries its own token figure).
+            ``pct`` (fill percentage), ``composition`` (cumulative tokens per
+            ``system``/``user``/``assistant``/``tool`` role), ``added`` (per-role
+            tokens this node appended), ``added_total`` (their sum), ``removed``
+            (tokens compacted away at this node), ``estimated`` (``True`` when an
+            added figure is character-estimated, e.g. a tool result).
     """
 
     id: str

@@ -56,6 +56,7 @@ EMBEDDED_HTML = """<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#app{flex:1;min-height:0;display:flex;flex-direction:column}
 .empty{padding:48px;text-align:center;color:var(--muted);font-size:13px}
 .muted{color:var(--muted)}
 .warn{color:var(--amber)}
@@ -73,10 +74,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 
 /* ── toolbar ── */
 .toolbar{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 20px;background:var(--bg);border-bottom:1px solid var(--line)}
-.tabs{display:flex;gap:4px}
-.tab{font-family:var(--font);font-size:13px;font-weight:500;color:var(--muted);background:transparent;border:none;padding:7px 14px;border-radius:8px;cursor:pointer}
-.tab:hover{background:var(--bg2);color:var(--text)}
-.tab.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.tb-title{font-size:13px;font-weight:600;color:var(--text)}
 .filter-btn{font-family:var(--font);font-size:12px;font-weight:500;color:var(--text);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:6px}
 .filter-btn:hover{border-color:var(--accent);color:var(--accent)}
 .filter-btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
@@ -92,28 +90,13 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 
 /* ── main split ── */
 .main{flex:1;display:grid;grid-template-columns:minmax(280px,38%) 1fr;min-height:0}
-.rail{overflow-y:auto;border-right:1px solid var(--line);background:var(--panel);padding:14px 12px}
-.detail{overflow-y:auto;background:var(--bg)}
+.rail{overflow-y:auto;min-height:0;border-right:1px solid var(--line);background:var(--panel);padding:14px 12px}
+.detail{overflow-y:auto;min-height:0;background:var(--bg)}
 
-/* ── explorer chain ── */
-.chain{display:flex;flex-direction:column}
-.rowwrap{display:flex;flex-direction:column;align-items:stretch}
-.row{display:flex;align-items:center;gap:11px;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);cursor:pointer;transition:border-color .12s,box-shadow .12s}
-.row:hover{border-color:#d0d0d5}
-.row.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.row.loop{border-color:#f0b8a0}
+/* ── shared node dot / tags ── */
 .row-dot{width:11px;height:11px;border-radius:50%;flex:none}
 .row-dot.sm{width:8px;height:8px}
-.row-main{flex:1;min-width:0}
-.row-top{display:flex;align-items:center;gap:7px}
-.row-name{font-weight:600;font-size:13px}
-.row-sub{font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.step-tag{font-size:10px;font-weight:600;color:var(--muted);background:var(--bg2);border-radius:5px;padding:1px 6px}
 .loop-tag{font-size:10px;font-weight:600;color:var(--amber);background:#fff3e6;border-radius:5px;padding:1px 6px}
-.connector{width:2px;height:14px;background:var(--line);margin:0 auto}
-.delta{font-family:var(--mono);font-size:11px;font-weight:600;border-radius:6px;padding:2px 7px;white-space:nowrap}
-.delta.pos{color:var(--pos);background:var(--pos-bg)}
-.delta.neg{color:var(--neg);background:var(--neg-bg)}
 
 /* ── tree ── */
 .tree{display:flex;flex-direction:column;gap:1px}
@@ -123,7 +106,8 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tleaf:hover{background:var(--bg2)}
 .tleaf.sel{background:var(--accent-soft)}
 .tleaf-name{font-weight:500;font-size:12px}
-.tleaf-sub{font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.tleaf-sub{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.tleaf-sub.neg{color:var(--neg)}
 .twist{display:inline-block;transition:transform .12s;color:var(--muted);font-size:10px}
 .twist.open{transform:rotate(90deg)}
 
@@ -139,12 +123,12 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .ctx-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
 .ctx-label{font-weight:600;font-size:12px}
 .ctx-figs{font-family:var(--mono);font-size:12px;color:var(--muted)}
-.ctx-bar{height:8px;background:var(--line);border-radius:5px;overflow:hidden}
-.ctx-fill{height:100%;border-radius:5px;transition:width .2s}
-.ctx-fill.blue{background:var(--accent)}
-.ctx-fill.amber{background:#ff9f0a}
-.ctx-fill.red{background:var(--neg)}
-.ctx-deltas{display:flex;gap:10px;margin-top:10px}
+.ctx-bar{display:flex;height:9px;background:var(--line);border-radius:5px;overflow:hidden}
+.ctx-seg{height:100%}
+.ctx-fill{height:100%;border-radius:5px;background:var(--accent)}
+.ctx-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px}
+.bd-li{display:flex;align-items:center;gap:6px;font-size:11px}
+.bd-sw{width:9px;height:9px;border-radius:3px;display:inline-block}
 
 /* ── sections ── */
 .section{border-bottom:1px solid var(--line)}
@@ -160,6 +144,24 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .copy{position:absolute;top:7px;right:7px;font-family:var(--font);font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer;opacity:0;transition:opacity .12s}
 .jb:hover .copy{opacity:1}
 .copy:hover{color:var(--accent);border-color:var(--accent)}
+.jb.cmd pre{border-left:3px solid var(--accent)}
+.jb.out pre{border-left:3px solid #c7c7cc}
+.jb.err pre{border-left:3px solid var(--neg);color:var(--neg);background:var(--neg-bg)}
+
+/* ── tool result / llm body (rendered inside .sbody) ── */
+.toolres{display:flex;flex-direction:column}
+.tr-head{display:flex;align-items:center;gap:9px;padding:0 0 2px}
+.tr-tool{font-family:var(--mono);font-size:12px;font-weight:600;background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:2px 9px}
+.tr-badge{font-size:11px;font-weight:600;border-radius:6px;padding:2px 9px}
+.tr-badge.ok{color:var(--pos);background:var(--pos-bg)}
+.tr-badge.err{color:var(--neg);background:var(--neg-bg)}
+.tr-block{padding:12px 0 0}
+.tr-block:first-child{padding-top:0}
+.tr-block.muted{font-size:12px}
+.tr-label{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:lowercase}
+.tr-label.err{color:var(--neg)}
+.tcall{margin-top:10px}
+.tc-top{margin-bottom:6px}
 
 /* scrollbars */
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -178,29 +180,17 @@ const html = window.htm.bind(h);
 
 // ── node type metadata ──
 const TYPE_META = {
-  session:        { name:'Session',           dot:'#0a84ff' },
+  session:        { name:'Session Start',     dot:'#0a84ff' },
   router:         { name:'Tool Routing',      dot:'#ff9f0a' },
   llm_call:       { name:'LLM Call',          dot:'#30b350' },
   tool_call:      { name:'Tool Dispatch',     dot:'#a05cf0' },
   handoff:        { name:'Context Preflight', dot:'#ff453a' },
   token_tracking: { name:'Token Tracking',    dot:'#1aa3c4' },
   finish_check:   { name:'Finish Check',      dot:'#caa400' },
-  session_end:    { name:'End',               dot:'#8e8e93' },
+  session_end:    { name:'Session End',       dot:'#8e8e93' },
 };
 const meta = t => TYPE_META[t] || { name:t, dot:'#8e8e93' };
 const fmtNum = n => (n == null ? '—' : Number(n).toLocaleString('en-US'));
-
-function rowSub(n){
-  const a = n.attributes || {};
-  if(n.type==='tool_call')   return a.name || '';
-  if(n.type==='llm_call')    return (a.kind && a.kind!=='main' ? a.kind+' · ' : '') + (a.latency_s!=null ? a.latency_s+'s' : '');
-  if(n.type==='router')      return a.phase || '';
-  if(n.type==='session')     return a.model || '';
-  if(n.type==='session_end') return a.stop_reason || '';
-  if(n.type==='finish_check')return a.finish_reason || '';
-  if(n.type==='handoff')     return a.path || '';
-  return '';
-}
 
 async function getJSON(url){ const r = await fetch(url); if(!r.ok) throw new Error(r.status+' '+url); return r.json(); }
 
@@ -210,7 +200,6 @@ function App(){
   const [sid,setSid]           = useState(null);
   const [data,setData]         = useState(null);
   const [sel,setSel]           = useState(null);
-  const [tab,setTab]           = useState('explorer');
   const [hidden,setHidden]     = useState(()=>new Set());
   const [showFilters,setShowFilters] = useState(false);
   const [collapsed,setCollapsed]     = useState(()=>new Set());
@@ -256,16 +245,14 @@ function App(){
 
   return html`
     <${Header} sessions=${sessions} sid=${sid} data=${data} onSession=${setSid}/>
-    <${Toolbar} tab=${tab} setTab=${setTab} showFilters=${showFilters} setShowFilters=${setShowFilters}
+    <${Toolbar} showFilters=${showFilters} setShowFilters=${setShowFilters}
                 hidden=${hidden} setHidden=${setHidden} data=${data}/>
     ${data ? html`<${Stats} data=${data}/>` : null}
     <div class="main">
       <div class="rail">
         ${!data ? html`<div class="empty">Loading…</div>`
-          : tab==='explorer'
-            ? html`<${Explorer} data=${data} ids=${visibleIds} sel=${sel} onSel=${setSel}/>`
-            : html`<${Tree} data=${data} hidden=${hidden} sel=${sel} onSel=${setSel}
-                            collapsed=${collapsed} setCollapsed=${setCollapsed}/>`}
+          : html`<${Tree} data=${data} hidden=${hidden} sel=${sel} onSel=${setSel}
+                          collapsed=${collapsed} setCollapsed=${setCollapsed}/>`}
       </div>
       <div class="detail">
         ${data && sel && data.nodes[sel]
@@ -294,15 +281,12 @@ function Header({sessions,sid,data,onSession}){
     </header>`;
 }
 
-function Toolbar({tab,setTab,showFilters,setShowFilters,hidden,setHidden,data}){
+function Toolbar({showFilters,setShowFilters,hidden,setHidden,data}){
   const types = data ? [...new Set(data.order.map(id=>data.nodes[id] && data.nodes[id].type).filter(Boolean))] : [];
   const toggle = t=>{ const n=new Set(hidden); n.has(t)?n.delete(t):n.add(t); setHidden(n); };
   return html`
     <div class="toolbar">
-      <div class="tabs">
-        <button class=${'tab'+(tab==='explorer'?' on':'')} onClick=${()=>setTab('explorer')}>Explorer</button>
-        <button class=${'tab'+(tab==='tree'?' on':'')} onClick=${()=>setTab('tree')}>Tree</button>
-      </div>
+      <span class="tb-title">Pipeline tree</span>
       <button class=${'filter-btn'+(showFilters?' on':'')} onClick=${()=>setShowFilters(!showFilters)}>
         Filters${hidden.size ? html`<span class="badge-count">${hidden.size}</span>` : null}
       </button>
@@ -328,39 +312,29 @@ function Stats({data}){
   </div>`;
 }
 
-function DeltaChip({cs}){
-  if(!cs || !cs.measured || !cs.delta) return null;
-  const up = cs.delta>0;
-  return html`<span class=${'delta '+(up?'pos':'neg')}>${up?'+':'−'}${fmtNum(Math.abs(cs.delta))}</span>`;
-}
+const ROLE_META = {
+  system:   {label:'system',    color:'#6f8fd6'},
+  user:     {label:'user',      color:'#4fb6a8'},
+  assistant:{label:'assistant', color:'#e0995e'},
+  tool:     {label:'tool',      color:'#a87bd4'},
+};
+const ROLE_ORDER = ['system','user','assistant','tool'];
 
-function Explorer({data,ids,sel,onSel}){
-  if(!ids.length) return html`<div class="empty">All node types are filtered out.</div>`;
-  return html`<div class="chain">
-    ${ids.map((id,i)=>html`<${Row} key=${id} node=${data.nodes[id]} selected=${id===sel}
-                             last=${i===ids.length-1} onClick=${()=>onSel(id)}/>`)}
-  </div>`;
-}
+// Cryptic router phase codes → human-readable labels.
+const PHASE_LABELS = {
+  phase1_keyword:'keyword-matching',
+  phase1_baseline:'baseline (all tools)',
+  phase2_llm:'llm-routing',
+};
+const phaseLabel = p => PHASE_LABELS[p] || p;
 
-function Row({node,selected,last,onClick}){
-  const ref = useRef();
-  useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
-  const m = meta(node.type), a = node.attributes||{}, cs = node.ctx_state||{};
-  return html`<div class="rowwrap">
-    <div ref=${ref} class=${'row'+(selected?' sel':'')+(node.loop_flag?' loop':'')} onClick=${onClick}>
-      <span class="row-dot" style=${{background:m.dot}}></span>
-      <div class="row-main">
-        <div class="row-top">
-          <span class="row-name">${m.name}</span>
-          ${a.step ? html`<span class="step-tag">S${a.step}</span>` : null}
-          ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
-        </div>
-        ${rowSub(node) ? html`<div class="row-sub">${rowSub(node)}</div>` : null}
-      </div>
-      <${DeltaChip} cs=${cs}/>
-    </div>
-    ${last ? null : html`<div class="connector"></div>`}
-  </div>`;
+// Short "+N role" summary of what a node added to the context window.
+function addedText(cs){
+  if(!cs) return '';
+  if(cs.removed) return '−'+fmtNum(cs.removed);
+  const a = cs.added||{};
+  const roles = ROLE_ORDER.filter(r=>a[r]);
+  return roles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  ');
 }
 
 function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
@@ -387,7 +361,6 @@ function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
       return html`<div key=${'g'+step}>
         <div class="tree-group" onClick=${()=>toggle(step)}>
           <span class=${'twist'+(open?' open':'')}>▸</span> Step ${step}
-          <span class="muted">${byStep.get(step).length}</span>
         </div>
         ${open ? byStep.get(step).map(id=>html`<${TreeLeaf} key=${id} node=${data.nodes[id]} depth=${1} sel=${sel} onSel=${onSel}/>`) : null}
       </div>`;
@@ -399,13 +372,20 @@ function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
 function TreeLeaf({node,depth,sel,onSel}){
   const ref = useRef(), selected = node.id===sel, m = meta(node.type);
   useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
+  const summary = addedText(node.ctx_state);
   return html`<div ref=${ref} class=${'tleaf'+(selected?' sel':'')}
                    style=${{paddingLeft:(12+depth*18)+'px'}} onClick=${()=>onSel(node.id)}>
     <span class="row-dot sm" style=${{background:m.dot}}></span>
     <span class="tleaf-name">${m.name}</span>
-    ${rowSub(node) ? html`<span class="muted tleaf-sub">${rowSub(node)}</span>` : html`<span class="tleaf-sub"></span>`}
-    <${DeltaChip} cs=${node.ctx_state}/>
+    <span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary || '—'}</span>
   </div>`;
+}
+
+// A display copy of attributes with cryptic codes mapped to friendly labels.
+function displayAttrs(node){
+  const a = Object.assign({}, node.attributes||{});
+  if(a.phase) a.phase = phaseLabel(a.phase);
+  return a;
 }
 
 function Detail({node}){
@@ -419,45 +399,133 @@ function Detail({node}){
         ${a.started_at ? html`<span>🕘 ${String(a.started_at).slice(11,19) || a.started_at}</span>` : null}
         ${a.latency_s!=null ? html`<span>⚡ ${a.latency_s}s</span>` : null}
         ${a.step ? html`<span>Step ${a.step}</span>` : null}
+        ${node.type==='router' && a.phase ? html`<span>🧭 ${phaseLabel(a.phase)}</span>` : null}
       </div>
     </div>
     <${CtxCard} cs=${node.ctx_state}/>
+    <${Section} title="Outputs" data=${node.outputs} body=${outputsBody(node)} open=${true}/>
     <${Section} title="Inputs" data=${node.inputs} open=${true}/>
-    <${Section} title="Outputs" data=${node.outputs} open=${true}/>
-    <${Section} title="Attributes" data=${a} open=${false}/>
+    <${Section} title="Attributes" data=${displayAttrs(node)} open=${false}/>
+  </div>`;
+}
+
+// Rich body for the Outputs section: tool results and LLM responses get
+// purpose-built views; everything else returns null to use the generic DataView.
+function outputsBody(node){
+  if(node.type==='tool_call') return html`<${ToolResult} node=${node}/>`;
+  if(node.type==='llm_call')  return html`<${LlmOutputs} node=${node}/>`;
+  return null;
+}
+
+function parseToolResult(raw){
+  if(raw==null) return null;
+  if(typeof raw==='object') return raw;
+  try { return JSON.parse(raw); } catch(e){ return {output:String(raw)}; }
+}
+
+// Render an args dict as the command/path that was actually executed.
+function cmdText(args){
+  if(args && typeof args==='object'){
+    if(typeof args.command==='string') return args.command;
+    const keys = Object.keys(args);
+    if(keys.length===1 && typeof args[keys[0]]==='string') return args[keys[0]];
+    return JSON.stringify(args, null, 2);
+  }
+  return args==null ? '' : String(args);
+}
+
+function ToolResult({node}){
+  const r = parseToolResult(node.outputs && node.outputs.result) || {};
+  const cmd = cmdText(node.inputs && node.inputs.args);
+  return html`<div class="toolres">
+    <div class="tr-head">
+      ${r.tool ? html`<span class="tr-tool">${r.tool}</span>` : null}
+      ${r.ok===true ? html`<span class="tr-badge ok">✓ success</span>`
+        : r.ok===false ? html`<span class="tr-badge err">✗ error</span>` : null}
+    </div>
+    ${cmd ? html`<div class="tr-block"><div class="tr-label">command</div>
+      <${LogBlock} text=${cmd} kind="cmd"/></div>` : null}
+    ${r.output ? html`<div class="tr-block"><div class="tr-label">output</div>
+      <${LogBlock} text=${r.output} kind="out"/></div>` : null}
+    ${r.error ? html`<div class="tr-block"><div class="tr-label err">error</div>
+      <${LogBlock} text=${r.error} kind="err"/></div>` : null}
+    ${(!cmd && !r.output && !r.error) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
+  </div>`;
+}
+
+function LlmOutputs({node}){
+  const o = node.outputs || {};
+  const calls = o.tool_calls || [];
+  return html`<div class="toolres">
+    ${o.content ? html`<div class="tr-block"><div class="tr-label">response</div>
+      <${LogBlock} text=${o.content}/></div>` : null}
+    ${o.reasoning ? html`<div class="tr-block"><div class="tr-label">reasoning</div>
+      <${LogBlock} text=${o.reasoning}/></div>` : null}
+    ${calls.length ? html`<div class="tr-block"><div class="tr-label">tool calls · ${calls.length}</div>
+      <${ToolCalls} calls=${calls}/></div>` : null}
+    ${(!o.content && !o.reasoning && !calls.length) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
+  </div>`;
+}
+
+function ToolCalls({calls}){
+  return html`${calls.map((c,i)=>{
+    const fn = c.function || {};
+    let args = fn.arguments;
+    try { args = JSON.parse(fn.arguments); } catch(e){}
+    return html`<div key=${c.id||i} class="tcall">
+      <div class="tc-top"><span class="tr-tool">${fn.name||'?'}</span></div>
+      <${LogBlock} text=${cmdText(args)} kind="cmd"/>
+    </div>`;
+  })}`;
+}
+
+function LogBlock({text,kind}){
+  const [copied,setCopied] = useState(false);
+  const copy = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(text)
+    .then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),1200); }); };
+  return html`<div class=${'jb '+(kind||'')}>
+    <button class="copy" onClick=${copy}>${copied?'✓ copied':'copy'}</button>
+    <pre>${text}</pre>
   </div>`;
 }
 
 function CtxCard({cs}){
   if(!cs || cs.tokens==null) return null;
-  const pct = cs.pct!=null ? cs.pct : 0;
-  const lvl = pct>=90 ? 'red' : pct>=70 ? 'amber' : 'blue';
+  const comp = cs.composition || {};
+  const total = cs.tokens || 0;
+  const segs = ROLE_ORDER.filter(r=>comp[r]);
   return html`<div class="ctxcard">
     <div class="ctx-top">
       <span class="ctx-label">Context window</span>
-      <span class="ctx-figs">${fmtNum(cs.tokens)}${cs.window ? ' / '+fmtNum(cs.window) : ''}${cs.pct!=null ? ' · '+cs.pct+'%' : ''}</span>
+      <span class="ctx-figs">${fmtNum(total)}${cs.window ? ' / '+fmtNum(cs.window) : ''}${cs.pct!=null ? ' · '+cs.pct+'%' : ''}</span>
     </div>
-    <div class="ctx-bar"><div class=${'ctx-fill '+lvl} style=${{width:Math.min(100,pct)+'%'}}></div></div>
-    <div class="ctx-deltas">
-      ${cs.added ? html`<span class="delta pos">+${fmtNum(cs.added)} tokens</span>` : null}
-      ${cs.removed ? html`<span class="delta neg">−${fmtNum(cs.removed)} tokens</span>` : null}
-      ${(!cs.added && !cs.removed) ? html`<span class="muted">no change at this node</span>` : null}
+    <div class="ctx-bar">
+      ${segs.length
+        ? segs.map(r=>html`<div key=${r} class="ctx-seg"
+            style=${{width:(comp[r]/total*100)+'%',background:ROLE_META[r].color}} title=${ROLE_META[r].label}></div>`)
+        : html`<div class="ctx-fill" style=${{width:Math.min(100,cs.pct||0)+'%'}}></div>`}
     </div>
+    ${segs.length ? html`<div class="ctx-legend">
+      ${segs.map(r=>html`<span key=${r} class="bd-li">
+        <span class="bd-sw" style=${{background:ROLE_META[r].color}}></span>
+        ${ROLE_META[r].label} <span class="muted">${fmtNum(comp[r])}</span>
+      </span>`)}
+    </div>` : null}
   </div>`;
 }
 
-function Section({title,data,open}){
+function Section({title,data,open,body}){
   const [o,setO] = useState(open);
-  const isEmpty = data==null
+  const isEmpty = body==null && (data==null
     || (typeof data==='object' && !Array.isArray(data) && Object.keys(data).length===0)
     || (Array.isArray(data) && !data.length)
-    || (typeof data==='string' && !data.length);
+    || (typeof data==='string' && !data.length));
   return html`<div class=${'section'+(o?' open':'')}>
     <div class="shead" onClick=${()=>setO(!o)}>
       <span class=${'twist'+(o?' open':'')}>▸</span> ${title}
       ${isEmpty ? html`<span class="muted" style="font-weight:400">— empty</span>` : null}
     </div>
-    ${o && !isEmpty ? html`<div class="sbody"><${DataView} data=${data}/></div>` : null}
+    ${o && !isEmpty ? html`<div class="sbody">${body!=null ? body : html`<${DataView} data=${data}/>`}</div>` : null}
   </div>`;
 }
 
