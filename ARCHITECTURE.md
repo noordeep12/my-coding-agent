@@ -49,6 +49,13 @@ src/my_coding_agent/
 │   ├── recorder.py              ← Recorder: events.jsonl writer + event type constants + contextvars
 │   └── schema.py                ← JSONL event row shape constants
 │
+├── viewer/                      ← Active read-side: parse events.jsonl + serve browser UI
+│   ├── __init__.py              ← Public surface: TraceNode, TraceSession, load_session, list_sessions
+│   ├── schema.py                ← TraceNode + TraceSession dataclasses (typed contracts)
+│   ├── pricing.py               ← Model price table + compute_cost() helper
+│   ├── reader.py                ← Parse events.jsonl → TraceSession; layout, loop detection, analytics
+│   └── server.py                ← Localhost HTTP server + embedded single-page Trace Explorer UI
+│
 └── utils/                       ← Generic helpers
     ├── __init__.py              ← Re-export facade (get_logger, print_banner, etc.)
     ├── exceptions.py            ← MyCodingAgentError hierarchy
@@ -140,7 +147,16 @@ The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatib
 
 Receives events emitted by `engine/` and `pipeline/`; never controls execution. Writing directly to `events.jsonl` is its only side-effect.
 
-- **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
+- **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, `TOKEN_TRACKING`, `FINISH_CHECK`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
+
+### `viewer/` — Active Read-Side (Trace Explorer)
+
+The read-side of the observability system. Separated from `observability/` because it is **active** — it controls execution (HTTP server), renders output (embedded HTML), and manages file handles — whereas `observability/` is passive capture only (CONTRIBUTE.md §25).
+
+- **`schema.py`** — `TraceNode` and `TraceSession` dataclasses: the typed contracts produced by `reader.py` and consumed by `server.py`.
+- **`pricing.py`** — model price table (USD per 1M tokens) and `compute_cost()` helper.
+- **`reader.py`** — parses `events.jsonl` into a `TraceSession` with a full node graph, SVG layout coordinates, loop detection, and aggregate analytics. Groups events into step buckets, builds a `TraceNode` per event, assigns `(x, y)` via a top-down fixed-column layout, and recursively loads delegate child sessions. Falls back to `session_data.json` for sessions without `events.jsonl`.
+- **`server.py`** — minimal stdlib `http.server` with three routes (`/`, `/api/sessions`, `/api/session/{id}`) and an embedded single-page Trace Explorer UI (vanilla JS + SVG). CLI entry point: `my-coding-agent-traces [--port 7474] [--dir .my_coding_agent]`.
 
 ### `utils/` — Generic Helpers
 
@@ -161,6 +177,7 @@ Every module and sub-module owns a `schema.py` for its typed contracts and shape
 | `engine/tool_registry/schema.py` | OpenAI tool definition JSON key names |
 | `pipeline/schema.py` | ROUTER event type constant |
 | `observability/schema.py` | JSONL row top-level key names |
+| `viewer/schema.py` | `TraceNode` + `TraceSession` dataclasses |
 
 ---
 

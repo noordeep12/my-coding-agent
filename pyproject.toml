@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 my-coding-agent = "my_coding_agent.pipeline.examples.simple:main"
+my-coding-agent-traces = "my_coding_agent.viewer.server:_cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/my_coding_agent"]
@@ -57,9 +58,10 @@ select = ["E", "F", "I", "C901"]
 max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
-# report.py embeds an HTML/CSS/JS template as a string literal; wrapping its
-# markup lines to 88 cols would harm readability, not help it.
+# report.py and server.py embed HTML/CSS/JS templates as string literals;
+# wrapping their markup lines to 88 cols would harm readability, not help it.
 "src/my_coding_agent/observability/report.py" = ["E501"]
+"src/my_coding_agent/viewer/server.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

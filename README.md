@@ -95,6 +95,22 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 | `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs) |
 | `tool_artifacts.json` | Full outputs for large tool results |
 
+### Trace Explorer
+
+Visualise sessions in a browser with an interactive pipeline DAG:
+
+```bash
+my-coding-agent-traces          # defaults: port 7474, dir .my_coding_agent
+my-coding-agent-traces --port 8080 --dir /path/to/.my_coding_agent
+```
+
+Then open `http://localhost:7474`. The UI shows:
+
+- **Left pane** — interactive SVG DAG of the pipeline (pan/zoom with mouse; click any node)
+- **Right pane** — node detail: inputs, outputs, attributes, token counts, cost
+- Loop-detected nodes are highlighted with an orange ring
+- Session picker dropdown lists all sessions found in the directory
+
 ## Requirements
 
 - Python 3.12+

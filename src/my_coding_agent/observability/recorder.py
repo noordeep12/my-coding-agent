@@ -27,6 +27,8 @@ TOOL_CALL = "tool_call"
 ROUTER = "router"
 HANDOFF = "handoff"
 SESSION_END = "session_end"
+TOKEN_TRACKING = "token_tracking"
+FINISH_CHECK = "finish_check"
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -213,6 +215,41 @@ class Recorder:
                 "ctx_pct": round(ctx_pct, 1),
                 "content": content,
                 "path": path,
+            }
+        )
+
+    def record_token_tracking(
+        self,
+        step: int,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        ctx_pct: float,
+        context_window: int,
+    ) -> None:
+        """Emit token-usage data for a completed pipeline step."""
+        self._emit(
+            {
+                "type": TOKEN_TRACKING,
+                "step": step,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "ctx_pct": round(ctx_pct, 1),
+                "context_window": context_window,
+                "started_at": _now(),
+            }
+        )
+
+    def record_finish_check(self, step: int, finish_reason: str, signal: str) -> None:
+        """Emit the finish-check decision so the trace shows why a step ended."""
+        self._emit(
+            {
+                "type": FINISH_CHECK,
+                "step": step,
+                "finish_reason": finish_reason,
+                "signal": signal,
+                "started_at": _now(),
             }
         )
 
