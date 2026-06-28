@@ -920,7 +920,7 @@ AI agents, CI tooling — can understand it in isolation without tracing code.
 | **What** changed | Subject: `type(scope): description` | `commit-subject-format`, `commit-subject-length` |
 | **Why** it was needed | Body: non-empty explanation of the problem | `commit-body-required` |
 | **For whom** it matters | Implicit in a complete body written for all readers | — (style, not a separate field) |
-| **Which issue** it addresses | Footer: `Refs: <url or #issue>` | `commit-refs-footer` |
+| **Which issue** it addresses | Footer: `Refs: #<issue>` | `commit-refs-footer` |
 
 **Subject rules:**
 - Use **Conventional Commits**: `type(scope): description`
@@ -933,7 +933,8 @@ AI agents, CI tooling — can understand it in isolation without tracing code.
 - Wrap lines at ~72 chars
 
 **Footer rules:**
-- Must include `Refs: https://github.com/users/noordeep12/projects/1` or `Refs: #<issue>`
+- Must include `Refs: #<issue-number>` referencing an **existing** GitHub issue
+- If no issue exists for the change, the Claude agent must create one before committing
 
 All four constraints are enforced locally by pre-commit hooks at `commit-msg` stage
 (`.pre-commit-config.yaml`). A commit missing any element is rejected before it lands.

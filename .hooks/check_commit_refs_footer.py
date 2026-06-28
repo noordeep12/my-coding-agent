@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Enforce presence of a Refs: footer in commit messages."""
+"""Enforce that every commit references a specific GitHub issue."""
 
+import re
 import sys
 
-body = open(sys.argv[1]).read()
-if not any(line.startswith("Refs: ") for line in body.splitlines()):
-    print("Commit message is missing a Refs: footer.")
-    print("Add a line such as:")
-    print("  Refs: https://github.com/users/noordeep12/projects/1")
+ISSUE_RE = re.compile(r"^Refs: #\d+$")
+
+lines = open(sys.argv[1]).read().splitlines()
+if not any(ISSUE_RE.match(line) for line in lines):
+    print("Commit message is missing a valid Refs: footer.")
+    print("Every commit must reference an existing GitHub issue:")
     print("  Refs: #<issue-number>")
+    print()
+    print("If no issue exists yet, ask the Claude agent to create one first.")
     sys.exit(1)
