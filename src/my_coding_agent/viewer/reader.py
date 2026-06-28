@@ -13,44 +13,56 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .pricing import compute_cost
-from .schema import TraceNode, TraceSession
+from .schema import EventBuilder, TraceNode, TraceSession
 
 logger = logging.getLogger(__name__)
 
-# ── Visual constants ────────────────────────────────────────────────────────
 
-_SHAPE: dict[str, str] = {
-    "session": "rect",
-    "step": "rect",
-    "router": "diamond",
-    "llm_call": "circle",
-    "tool_call": "square",
-    "handoff": "rect",
-    "session_end": "circle",
-    "token_tracking": "circle",
-    "finish_check": "diamond",
-}
+# ── Graph accumulator ─────────────────────────────────────────────────────────
 
-_COLOR: dict[str, str] = {
-    "session": "#4A90D9",
-    "step": "#2C3E50",
-    "router": "#F39C12",
-    "llm_call": "#27AE60",
-    "tool_call": "#8E44AD",
-    "handoff": "#E74C3C",
-    "session_end": "#7F8C8D",
-    "token_tracking": "#1A7F5A",
-    "finish_check": "#C0392B",
-}
 
-# Fixed column x-positions (px)
-_COL_X = [60, 200, 340, 480, 620]
-_Y_STEP = 90  # px between sibling nodes
-_Y_GAP = 60  # extra padding between pipeline steps
+@dataclass
+class _Graph:
+    """Mutable accumulator for the node graph built while parsing a session.
+
+    Bundles ``nodes`` and the execution ``order`` so callers wire a new node
+    with a single ``add`` call instead of threading both through every builder.
+
+    Args:
+        root_id: ID of the session root node; every added node parents to it.
+    """
+
+    root_id: str
+    nodes: dict[str, TraceNode] = field(default_factory=dict)
+    order: list[str] = field(default_factory=list)
+
+    def add_root(self, node: TraceNode) -> None:
+        """Register the root node and start the execution order.
+
+        Args:
+            node: The session root ``TraceNode``.
+        """
+        self.nodes[node.id] = node
+        self.order.append(node.id)
+
+    def add(self, node_id: str, node: TraceNode, step: int | None = None) -> None:
+        """Append *node* to the chain in execution order.
+
+        Args:
+            node_id: Stable node identifier.
+            node: The ``TraceNode`` to add; its ``parent_id`` is set to the root.
+            step: Optional 1-based step number stamped onto ``attributes``.
+        """
+        if step is not None:
+            node.attributes["step"] = step
+        node.parent_id = self.root_id
+        self.nodes[node_id] = node
+        self.order.append(node_id)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -104,7 +116,7 @@ def load_session(
         _seen: Set of already-visited session IDs (internal recursion guard).
 
     Returns:
-        Fully parsed ``TraceSession`` with layout coordinates assigned.
+        Fully parsed ``TraceSession`` with nodes in execution order.
 
     Raises:
         OSError: If *events_path* exists but cannot be read.  Callers should
@@ -127,67 +139,55 @@ def load_session(
 
     end_ev = _find_end(events)
     steps_groups = _group_into_steps(events)
-    nodes: dict[str, TraceNode] = {}
-    edges: list[tuple[str, str]] = []
 
     root_id = f"{session_id}::session"
-    nodes[root_id] = _make_node(
-        id=root_id,
-        type="session",
-        label=start_ev.get("label", "Session"),
-        inputs={},
-        outputs={},
-        attributes={
-            "model": start_ev.get("model", ""),
-            "context_window": start_ev.get("context_window"),
-            "started_at": start_ev.get("started_at", ""),
-            "parent_session_id": start_ev.get("parent_session_id"),
-        },
-    )
-
-    prev_id = root_id
-    for step_idx, group in enumerate(steps_groups):
-        step_id = f"{session_id}::step{step_idx + 1}"
-        nodes[step_id] = _make_node(
-            id=step_id,
-            type="step",
-            label=f"Step {step_idx + 1}",
-            inputs={},
-            outputs={},
-            attributes={"step": step_idx + 1},
-            parent_id=root_id,
-        )
-        nodes[root_id].children.append(step_id)
-        edges.append((prev_id, step_id))
-        prev_id = step_id
-        _build_step_nodes(
-            group, step_id, session_id, step_idx, nodes, edges, seen, session_dir
-        )
-
-    if end_ev:
-        end_id = f"{session_id}::session_end"
-        nodes[end_id] = _make_node(
-            id=end_id,
-            type="session_end",
-            label="End",
+    graph = _Graph(root_id=root_id)
+    graph.add_root(
+        _make_node(
+            id=root_id,
+            type="session",
+            label=start_ev.get("label", "Session"),
             inputs={},
             outputs={},
             attributes={
-                "stop_reason": end_ev.get("stop_reason", ""),
-                "steps": end_ev.get("steps", 0),
-                "elapsed_s": end_ev.get("elapsed_s", 0.0),
+                "model": start_ev.get("model", ""),
+                "context_window": start_ev.get("context_window"),
+                "started_at": start_ev.get("started_at", ""),
+                "parent_session_id": start_ev.get("parent_session_id"),
             },
-            parent_id=root_id,
         )
-        nodes[root_id].children.append(end_id)
-        edges.append((prev_id, end_id))
+    )
+
+    # Flat chain: every pipeline node is a direct child of the session root,
+    # appended in execution order.  The step number is kept as an attribute
+    # (for the Tree view) rather than a wrapper node, so the trace reads as one
+    # continuous flow of RunContext through the pipeline.
+    for step_idx, group in enumerate(steps_groups):
+        _build_step_nodes(group, graph, session_id, step_idx, seen, session_dir)
+
+    if end_ev:
+        end_id = f"{session_id}::session_end"
+        graph.add(
+            end_id,
+            _make_node(
+                id=end_id,
+                type="session_end",
+                label="End",
+                inputs={},
+                outputs={},
+                attributes={
+                    "stop_reason": end_ev.get("stop_reason", ""),
+                    "steps": end_ev.get("steps", 0),
+                    "elapsed_s": end_ev.get("elapsed_s", 0.0),
+                },
+            ),
+        )
 
     model = start_ev.get("model", "")
-    _layout(nodes, root_id)
-    _detect_loops(nodes)
-    analytics = _compute_analytics(nodes, model, end_ev)
+    _detect_loops(graph.nodes)
+    _assign_ctx_state(graph.nodes, graph.order, start_ev.get("context_window"))
+    analytics = _compute_analytics(graph.nodes, model, end_ev)
 
-    canvas_w, canvas_h = _canvas_size(nodes)
     return TraceSession(
         session_id=session_id,
         label=start_ev.get("label", "Session"),
@@ -196,11 +196,9 @@ def load_session(
         ended_at=end_ev.get("ended_at") if end_ev else None,
         stop_reason=end_ev.get("stop_reason") if end_ev else None,
         steps=len(steps_groups),
-        nodes=nodes,
-        edges=edges,
+        nodes=graph.nodes,
+        order=graph.order,
         analytics=analytics,
-        canvas_width=canvas_w,
-        canvas_height=canvas_h,
     )
 
 
@@ -238,240 +236,307 @@ def _group_into_steps(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]
 
 def _build_step_nodes(
     group: list[dict[str, Any]],
-    step_id: str,
+    graph: _Graph,
     session_id: str,
     step_idx: int,
-    nodes: dict[str, TraceNode],
-    edges: list[tuple[str, str]],
     seen: set[str],
     session_dir: Path,
 ) -> None:
-    """Add child nodes for one pipeline step into *nodes* and *edges*.
+    """Append one pipeline step's nodes to the flat session chain in *graph*.
+
+    Each node becomes a direct child of the session root and links to the node
+    that ran immediately before it.  The 1-based step number is stamped onto
+    every node's ``attributes["step"]`` so the Tree view can group them without
+    a wrapper node.
 
     Args:
         group: All events belonging to this step (starts with ``router``).
-        step_id: Parent step node ID.
+        graph: Mutable graph accumulator the nodes are added to.
         session_id: Owning session ID (used for stable node IDs).
         step_idx: Zero-based step index.
-        nodes: Mutable node dict to populate.
-        edges: Mutable edge list to populate.
         seen: Recursion guard set for delegate sessions.
         session_dir: Filesystem directory of the owning session.
     """
-    prev_id = step_id
-    llm_counter = 0
-    tool_counter = 0
+    step = step_idx + 1
+    counters = {"llm": 0, "tool": 0}
 
     for ev in group:
-        ev_type = ev.get("type", "")
+        built = _build_event_node(ev, session_id, step, counters)
+        if built is None:
+            continue
+        node_id, node = built
+        graph.add(node_id, node, step=step)
 
-        if ev_type == "router":
-            node_id = f"{session_id}::step{step_idx + 1}::router"
-            nodes[node_id] = _make_node(
-                id=node_id,
-                type="router",
-                label="ToolRoutingNode",
-                inputs={"signal": ev.get("signal", "")[:120]},
-                outputs={"selected": ev.get("selected", [])},
-                attributes={
-                    "phase": ev.get("phase", ""),
-                    "used_llm": ev.get("used_llm", False),
-                    "started_at": ev.get("started_at", ""),
-                },
-                parent_id=step_id,
-            )
-            nodes[step_id].children.append(node_id)
-            edges.append((prev_id, node_id))
-            prev_id = node_id
-
-        elif ev_type == "llm_call":
-            llm_counter += 1
-            kind = ev.get("kind", "main")
-            node_id = f"{session_id}::step{step_idx + 1}::llm::{llm_counter}"
-            label = "LLMCallNode"
-            if kind != "main":
-                label += f" ({kind})"
-            resp = ev.get("response") or {}
-            nodes[node_id] = _make_node(
-                id=node_id,
-                type="llm_call",
-                label=label,
-                inputs={"messages": ev.get("messages") or []},
-                outputs={
-                    "content": resp.get("content", ""),
-                    "reasoning": resp.get("reasoning", ""),
-                    "tool_calls": resp.get("tool_calls", []),
-                },
-                attributes={
-                    "call": ev.get("call"),
-                    "kind": kind,
-                    "latency_s": ev.get("latency_s"),
-                    "prompt_tokens": ev.get("prompt"),
-                    "completion_tokens": ev.get("completion"),
-                    "total_tokens": ev.get("total"),
-                    "context_window": ev.get("context_window"),
-                    "started_at": ev.get("started_at", ""),
-                },
-                parent_id=step_id,
-            )
-            nodes[step_id].children.append(node_id)
-            edges.append((prev_id, node_id))
-            prev_id = node_id
-
-        elif ev_type == "tool_call":
-            tool_counter += 1
-            node_id = f"{session_id}::step{step_idx + 1}::tool::{tool_counter}"
-            child_sid = ev.get("child_session_id")
-            tool_name = ev.get("name", "tool")
-            nodes[node_id] = _make_node(
-                id=node_id,
-                type="tool_call",
-                label=f"ToolDispatchNode ({tool_name})",
-                inputs={"args": ev.get("args", {})},
-                outputs={"result": ev.get("result", "")},
-                attributes={
-                    "name": tool_name,
-                    "latency_s": ev.get("latency_s"),
-                    "started_at": ev.get("started_at", ""),
-                    "child_session_id": child_sid,
-                },
-                parent_id=step_id,
-            )
-            nodes[step_id].children.append(node_id)
-            edges.append((prev_id, node_id))
-            prev_id = node_id
-
+        if node.type == "tool_call":
+            child_sid = node.attributes.get("child_session_id")
             if child_sid and child_sid not in seen:
-                _embed_child_session(
-                    child_sid, node_id, nodes, edges, seen, session_dir
-                )
+                _embed_child_session(child_sid, graph, seen, session_dir)
 
-        elif ev_type == "handoff":
-            node_id = f"{session_id}::step{step_idx + 1}::handoff"
-            nodes[node_id] = _make_node(
-                id=node_id,
-                type="handoff",
-                label="ContextPreflightNode",
-                inputs={},
-                outputs={"content": ev.get("content", "")},
-                attributes={
-                    "step": ev.get("step"),
-                    "ctx_tokens": ev.get("ctx_tokens"),
-                    "ctx_pct": ev.get("ctx_pct"),
-                    "path": ev.get("path", ""),
-                    "started_at": ev.get("started_at", ""),
-                },
-                parent_id=step_id,
-            )
-            nodes[step_id].children.append(node_id)
-            edges.append((prev_id, node_id))
-            prev_id = node_id
 
-        elif ev_type == "token_tracking":
-            node_id = f"{session_id}::step{step_idx + 1}::token_tracking"
-            nodes[node_id] = _make_node(
-                id=node_id,
-                type="token_tracking",
-                label="TokenTrackingNode",
-                inputs={},
-                outputs={},
-                attributes={
-                    "prompt_tokens": ev.get("prompt_tokens"),
-                    "completion_tokens": ev.get("completion_tokens"),
-                    "total_tokens": ev.get("total_tokens"),
-                    "ctx_pct": ev.get("ctx_pct"),
-                    "context_window": ev.get("context_window"),
-                    "started_at": ev.get("started_at", ""),
-                },
-                parent_id=step_id,
-            )
-            nodes[step_id].children.append(node_id)
-            edges.append((prev_id, node_id))
-            prev_id = node_id
+# ── Per-event-type node builders (dispatched via _EVENT_BUILDERS) ─────────────
 
-        elif ev_type == "finish_check":
-            node_id = f"{session_id}::step{step_idx + 1}::finish_check"
-            nodes[node_id] = _make_node(
-                id=node_id,
-                type="finish_check",
-                label="FinishCheckNode",
-                inputs={},
-                outputs={},
-                attributes={
-                    "finish_reason": ev.get("finish_reason"),
-                    "signal": ev.get("signal"),
-                    "started_at": ev.get("started_at", ""),
-                },
-                parent_id=step_id,
-            )
-            nodes[step_id].children.append(node_id)
-            edges.append((prev_id, node_id))
-            prev_id = node_id
+
+def _build_router_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the ToolRoutingNode node for a ``router`` event."""
+    node_id = f"{session_id}::step{step}::router"
+    return node_id, _make_node(
+        id=node_id,
+        type="router",
+        label="ToolRoutingNode",
+        inputs={"signal": ev.get("signal", "")[:120]},
+        outputs={"selected": ev.get("selected", [])},
+        attributes={
+            "phase": ev.get("phase", ""),
+            "used_llm": ev.get("used_llm", False),
+            "started_at": ev.get("started_at", ""),
+        },
+    )
+
+
+def _build_llm_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the LLMCallNode node for an ``llm_call`` event."""
+    counters["llm"] += 1
+    kind = ev.get("kind", "main")
+    node_id = f"{session_id}::step{step}::llm::{counters['llm']}"
+    label = "LLMCallNode" + (f" ({kind})" if kind != "main" else "")
+    resp = ev.get("response") or {}
+    return node_id, _make_node(
+        id=node_id,
+        type="llm_call",
+        label=label,
+        inputs={"messages": ev.get("messages") or []},
+        outputs={
+            "content": resp.get("content", ""),
+            "reasoning": resp.get("reasoning", ""),
+            "tool_calls": resp.get("tool_calls", []),
+        },
+        attributes={
+            "call": ev.get("call"),
+            "kind": kind,
+            "latency_s": ev.get("latency_s"),
+            "prompt_tokens": ev.get("prompt"),
+            "completion_tokens": ev.get("completion"),
+            "total_tokens": ev.get("total"),
+            "context_window": ev.get("context_window"),
+            "started_at": ev.get("started_at", ""),
+        },
+    )
+
+
+def _build_tool_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the ToolDispatchNode node for a ``tool_call`` event."""
+    counters["tool"] += 1
+    node_id = f"{session_id}::step{step}::tool::{counters['tool']}"
+    tool_name = ev.get("name", "tool")
+    return node_id, _make_node(
+        id=node_id,
+        type="tool_call",
+        label=f"ToolDispatchNode ({tool_name})",
+        inputs={"args": ev.get("args", {})},
+        outputs={"result": ev.get("result", "")},
+        attributes={
+            "name": tool_name,
+            "latency_s": ev.get("latency_s"),
+            "started_at": ev.get("started_at", ""),
+            "child_session_id": ev.get("child_session_id"),
+        },
+    )
+
+
+def _build_handoff_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the ContextPreflightNode node for a ``handoff`` event."""
+    node_id = f"{session_id}::step{step}::handoff"
+    return node_id, _make_node(
+        id=node_id,
+        type="handoff",
+        label="ContextPreflightNode",
+        inputs={},
+        outputs={"content": ev.get("content", "")},
+        attributes={
+            "ctx_tokens": ev.get("ctx_tokens"),
+            "ctx_pct": ev.get("ctx_pct"),
+            "path": ev.get("path", ""),
+            "started_at": ev.get("started_at", ""),
+        },
+    )
+
+
+def _build_token_tracking_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the TokenTrackingNode node for a ``token_tracking`` event."""
+    node_id = f"{session_id}::step{step}::token_tracking"
+    return node_id, _make_node(
+        id=node_id,
+        type="token_tracking",
+        label="TokenTrackingNode",
+        inputs={},
+        outputs={},
+        attributes={
+            "prompt_tokens": ev.get("prompt_tokens"),
+            "completion_tokens": ev.get("completion_tokens"),
+            "total_tokens": ev.get("total_tokens"),
+            "ctx_pct": ev.get("ctx_pct"),
+            "context_window": ev.get("context_window"),
+            "started_at": ev.get("started_at", ""),
+        },
+    )
+
+
+def _build_finish_check_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the FinishCheckNode node for a ``finish_check`` event."""
+    node_id = f"{session_id}::step{step}::finish_check"
+    return node_id, _make_node(
+        id=node_id,
+        type="finish_check",
+        label="FinishCheckNode",
+        inputs={},
+        outputs={},
+        attributes={
+            "finish_reason": ev.get("finish_reason"),
+            "signal": ev.get("signal"),
+            "started_at": ev.get("started_at", ""),
+        },
+    )
+
+
+# Lookup table: event type → builder (CONTRIBUTE.md §38 — table over if-chain).
+_EVENT_BUILDERS: dict[str, EventBuilder] = {
+    "router": _build_router_node,
+    "llm_call": _build_llm_node,
+    "tool_call": _build_tool_node,
+    "handoff": _build_handoff_node,
+    "token_tracking": _build_token_tracking_node,
+    "finish_check": _build_finish_check_node,
+}
+
+
+def _build_event_node(
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],
+) -> tuple[str, TraceNode] | None:
+    """Build the ``TraceNode`` for one pipeline event, or ``None`` to skip it.
+
+    Dispatches through ``_EVENT_BUILDERS``; *counters* is mutated by the LLM and
+    tool builders to keep per-step ordinals stable.
+
+    Args:
+        ev: One raw event dict from ``events.jsonl``.
+        session_id: Owning session ID (used for stable node IDs).
+        step: 1-based step number.
+        counters: Mutable ``{"llm": int, "tool": int}`` ordinal counters.
+
+    Returns:
+        ``(node_id, node)`` for a recognised event type, else ``None``.
+    """
+    builder = _EVENT_BUILDERS.get(ev.get("type", ""))
+    return builder(ev, session_id, step, counters) if builder else None
 
 
 def _embed_child_session(
     child_sid: str,
-    parent_node_id: str,
-    nodes: dict[str, TraceNode],
-    edges: list[tuple[str, str]],
+    graph: _Graph,
     seen: set[str],
     session_dir: Path,
 ) -> None:
-    """Load a delegate child session and graft its nodes into *nodes*.
+    """Load a delegate child session and graft its nodes into *graph*.
+
+    The child's nodes are appended to the parent's execution order right after
+    the delegating ``tool_call`` node, so the sub-agent's steps appear inline.
 
     Args:
         child_sid: Session ID of the spawned sub-agent.
-        parent_node_id: The ``delegate`` tool_call node that spawned it.
-        nodes: Mutable node dict to extend.
-        edges: Mutable edge list to extend.
+        graph: Mutable graph accumulator to extend.
         seen: Recursion guard.
         session_dir: Parent session directory (child is a sibling directory).
     """
     child_dir = session_dir.parent / child_sid
     child_events = child_dir / "events.jsonl"
     child_session = load_session(child_events, _seen=seen)
-    nodes.update(child_session.nodes)
-    edges.extend(child_session.edges)
-    child_root = f"{child_sid}::session"
-    if child_root in nodes:
-        nodes[parent_node_id].children.append(child_root)
-        edges.append((parent_node_id, child_root))
+    graph.nodes.update(child_session.nodes)
+    graph.order.extend(child_session.order)
 
 
-# ── Layout ────────────────────────────────────────────────────────────────────
+# ── Context-window state ──────────────────────────────────────────────────────
 
 
-def _layout(nodes: dict[str, TraceNode], root_id: str) -> None:
-    """Assign ``(x, y)`` pixel coordinates to every node in *nodes* in-place.
-
-    Uses a depth-first pre-order walk.  Each node's x is determined by its
-    depth in the tree; its y is the midpoint of its children's y-range (or the
-    next available leaf y for leaf nodes).
+def _node_fill(node: TraceNode) -> int | None:
+    """Return the context-window fill (in tokens) this node reports, if any.
 
     Args:
-        nodes: All nodes; modified in-place.
-        root_id: ID of the root node to start the walk from.
+        node: The trace node to inspect.
+
+    Returns:
+        Token count of the context the node operated on, or ``None`` when the
+        node carries no token figure (e.g. router, finish_check).
     """
-    counter = [0]
+    a = node.attributes
+    if node.type in ("llm_call", "token_tracking"):
+        return a.get("prompt_tokens")
+    if node.type == "handoff":
+        return a.get("ctx_tokens")
+    return None
 
-    def _walk(node_id: str, depth: int) -> int:
-        node = nodes.get(node_id)
+
+def _assign_ctx_state(
+    nodes: dict[str, TraceNode],
+    order: list[str],
+    default_window: int | None,
+) -> None:
+    """Compute each node's context-window snapshot, in execution order.
+
+    Walks *order* tracking the running context fill.  Nodes that report a token
+    figure get a signed ``delta`` versus the previous reporting node — positive
+    when the window grew (tokens added), negative after a compaction (tokens
+    removed).  Nodes without their own figure inherit the carried fill with a
+    zero delta so the UI can still draw the bar.
+
+    Args:
+        nodes: All trace nodes; each gains a ``ctx_state`` dict in-place.
+        order: Node IDs in execution order.
+        default_window: Session context window size used when a node omits it.
+    """
+    prev = 0
+    window = default_window
+    for nid in order:
+        node = nodes.get(nid)
         if node is None:
-            return counter[0] * _Y_STEP + 60
-        col = min(depth, len(_COL_X) - 1)
-        node.x = _COL_X[col]
-        if not node.children:
-            y = counter[0] * _Y_STEP + 60
-            counter[0] += 1
-            node.y = y
-            return y
-        child_ys = [_walk(c, depth + 1) for c in node.children]
-        node.y = (child_ys[0] + child_ys[-1]) // 2
-        if node.type == "step" and counter[0] > 0:
-            node.y += _Y_GAP // 2
-        return node.y
-
-    _walk(root_id, 0)
+            continue
+        own_window = node.attributes.get("context_window")
+        if own_window:
+            window = own_window
+        if node.type == "session":
+            tokens, delta, measured = 0, 0, True
+            prev = 0
+        else:
+            fill = _node_fill(node)
+            if fill is None:
+                tokens, delta, measured = prev, 0, False
+            else:
+                tokens, delta, measured = fill, fill - prev, True
+                prev = fill
+        pct = round(tokens / window * 100, 1) if window else None
+        node.ctx_state = {
+            "tokens": tokens,
+            "window": window,
+            "pct": pct,
+            "delta": delta,
+            "added": max(delta, 0),
+            "removed": max(-delta, 0),
+            "measured": measured,
+        }
 
 
 # ── Loop detection ────────────────────────────────────────────────────────────
@@ -660,8 +725,6 @@ def _fallback_session(session_dir: Path) -> TraceSession:
             "started_at": data.get("started_at", ""),
         },
     )
-    root.x, root.y = _COL_X[0], 60
-    root.children = [end_id]
 
     end = _make_node(
         id=end_id,
@@ -675,7 +738,6 @@ def _fallback_session(session_dir: Path) -> TraceSession:
         },
         parent_id=root_id,
     )
-    end.x, end.y = _COL_X[1], 60
 
     return TraceSession(
         session_id=session_id,
@@ -686,10 +748,8 @@ def _fallback_session(session_dir: Path) -> TraceSession:
         stop_reason=data.get("stop_reason"),
         steps=data.get("steps", 0),
         nodes={root_id: root, end_id: end},
-        edges=[(root_id, end_id)],
+        order=[root_id, end_id],
         analytics={"source": "session_data_fallback"},
-        canvas_width=_COL_X[1] + 100,
-        canvas_height=160,
     )
 
 
@@ -711,7 +771,6 @@ def _stub_session(session_id: str) -> TraceSession:
         outputs={},
         attributes={"note": "circular reference — skipped"},
     )
-    root.x, root.y = _COL_X[0], 60
     return TraceSession(
         session_id=session_id,
         label="[recursive]",
@@ -721,10 +780,8 @@ def _stub_session(session_id: str) -> TraceSession:
         stop_reason=None,
         steps=0,
         nodes={root_id: root},
-        edges=[],
+        order=[root_id],
         analytics={},
-        canvas_width=160,
-        canvas_height=120,
     )
 
 
@@ -797,7 +854,7 @@ def _make_node(
     attributes: dict[str, Any],
     parent_id: str | None = None,
 ) -> TraceNode:
-    """Construct a ``TraceNode`` with shape/color defaults applied.
+    """Construct a ``TraceNode``.
 
     Args:
         id: Unique node identifier.
@@ -809,36 +866,15 @@ def _make_node(
         parent_id: Parent node ID or ``None``.
 
     Returns:
-        A new ``TraceNode`` with ``x=0``, ``y=0`` (layout assigns coords later).
+        A new ``TraceNode``.
     """
     return TraceNode(
         id=id,
         type=type,
         label=label,
-        shape=_SHAPE.get(type, "rect"),
-        color=_COLOR.get(type, "#555"),
-        x=0,
-        y=0,
         inputs=inputs,
         outputs=outputs,
         attributes=attributes,
-        children=[],
         parent_id=parent_id,
         loop_flag=False,
     )
-
-
-def _canvas_size(nodes: dict[str, TraceNode]) -> tuple[int, int]:
-    """Compute the bounding box of all node positions.
-
-    Args:
-        nodes: All positioned nodes.
-
-    Returns:
-        ``(width, height)`` with 120px padding on each axis.
-    """
-    if not nodes:
-        return 700, 200
-    max_x = max(n.x for n in nodes.values())
-    max_y = max(n.y for n in nodes.values())
-    return max_x + 120, max_y + 120

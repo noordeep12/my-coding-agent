@@ -53,8 +53,9 @@ src/my_coding_agent/
 │   ├── __init__.py              ← Public surface: TraceNode, TraceSession, load_session, list_sessions
 │   ├── schema.py                ← TraceNode + TraceSession dataclasses (typed contracts)
 │   ├── pricing.py               ← Model price table + compute_cost() helper
-│   ├── reader.py                ← Parse events.jsonl → TraceSession; layout, loop detection, analytics
-│   └── server.py                ← Localhost HTTP server + embedded single-page Trace Explorer UI
+│   ├── reader.py                ← Parse events.jsonl → flat TraceSession; ctx-window deltas, loop detection, analytics
+│   ├── server.py                ← Localhost HTTP server + embedded single-page Trace Explorer UI (Preact + htm)
+│   └── _vendor/                 ← Offline-vendored UI libs (Preact, hooks, htm) — no CDN
 │
 └── utils/                       ← Generic helpers
     ├── __init__.py              ← Re-export facade (get_logger, print_banner, etc.)
@@ -153,10 +154,11 @@ Receives events emitted by `engine/` and `pipeline/`; never controls execution. 
 
 The read-side of the observability system. Separated from `observability/` because it is **active** — it controls execution (HTTP server), renders output (embedded HTML), and manages file handles — whereas `observability/` is passive capture only (CONTRIBUTE.md §25).
 
-- **`schema.py`** — `TraceNode` and `TraceSession` dataclasses: the typed contracts produced by `reader.py` and consumed by `server.py`.
+- **`schema.py`** — `TraceNode` and `TraceSession` dataclasses: the typed contracts produced by `reader.py` and consumed by `server.py`. `TraceNode.ctx_state` holds the per-node context-window snapshot (tokens/window/pct + signed `delta` and `added`/`removed`); `TraceSession.order` is the execution-order node spine the UI walks for keyboard navigation.
 - **`pricing.py`** — model price table (USD per 1M tokens) and `compute_cost()` helper.
-- **`reader.py`** — parses `events.jsonl` into a `TraceSession` with a full node graph, SVG layout coordinates, loop detection, and aggregate analytics. Each pipeline `BaseNode` subclass (`ToolRoutingNode`, `LLMCallNode`, `ToolDispatchNode`, `ContextPreflightNode`, `TokenTrackingNode`, `FinishCheckNode`) maps to a `TraceNode` labelled with the class name. Assigns `(x, y)` via a top-down fixed-column layout; recursively loads delegate child sessions; falls back to `session_data.json` for sessions without `events.jsonl`.
-- **`server.py`** — minimal stdlib `http.server` with three routes (`/`, `/api/sessions`, `/api/session/{id}`) and an embedded single-page Trace Explorer UI (vanilla JS + SVG). CLI entry point: `my-coding-agent-traces [--port 7474] [--dir .my_coding_agent]`.
+- **`reader.py`** — parses `events.jsonl` into a **flat** `TraceSession`: every pipeline `BaseNode` subclass (`ToolRoutingNode`, `LLMCallNode`, `ToolDispatchNode`, `ContextPreflightNode`, `TokenTrackingNode`, `FinishCheckNode`) becomes one `TraceNode` in a single chain off the session root — there is no `step` wrapper node; the step number is carried as an attribute. Computes per-node context-window deltas from the prompt-token series (`_assign_ctx_state`), loop detection, and aggregate analytics. Recursively loads delegate child sessions; falls back to `session_data.json` for sessions without `events.jsonl`.
+- **`server.py`** — minimal stdlib `http.server` with three routes (`/`, `/api/sessions`, `/api/session/{id}`) and an embedded single-page Trace Explorer UI built with **Preact + htm** (vendored offline under `_vendor/`, injected inline — no CDN, no build step). The UI has Explorer and Tree tabs, keyboard navigation with auto-select, a type filter, and a per-node context-window bar with green/red token deltas. CLI entry point: `my-coding-agent-traces [--port 7474] [--dir .my_coding_agent]`.
+- **`_vendor/`** — third-party UI libraries (Preact, Preact Hooks, htm) vendored as offline UMD bundles so the localhost viewer needs no internet. JS only; excluded from coverage.
 
 ### `utils/` — Generic Helpers
 

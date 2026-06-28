@@ -160,10 +160,6 @@ def _tool_node(id: str, name: str, args: dict) -> TraceNode:
         id=id,
         type="tool_call",
         label=name,
-        shape="square",
-        color="#8E44AD",
-        x=0,
-        y=0,
         inputs={"args": args},
         outputs={},
         attributes={"name": name},
@@ -212,10 +208,6 @@ class TestDetectLoops:
             id="x",
             type="llm_call",
             label="LLM",
-            shape="circle",
-            color="#27AE60",
-            x=0,
-            y=0,
             inputs={},
             outputs={},
             attributes={},
@@ -283,17 +275,7 @@ class TestLoadSession:
         assert session.steps == 2
         assert session.model == "gpt-4o-mini"
         assert len(session.nodes) > 0
-        assert len(session.edges) > 0
-
-    def test_all_nodes_have_coordinates(self, tmp_path):
-        sid = "aabbccdd1234"
-        sdir = tmp_path / sid
-        sdir.mkdir()
-        ep = sdir / "events.jsonl"
-        _write_events(ep, _minimal_events(sid))
-        session = load_session(ep)
-        for node in session.nodes.values():
-            assert node.x > 0 or node.y >= 0  # root is at col 0, y=60
+        assert len(session.order) == len(session.nodes)
 
     def test_analytics_populated(self, tmp_path):
         sid = "aabbccdd1234"
@@ -413,6 +395,50 @@ class TestLoadSession:
         assert session.analytics["loop_count"] > 0
         looped = [n for n in session.nodes.values() if n.loop_flag]
         assert len(looped) == 2
+
+    def test_no_step_wrapper_nodes(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))
+        session = load_session(ep)
+        assert all(n.type != "step" for n in session.nodes.values())
+        # Step number survives as an attribute on the pipeline nodes.
+        routers = [n for n in session.nodes.values() if n.type == "router"]
+        assert {n.attributes["step"] for n in routers} == {1, 2}
+
+    def test_order_is_execution_spine(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))
+        session = load_session(ep)
+        assert session.order[0] == f"{sid}::session"
+        assert session.order[-1] == f"{sid}::session_end"
+        assert len(session.order) == len(session.nodes)
+
+    def test_ctx_state_tracks_token_deltas(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))
+        session = load_session(ep)
+        # First main LLM call: prompt 100, from a baseline of 0 → +100 added.
+        llm1 = session.nodes[f"{sid}::step1::llm::1"]
+        assert llm1.ctx_state["tokens"] == 100
+        assert llm1.ctx_state["added"] == 100
+        assert llm1.ctx_state["removed"] == 0
+        assert llm1.ctx_state["window"] == 8192
+        # Second main LLM call: prompt 200 → +100 over the previous fill.
+        llm2 = session.nodes[f"{sid}::step2::llm::1"]
+        assert llm2.ctx_state["delta"] == 100
+        # A router carries the fill forward with no measured change.
+        router2 = session.nodes[f"{sid}::step2::router"]
+        assert router2.ctx_state["measured"] is False
+        assert router2.ctx_state["delta"] == 0
 
     def test_circular_delegate_guard(self, tmp_path):
         sid = "aabbccdd1234"

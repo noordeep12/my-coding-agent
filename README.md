@@ -104,12 +104,16 @@ my-coding-agent-traces          # defaults: port 7474, dir .my_coding_agent
 my-coding-agent-traces --port 8080 --dir /path/to/.my_coding_agent
 ```
 
-Then open `http://localhost:7474`. The UI shows:
+Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, served fully offline) shows:
 
-- **Left pane** — interactive SVG DAG of the pipeline (pan/zoom with mouse; click any node)
-- **Right pane** — node detail: inputs, outputs, attributes, token counts, cost
-- Loop-detected nodes are highlighted with an orange ring
-- Session picker dropdown lists all sessions found in the directory
+- **Left pane** — the pipeline as one continuous chain of nodes, each showing how it processes the `RunContext`:
+  - **Explorer** tab — the execution-order node rail
+  - **Tree** tab — the same nodes grouped by step, collapsible
+  - Navigate with **↑/↓ (or j/k)** arrow keys; the focused node auto-selects
+  - **Filters** button — show/hide nodes by type
+- **Right pane** — node detail: a context-window progress bar with green **+tokens** / red **−tokens** deltas at that node, plus inputs, outputs, and all `RunContext`-derived attributes
+- The current **session id** is shown in the header (click to copy); the picker dropdown lists all sessions
+- Loop-detected tool calls are flagged inline
 
 ## Requirements
 

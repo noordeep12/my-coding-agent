@@ -1,7 +1,9 @@
 """Localhost HTTP server for the Trace Explorer.
 
 Serves the single-page browser UI at ``/`` and JSON API routes under ``/api/``.
-Uses only the Python stdlib ``http.server`` module — no new runtime dependencies.
+Uses only the Python stdlib ``http.server`` module — no new *runtime* Python
+dependencies.  The UI is a Preact + htm app; those libraries are vendored
+offline under ``viewer/_vendor/`` and injected inline into the page (no CDN).
 
 Entry point::
 
@@ -14,12 +16,14 @@ import dataclasses
 import json
 import logging
 import re
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
 import click
 
+from ..utils.exceptions import MyCodingAgentError
 from .reader import list_sessions, load_session
 
 logger = logging.getLogger(__name__)
@@ -27,323 +31,503 @@ logger = logging.getLogger(__name__)
 # ── Security: allow only hex session IDs (UUID-style without dashes) ──────────
 _SID_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
-# ── Embedded single-page HTML ─────────────────────────────────────────────────
+# ── Vendored UI libraries (offline, no CDN) — see viewer/_vendor/README.md ─────
+_VENDOR_DIR = Path(__file__).parent / "_vendor"
+_VENDOR_FILES = ("preact.min.js", "hooks.umd.js", "htm.umd.js")
+_VENDOR_TOKEN = "/*__VENDOR__*/"
+
+# ── Embedded single-page HTML (Apple-minimalist Preact UI) ────────────────────
 # ruff: noqa: E501
 EMBEDDED_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Trace Explorer</title>
 <style>
+:root{
+  --bg:#ffffff; --bg2:#f5f5f7; --panel:#fbfbfd; --line:#e5e5ea;
+  --text:#1d1d1f; --muted:#86868b; --accent:#0071e3; --accent-soft:#e8f1fd;
+  --pos:#1a7f37; --pos-bg:#e7f6ec; --neg:#d70015; --neg-bg:#fdeaec;
+  --amber:#b25000; --radius:12px;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Monaco,monospace;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'JetBrains Mono',monospace,sans-serif;background:#0d1117;color:#c9d1d9;height:100vh;display:grid;grid-template-rows:48px 1fr;overflow:hidden}
+html,body{height:100%}
+body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.empty{padding:48px;text-align:center;color:var(--muted);font-size:13px}
+.muted{color:var(--muted)}
+.warn{color:var(--amber)}
+
 /* ── top bar ── */
-#topbar{background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:12px;padding:0 16px;font-size:13px}
-#topbar select{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer}
-#session-meta{color:#8b949e;font-size:11px;flex:1}
-#session-meta b{color:#58a6ff}
+.topbar{display:flex;align-items:center;gap:14px;height:52px;padding:0 20px;background:var(--bg);border-bottom:1px solid var(--line)}
+.crumbs{display:flex;align-items:center;gap:8px;flex:1;min-width:0;font-size:14px}
+.crumb-root{color:var(--muted);font-weight:500}
+.sep{color:var(--line)}
+.crumb-cur{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+.sid{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer;white-space:nowrap}
+.sid:hover{color:var(--accent);border-color:var(--accent)}
+.sess-select{font-family:var(--font);font-size:12px;color:var(--text);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;max-width:340px;cursor:pointer;outline:none}
+.sess-select:focus{border-color:var(--accent)}
+
+/* ── toolbar ── */
+.toolbar{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 20px;background:var(--bg);border-bottom:1px solid var(--line)}
+.tabs{display:flex;gap:4px}
+.tab{font-family:var(--font);font-size:13px;font-weight:500;color:var(--muted);background:transparent;border:none;padding:7px 14px;border-radius:8px;cursor:pointer}
+.tab:hover{background:var(--bg2);color:var(--text)}
+.tab.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.filter-btn{font-family:var(--font);font-size:12px;font-weight:500;color:var(--text);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.filter-btn:hover{border-color:var(--accent);color:var(--accent)}
+.filter-btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.badge-count{background:var(--accent);color:#fff;border-radius:9px;font-size:10px;padding:0 6px;line-height:16px}
+.filters{display:flex;flex-wrap:wrap;gap:8px;padding:10px 20px;background:var(--bg);border-bottom:1px solid var(--line)}
+.chip{display:flex;align-items:center;gap:6px;font-family:var(--font);font-size:12px;color:var(--text);background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:4px 12px;cursor:pointer}
+.chip.off{opacity:.4;text-decoration:line-through}
+.chip-dot{width:8px;height:8px;border-radius:50%}
+
+/* ── stats strip ── */
+.stats{display:flex;gap:18px;align-items:center;padding:8px 20px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+.stats b{color:var(--text);font-weight:600}
+
 /* ── main split ── */
-#main{display:grid;grid-template-columns:42% 1fr;overflow:hidden}
-/* ── graph pane ── */
-#graph-pane{border-right:1px solid #30363d;overflow:hidden;position:relative;background:#0d1117}
-#graph-svg{width:100%;height:100%;cursor:grab}
-#graph-svg:active{cursor:grabbing}
-/* ── SVG nodes ── */
-.node-g{cursor:pointer}
-.node-g text{pointer-events:none;user-select:none}
-.node-label{font-size:10px;fill:#8b949e;text-anchor:middle}
-.node-abbr{font-size:13px;font-weight:700;fill:#fff;text-anchor:middle;dominant-baseline:central}
-.selected-ring{stroke:#58a6ff;stroke-width:3;fill:none;pointer-events:none}
-.loop-ring{stroke:#f0883e;stroke-width:2;fill:none;opacity:.9;animation:pulse 1.4s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:.9;r:28}50%{opacity:.4;r:31}}
-/* ── detail pane ── */
-#detail-pane{overflow-y:auto;padding:0;background:#161b22}
-#detail-header{padding:16px 18px;border-bottom:1px solid #30363d;background:#21262d}
-#detail-header h2{font-size:14px;color:#e6edf3;margin-bottom:4px}
-#detail-header .meta{font-size:11px;color:#8b949e;display:flex;gap:16px;flex-wrap:wrap}
-#detail-header .meta span b{color:#c9d1d9}
-.badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;margin-right:6px}
-.badge-session{background:#1f4e8c;color:#58a6ff}
-.badge-step{background:#1c2a1e;color:#3fb950}
-.badge-router{background:#3d2b00;color:#f0883e}
-.badge-llm_call{background:#1a3a1a;color:#56d364}
-.badge-tool_call{background:#2d1f5e;color:#bc8cff}
-.badge-handoff{background:#3d1a1a;color:#f85149}
-.badge-session_end{background:#1f2430;color:#8b949e}
-.loop-badge{background:#3d2000;color:#f0883e;font-size:10px;padding:1px 5px;border-radius:4px;margin-left:6px}
-/* ── accordion sections ── */
-.section{border-bottom:1px solid #21262d}
-.section-hdr{padding:10px 18px;font-size:12px;font-weight:600;color:#8b949e;cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none}
-.section-hdr:hover{background:#21262d;color:#c9d1d9}
-.section-hdr .chevron{transition:transform .15s}
-.section.open .section-hdr .chevron{transform:rotate(90deg)}
-.section-body{padding:0 18px 14px;display:none;font-size:11px}
-.section.open .section-body{display:block}
-/* ── kv table ── */
-.kv-table{width:100%;border-collapse:collapse;margin-top:6px}
-.kv-table td{padding:3px 6px;vertical-align:top;border-bottom:1px solid #21262d}
-.kv-table td:first-child{color:#8b949e;white-space:nowrap;width:38%;padding-right:10px}
-.kv-table td:last-child{color:#e6edf3;word-break:break-all}
-pre.json-block{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-size:10.5px;color:#e6edf3;margin-top:6px;max-height:320px;overflow-y:auto}
-.copy-btn{float:right;background:#21262d;border:1px solid #30363d;color:#8b949e;padding:2px 7px;border-radius:4px;cursor:pointer;font-size:10px}
-.copy-btn:hover{color:#c9d1d9}
-/* ── empty / loading states ── */
-#detail-empty{padding:40px;text-align:center;color:#8b949e;font-size:12px}
+.main{flex:1;display:grid;grid-template-columns:minmax(280px,38%) 1fr;min-height:0}
+.rail{overflow-y:auto;border-right:1px solid var(--line);background:var(--panel);padding:14px 12px}
+.detail{overflow-y:auto;background:var(--bg)}
+
+/* ── explorer chain ── */
+.chain{display:flex;flex-direction:column}
+.rowwrap{display:flex;flex-direction:column;align-items:stretch}
+.row{display:flex;align-items:center;gap:11px;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.row:hover{border-color:#d0d0d5}
+.row.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.row.loop{border-color:#f0b8a0}
+.row-dot{width:11px;height:11px;border-radius:50%;flex:none}
+.row-dot.sm{width:8px;height:8px}
+.row-main{flex:1;min-width:0}
+.row-top{display:flex;align-items:center;gap:7px}
+.row-name{font-weight:600;font-size:13px}
+.row-sub{font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.step-tag{font-size:10px;font-weight:600;color:var(--muted);background:var(--bg2);border-radius:5px;padding:1px 6px}
+.loop-tag{font-size:10px;font-weight:600;color:var(--amber);background:#fff3e6;border-radius:5px;padding:1px 6px}
+.connector{width:2px;height:14px;background:var(--line);margin:0 auto}
+.delta{font-family:var(--mono);font-size:11px;font-weight:600;border-radius:6px;padding:2px 7px;white-space:nowrap}
+.delta.pos{color:var(--pos);background:var(--pos-bg)}
+.delta.neg{color:var(--neg);background:var(--neg-bg)}
+
+/* ── tree ── */
+.tree{display:flex;flex-direction:column;gap:1px}
+.tree-group{display:flex;align-items:center;gap:8px;padding:8px 12px;font-weight:600;font-size:12px;color:var(--muted);cursor:pointer;border-radius:8px}
+.tree-group:hover{background:var(--bg2)}
+.tleaf{display:flex;align-items:center;gap:9px;padding:7px 12px;border-radius:8px;cursor:pointer}
+.tleaf:hover{background:var(--bg2)}
+.tleaf.sel{background:var(--accent-soft)}
+.tleaf-name{font-weight:500;font-size:12px}
+.tleaf-sub{font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.twist{display:inline-block;transition:transform .12s;color:var(--muted);font-size:10px}
+.twist.open{transform:rotate(90deg)}
+
+/* ── detail ── */
+.dwrap{display:flex;flex-direction:column}
+.dhead{padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+.dbadge{display:inline-block;color:#fff;font-size:11px;font-weight:700;border-radius:7px;padding:3px 9px;margin-right:8px;vertical-align:middle}
+.dhead h2{font-size:18px;font-weight:600;margin-top:12px;word-break:break-word}
+.dmeta{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+
+/* ── context window card ── */
+.ctxcard{margin:16px 22px;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
+.ctx-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+.ctx-label{font-weight:600;font-size:12px}
+.ctx-figs{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.ctx-bar{height:8px;background:var(--line);border-radius:5px;overflow:hidden}
+.ctx-fill{height:100%;border-radius:5px;transition:width .2s}
+.ctx-fill.blue{background:var(--accent)}
+.ctx-fill.amber{background:#ff9f0a}
+.ctx-fill.red{background:var(--neg)}
+.ctx-deltas{display:flex;gap:10px;margin-top:10px}
+
+/* ── sections ── */
+.section{border-bottom:1px solid var(--line)}
+.shead{display:flex;align-items:center;gap:8px;padding:12px 22px;font-weight:600;font-size:12px;cursor:pointer;user-select:none}
+.shead:hover{background:var(--bg2)}
+.sbody{padding:0 22px 16px}
+.kv{width:100%;border-collapse:collapse;font-size:12px}
+.kv td{padding:5px 8px;vertical-align:top;border-bottom:1px solid var(--bg2)}
+.kk{color:var(--muted);white-space:nowrap;width:34%;font-family:var(--mono);font-size:11px}
+.kv-v{word-break:break-word}
+.jb{position:relative;margin-top:2px}
+.jb pre{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:11px 12px;font-family:var(--mono);font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto}
+.copy{position:absolute;top:7px;right:7px;font-family:var(--font);font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer;opacity:0;transition:opacity .12s}
+.jb:hover .copy{opacity:1}
+.copy:hover{color:var(--accent);border-color:var(--accent)}
+
+/* scrollbars */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#d6d6db;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#bcbcc4}
 </style>
 </head>
 <body>
-<div id="topbar">
-  <select id="session-select" onchange="loadSession(this.value)"></select>
-  <div id="session-meta">Select a session to explore</div>
-</div>
-<div id="main">
-  <div id="graph-pane">
-    <svg id="graph-svg">
-      <defs>
-        <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L8,3 z" fill="#30363d"/>
-        </marker>
-      </defs>
-      <g id="graph-root"></g>
-    </svg>
-  </div>
-  <div id="detail-pane">
-    <div id="detail-empty">Click a node to inspect it</div>
-  </div>
-</div>
-
+<div id="app"></div>
+<script>/*__VENDOR__*/</script>
 <script>
 'use strict';
-// ── state ──
-let sessions=[], cur=null, selectedId=null;
-let panX=20, panY=20, scale=1, dragging=false, dragStart={x:0,y:0};
+const { h, render } = window.preact;
+const { useState, useEffect, useRef, useMemo, useCallback } = window.preactHooks;
+const html = window.htm.bind(h);
 
-// ── boot ──
-async function boot(){
-  sessions = await apiFetch('/api/sessions');
-  const sel = document.getElementById('session-select');
-  sessions.forEach(s=>{
-    const o=document.createElement('option');
-    o.value=s.session_id;
-    o.textContent=`${s.label||s.session_id} — ${s.model||'?'} — ${(s.started_at||'').slice(0,16)}`;
-    sel.appendChild(o);
+// ── node type metadata ──
+const TYPE_META = {
+  session:        { name:'Session',           dot:'#0a84ff' },
+  router:         { name:'Tool Routing',      dot:'#ff9f0a' },
+  llm_call:       { name:'LLM Call',          dot:'#30b350' },
+  tool_call:      { name:'Tool Dispatch',     dot:'#a05cf0' },
+  handoff:        { name:'Context Preflight', dot:'#ff453a' },
+  token_tracking: { name:'Token Tracking',    dot:'#1aa3c4' },
+  finish_check:   { name:'Finish Check',      dot:'#caa400' },
+  session_end:    { name:'End',               dot:'#8e8e93' },
+};
+const meta = t => TYPE_META[t] || { name:t, dot:'#8e8e93' };
+const fmtNum = n => (n == null ? '—' : Number(n).toLocaleString('en-US'));
+
+function rowSub(n){
+  const a = n.attributes || {};
+  if(n.type==='tool_call')   return a.name || '';
+  if(n.type==='llm_call')    return (a.kind && a.kind!=='main' ? a.kind+' · ' : '') + (a.latency_s!=null ? a.latency_s+'s' : '');
+  if(n.type==='router')      return a.phase || '';
+  if(n.type==='session')     return a.model || '';
+  if(n.type==='session_end') return a.stop_reason || '';
+  if(n.type==='finish_check')return a.finish_reason || '';
+  if(n.type==='handoff')     return a.path || '';
+  return '';
+}
+
+async function getJSON(url){ const r = await fetch(url); if(!r.ok) throw new Error(r.status+' '+url); return r.json(); }
+
+// ── app ──
+function App(){
+  const [sessions,setSessions] = useState([]);
+  const [sid,setSid]           = useState(null);
+  const [data,setData]         = useState(null);
+  const [sel,setSel]           = useState(null);
+  const [tab,setTab]           = useState('explorer');
+  const [hidden,setHidden]     = useState(()=>new Set());
+  const [showFilters,setShowFilters] = useState(false);
+  const [collapsed,setCollapsed]     = useState(()=>new Set());
+
+  useEffect(()=>{ getJSON('/api/sessions').then(s=>{ setSessions(s); if(s.length) setSid(s[0].session_id); }); },[]);
+  useEffect(()=>{ if(!sid) return; setData(null); setSel(null); getJSON('/api/session/'+sid).then(setData); },[sid]);
+
+  const visibleIds = useMemo(()=>{
+    if(!data) return [];
+    return data.order.filter(id=>{ const n=data.nodes[id]; return n && !hidden.has(n.type); });
+  },[data,hidden]);
+
+  useEffect(()=>{
+    if(data && visibleIds.length && (!sel || !visibleIds.includes(sel))) setSel(visibleIds[0]);
+  },[data,visibleIds]);
+
+  const move = useCallback(dir=>{
+    if(!visibleIds.length) return;
+    const i = visibleIds.indexOf(sel);
+    const ni = Math.max(0, Math.min(visibleIds.length-1, (i<0?0:i+dir)));
+    setSel(visibleIds[ni]);
+  },[visibleIds,sel]);
+
+  useEffect(()=>{
+    const onKey = e=>{
+      if(e.target && /^(input|select|textarea)$/i.test(e.target.tagName)) return;
+      if(e.key==='ArrowDown'||e.key==='j'){ e.preventDefault(); move(1); }
+      else if(e.key==='ArrowUp'||e.key==='k'){ e.preventDefault(); move(-1); }
+    };
+    window.addEventListener('keydown',onKey);
+    return ()=>window.removeEventListener('keydown',onKey);
+  },[move]);
+
+  if(!sessions.length) return html`<div class="empty">No sessions found. Run the agent, then reload.</div>`;
+
+  return html`
+    <${Header} sessions=${sessions} sid=${sid} data=${data} onSession=${setSid}/>
+    <${Toolbar} tab=${tab} setTab=${setTab} showFilters=${showFilters} setShowFilters=${setShowFilters}
+                hidden=${hidden} setHidden=${setHidden} data=${data}/>
+    ${data ? html`<${Stats} data=${data}/>` : null}
+    <div class="main">
+      <div class="rail">
+        ${!data ? html`<div class="empty">Loading…</div>`
+          : tab==='explorer'
+            ? html`<${Explorer} data=${data} ids=${visibleIds} sel=${sel} onSel=${setSel}/>`
+            : html`<${Tree} data=${data} hidden=${hidden} sel=${sel} onSel=${setSel}
+                            collapsed=${collapsed} setCollapsed=${setCollapsed}/>`}
+      </div>
+      <div class="detail">
+        ${data && sel && data.nodes[sel]
+          ? html`<${Detail} node=${data.nodes[sel]}/>`
+          : html`<div class="empty">Select a node to inspect how it processes the RunContext.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function Header({sessions,sid,data,onSession}){
+  const label = data ? data.label : '…';
+  return html`
+    <header class="topbar">
+      <div class="crumbs">
+        <span class="crumb-root">Traces</span>
+        <span class="sep">›</span>
+        <span class="crumb-cur">${label}</span>
+        ${sid ? html`<span class="sid" title="Click to copy session id"
+                        onClick=${()=>navigator.clipboard && navigator.clipboard.writeText(sid)}>${sid}</span>` : null}
+      </div>
+      <select class="sess-select" value=${sid||''} onChange=${e=>{ onSession(e.target.value); e.target.blur(); }}>
+        ${sessions.map(s=>html`<option key=${s.session_id} value=${s.session_id}>
+          ${(s.label||s.session_id)} · ${s.model||'?'} · ${(s.started_at||'').slice(0,16)}</option>`)}
+      </select>
+    </header>`;
+}
+
+function Toolbar({tab,setTab,showFilters,setShowFilters,hidden,setHidden,data}){
+  const types = data ? [...new Set(data.order.map(id=>data.nodes[id] && data.nodes[id].type).filter(Boolean))] : [];
+  const toggle = t=>{ const n=new Set(hidden); n.has(t)?n.delete(t):n.add(t); setHidden(n); };
+  return html`
+    <div class="toolbar">
+      <div class="tabs">
+        <button class=${'tab'+(tab==='explorer'?' on':'')} onClick=${()=>setTab('explorer')}>Explorer</button>
+        <button class=${'tab'+(tab==='tree'?' on':'')} onClick=${()=>setTab('tree')}>Tree</button>
+      </div>
+      <button class=${'filter-btn'+(showFilters?' on':'')} onClick=${()=>setShowFilters(!showFilters)}>
+        Filters${hidden.size ? html`<span class="badge-count">${hidden.size}</span>` : null}
+      </button>
+    </div>
+    ${showFilters ? html`
+      <div class="filters">
+        ${types.map(t=>html`<button key=${t} class=${'chip'+(hidden.has(t)?' off':'')} onClick=${()=>toggle(t)}>
+          <span class="chip-dot" style=${{background:meta(t).dot}}></span>${meta(t).name}</button>`)}
+      </div>` : null}
+  `;
+}
+
+function Stats({data}){
+  const a = data.analytics || {};
+  const cost = a.cost_usd!=null ? '$'+Number(a.cost_usd).toFixed(4) : '—';
+  return html`<div class="stats">
+    <span><b>${data.model||'?'}</b></span>
+    <span><b>${data.steps}</b> steps</span>
+    <span><b>${fmtNum(a.total_tokens||0)}</b> tokens</span>
+    <span><b>${cost}</b></span>
+    ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
+    ${data.stop_reason ? html`<span class="muted">stop: ${data.stop_reason}</span>` : null}
+  </div>`;
+}
+
+function DeltaChip({cs}){
+  if(!cs || !cs.measured || !cs.delta) return null;
+  const up = cs.delta>0;
+  return html`<span class=${'delta '+(up?'pos':'neg')}>${up?'+':'−'}${fmtNum(Math.abs(cs.delta))}</span>`;
+}
+
+function Explorer({data,ids,sel,onSel}){
+  if(!ids.length) return html`<div class="empty">All node types are filtered out.</div>`;
+  return html`<div class="chain">
+    ${ids.map((id,i)=>html`<${Row} key=${id} node=${data.nodes[id]} selected=${id===sel}
+                             last=${i===ids.length-1} onClick=${()=>onSel(id)}/>`)}
+  </div>`;
+}
+
+function Row({node,selected,last,onClick}){
+  const ref = useRef();
+  useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
+  const m = meta(node.type), a = node.attributes||{}, cs = node.ctx_state||{};
+  return html`<div class="rowwrap">
+    <div ref=${ref} class=${'row'+(selected?' sel':'')+(node.loop_flag?' loop':'')} onClick=${onClick}>
+      <span class="row-dot" style=${{background:m.dot}}></span>
+      <div class="row-main">
+        <div class="row-top">
+          <span class="row-name">${m.name}</span>
+          ${a.step ? html`<span class="step-tag">S${a.step}</span>` : null}
+          ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
+        </div>
+        ${rowSub(node) ? html`<div class="row-sub">${rowSub(node)}</div>` : null}
+      </div>
+      <${DeltaChip} cs=${cs}/>
+    </div>
+    ${last ? null : html`<div class="connector"></div>`}
+  </div>`;
+}
+
+function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
+  useEffect(()=>{
+    const n = data.nodes[sel];
+    const step = n && n.attributes && n.attributes.step;
+    if(step && collapsed.has(step)){ const c=new Set(collapsed); c.delete(step); setCollapsed(c); }
+  },[sel]);
+
+  const top=[], end=[], byStep=new Map();
+  data.order.forEach(id=>{
+    const n = data.nodes[id]; if(!n || hidden.has(n.type)) return;
+    if(n.type==='session') top.push(id);
+    else if(n.type==='session_end') end.push(id);
+    else { const s = n.attributes && n.attributes.step;
+      if(s){ if(!byStep.has(s)) byStep.set(s,[]); byStep.get(s).push(id); } else top.push(id); }
   });
-  if(sessions.length) loadSession(sessions[0].session_id);
+  const toggle = k=>{ const c=new Set(collapsed); c.has(k)?c.delete(k):c.add(k); setCollapsed(c); };
+
+  return html`<div class="tree">
+    ${top.map(id=>html`<${TreeLeaf} key=${id} node=${data.nodes[id]} depth=${0} sel=${sel} onSel=${onSel}/>`)}
+    ${[...byStep.keys()].sort((a,b)=>a-b).map(step=>{
+      const open = !collapsed.has(step);
+      return html`<div key=${'g'+step}>
+        <div class="tree-group" onClick=${()=>toggle(step)}>
+          <span class=${'twist'+(open?' open':'')}>▸</span> Step ${step}
+          <span class="muted">${byStep.get(step).length}</span>
+        </div>
+        ${open ? byStep.get(step).map(id=>html`<${TreeLeaf} key=${id} node=${data.nodes[id]} depth=${1} sel=${sel} onSel=${onSel}/>`) : null}
+      </div>`;
+    })}
+    ${end.map(id=>html`<${TreeLeaf} key=${id} node=${data.nodes[id]} depth=${0} sel=${sel} onSel=${onSel}/>`)}
+  </div>`;
 }
 
-async function loadSession(sid){
-  cur = await apiFetch('/api/session/'+sid);
-  selectedId=null;
-  panX=20; panY=20; scale=1;
-  renderGraph();
-  renderSessionMeta();
-  showEmpty();
+function TreeLeaf({node,depth,sel,onSel}){
+  const ref = useRef(), selected = node.id===sel, m = meta(node.type);
+  useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
+  return html`<div ref=${ref} class=${'tleaf'+(selected?' sel':'')}
+                   style=${{paddingLeft:(12+depth*18)+'px'}} onClick=${()=>onSel(node.id)}>
+    <span class="row-dot sm" style=${{background:m.dot}}></span>
+    <span class="tleaf-name">${m.name}</span>
+    ${rowSub(node) ? html`<span class="muted tleaf-sub">${rowSub(node)}</span>` : html`<span class="tleaf-sub"></span>`}
+    <${DeltaChip} cs=${node.ctx_state}/>
+  </div>`;
 }
 
-async function apiFetch(url){
-  const r=await fetch(url);
-  if(!r.ok) throw new Error(r.status+' '+url);
-  return r.json();
+function Detail({node}){
+  const m = meta(node.type), a = node.attributes||{};
+  return html`<div class="dwrap">
+    <div class="dhead">
+      <span class="dbadge" style=${{background:m.dot}}>${m.name}</span>
+      ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
+      <h2>${node.label}</h2>
+      <div class="dmeta">
+        ${a.started_at ? html`<span>🕘 ${String(a.started_at).slice(11,19) || a.started_at}</span>` : null}
+        ${a.latency_s!=null ? html`<span>⚡ ${a.latency_s}s</span>` : null}
+        ${a.step ? html`<span>Step ${a.step}</span>` : null}
+      </div>
+    </div>
+    <${CtxCard} cs=${node.ctx_state}/>
+    <${Section} title="Inputs" data=${node.inputs} open=${true}/>
+    <${Section} title="Outputs" data=${node.outputs} open=${true}/>
+    <${Section} title="Attributes" data=${a} open=${false}/>
+  </div>`;
 }
 
-// ── session meta bar ──
-function renderSessionMeta(){
-  if(!cur) return;
-  const a=cur.analytics||{};
-  const cost=a.cost_usd!=null?'$'+a.cost_usd.toFixed(4):'—';
-  const tok=(a.total_tokens||0).toLocaleString();
-  document.getElementById('session-meta').innerHTML=
-    `<b>${escHtml(cur.label)}</b> &nbsp;·&nbsp; ${escHtml(cur.model||'?')} &nbsp;·&nbsp; `+
-    `steps: <b>${escHtml(String(cur.steps))}</b> &nbsp;·&nbsp; tokens: <b>${tok}</b> &nbsp;·&nbsp; `+
-    `cost: <b>${cost}</b>`+
-    (a.loop_count?` &nbsp;·&nbsp; <span style="color:#f0883e">⚠ ${a.loop_count} loop(s)</span>`:'');
+function CtxCard({cs}){
+  if(!cs || cs.tokens==null) return null;
+  const pct = cs.pct!=null ? cs.pct : 0;
+  const lvl = pct>=90 ? 'red' : pct>=70 ? 'amber' : 'blue';
+  return html`<div class="ctxcard">
+    <div class="ctx-top">
+      <span class="ctx-label">Context window</span>
+      <span class="ctx-figs">${fmtNum(cs.tokens)}${cs.window ? ' / '+fmtNum(cs.window) : ''}${cs.pct!=null ? ' · '+cs.pct+'%' : ''}</span>
+    </div>
+    <div class="ctx-bar"><div class=${'ctx-fill '+lvl} style=${{width:Math.min(100,pct)+'%'}}></div></div>
+    <div class="ctx-deltas">
+      ${cs.added ? html`<span class="delta pos">+${fmtNum(cs.added)} tokens</span>` : null}
+      ${cs.removed ? html`<span class="delta neg">−${fmtNum(cs.removed)} tokens</span>` : null}
+      ${(!cs.added && !cs.removed) ? html`<span class="muted">no change at this node</span>` : null}
+    </div>
+  </div>`;
 }
 
-// ── SVG graph ──
-const SVG_NS='http://www.w3.org/2000/svg';
-
-function renderGraph(){
-  const root=document.getElementById('graph-root');
-  root.innerHTML='';
-  if(!cur) return;
-  const edgeG=svgEl('g'); root.appendChild(edgeG);
-  const nodeG=svgEl('g'); root.appendChild(nodeG);
-  cur.edges.forEach(([a,b])=>edgeG.appendChild(makeEdge(a,b)));
-  Object.values(cur.nodes).forEach(n=>nodeG.appendChild(makeNodeG(n)));
-  applyTransform();
+function Section({title,data,open}){
+  const [o,setO] = useState(open);
+  const isEmpty = data==null
+    || (typeof data==='object' && !Array.isArray(data) && Object.keys(data).length===0)
+    || (Array.isArray(data) && !data.length)
+    || (typeof data==='string' && !data.length);
+  return html`<div class=${'section'+(o?' open':'')}>
+    <div class="shead" onClick=${()=>setO(!o)}>
+      <span class=${'twist'+(o?' open':'')}>▸</span> ${title}
+      ${isEmpty ? html`<span class="muted" style="font-weight:400">— empty</span>` : null}
+    </div>
+    ${o && !isEmpty ? html`<div class="sbody"><${DataView} data=${data}/></div>` : null}
+  </div>`;
 }
 
-function makeEdge(fromId, toId){
-  const a=cur.nodes[fromId], b=cur.nodes[toId];
-  if(!a||!b) return svgEl('g');
-  const mx=(a.x+b.x)/2;
-  const p=svgEl('path');
-  p.setAttribute('d',`M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`);
-  p.setAttribute('stroke','#30363d');
-  p.setAttribute('fill','none');
-  p.setAttribute('stroke-width','1.5');
-  p.setAttribute('marker-end','url(#arr)');
-  return p;
-}
-
-function makeNodeG(node){
-  const g=svgEl('g');
-  g.classList.add('node-g');
-  g.setAttribute('transform',`translate(${node.x},${node.y})`);
-  g.setAttribute('data-id',node.id);
-  if(node.loop_flag){
-    const ring=svgEl('circle'); ring.setAttribute('r','28'); ring.classList.add('loop-ring'); g.appendChild(ring);
+function DataView({data}){
+  if(data==null) return html`<span class="muted">—</span>`;
+  if(typeof data==='string') return html`<${JsonBlock} text=${data}/>`;
+  if(Array.isArray(data)) return html`<${JsonBlock} text=${JSON.stringify(data,null,2)}/>`;
+  if(typeof data==='object'){
+    const keys = Object.keys(data);
+    return html`<table class="kv">${keys.map(k=>html`<tr key=${k}>
+      <td class="kk">${k}</td><td class="kv-v"><${Value} v=${data[k]}/></td></tr>`)}</table>`;
   }
-  g.appendChild(makeShape(node));
-  const abbr=svgEl('text'); abbr.classList.add('node-abbr'); abbr.setAttribute('y','0'); abbr.textContent=nodeAbbr(node.type); g.appendChild(abbr);
-  const lbl=svgEl('text'); lbl.classList.add('node-label'); lbl.setAttribute('y','34'); lbl.textContent=truncate(node.label,22); g.appendChild(lbl);
-  g.addEventListener('click',e=>{e.stopPropagation(); selectNode(node.id);});
-  return g;
+  return html`<span>${String(data)}</span>`;
 }
 
-function makeShape(node){
-  const c=node.color;
-  if(node.shape==='diamond'){
-    const p=svgEl('polygon'); p.setAttribute('points','0,-24 24,0 0,24 -24,0'); p.setAttribute('fill',c); p.setAttribute('rx','3'); return p;
-  }
-  if(node.shape==='circle'){
-    const ci=svgEl('circle'); ci.setAttribute('r','22'); ci.setAttribute('fill',c); return ci;
-  }
-  if(node.shape==='square'){
-    const r=svgEl('rect'); r.setAttribute('x','-20'); r.setAttribute('y','-20'); r.setAttribute('width','40'); r.setAttribute('height','40'); r.setAttribute('rx','5'); r.setAttribute('fill',c); return r;
-  }
-  // rect (step / session / handoff)
-  const r=svgEl('rect'); r.setAttribute('x','-42'); r.setAttribute('y','-16'); r.setAttribute('width','84'); r.setAttribute('height','32'); r.setAttribute('rx','6'); r.setAttribute('fill',c); return r;
+function Value({v}){
+  if(v==null) return html`<span class="muted">null</span>`;
+  if(typeof v==='object') return html`<${JsonBlock} text=${JSON.stringify(v,null,2)}/>`;
+  if(typeof v==='string' && v.length>80) return html`<${JsonBlock} text=${v}/>`;
+  return html`<span>${String(v)}</span>`;
 }
 
-function nodeAbbr(type){
-  return {session:'S',step:'St',router:'TR',llm_call:'LC',tool_call:'TD',handoff:'CP',session_end:'E',token_tracking:'TT',finish_check:'FC'}[type]||'?';
+function JsonBlock({text}){
+  const [copied,setCopied] = useState(false);
+  const copy = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(text)
+    .then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),1200); }); };
+  return html`<div class="jb">
+    <button class="copy" onClick=${copy}>${copied?'✓ copied':'copy'}</button>
+    <pre>${text}</pre>
+  </div>`;
 }
 
-function truncate(s,n){return s&&s.length>n?s.slice(0,n-1)+'…':s||'';}
-
-// ── selection ──
-function selectNode(id){
-  selectedId=id;
-  document.querySelectorAll('.selected-ring').forEach(e=>e.remove());
-  const g=document.querySelector(`[data-id="${CSS.escape(id)}"]`);
-  if(g){
-    const ring=svgEl('circle'); ring.setAttribute('r','28'); ring.classList.add('selected-ring'); g.prepend(ring);
-  }
-  renderDetail(cur.nodes[id]);
-}
-
-// ── detail panel ──
-function renderDetail(node){
-  if(!node){showEmpty();return;}
-  const dp=document.getElementById('detail-pane');
-  dp.innerHTML='';
-  dp.appendChild(makeDetailHeader(node));
-  dp.appendChild(makeSection('Inputs', node.inputs, true));
-  dp.appendChild(makeSection('Outputs', node.outputs, true));
-  dp.appendChild(makeSection('Attributes', node.attributes, true));
-}
-
-function makeDetailHeader(node){
-  const div=document.createElement('div'); div.id='detail-header';
-  const badge=`<span class="badge badge-${node.type}">${node.type}</span>`;
-  const loop=node.loop_flag?'<span class="loop-badge">⚠ loop</span>':'';
-  const h2=document.createElement('h2'); h2.innerHTML=badge+loop+' '+escHtml(node.label); div.appendChild(h2);
-  const meta=document.createElement('div'); meta.className='meta';
-  const a=node.attributes||{};
-  if(a.started_at) meta.innerHTML+=`<span>⏱ <b>${escHtml(String(a.started_at))}</b></span>`;
-  if(a.latency_s!=null) meta.innerHTML+=`<span>⚡ <b>${escHtml(String(a.latency_s))}s</b></span>`;
-  if(a.prompt_tokens!=null) meta.innerHTML+=`<span>📥 <b>${(a.prompt_tokens||0).toLocaleString()} tok</b></span>`;
-  if(a.completion_tokens!=null) meta.innerHTML+=`<span>📤 <b>${(a.completion_tokens||0).toLocaleString()} tok</b></span>`;
-  if(a.ctx_pct!=null) meta.innerHTML+=`<span>🪟 <b>${escHtml(String(a.ctx_pct))}%</b> ctx</span>`;
-  div.appendChild(meta);
-  return div;
-}
-
-function makeSection(title, data, startOpen){
-  const sec=document.createElement('div'); sec.className='section'+(startOpen?' open':'');
-  const hdr=document.createElement('div'); hdr.className='section-hdr';
-  hdr.innerHTML=`<span>${title}</span><span class="chevron">▶</span>`;
-  hdr.addEventListener('click',()=>sec.classList.toggle('open'));
-  sec.appendChild(hdr);
-  const body=document.createElement('div'); body.className='section-body';
-  body.appendChild(renderData(data));
-  sec.appendChild(body);
-  return sec;
-}
-
-function renderData(data){
-  if(data==null) return txt('—');
-  if(typeof data==='string') return renderString(data);
-  if(Array.isArray(data)) return renderString(JSON.stringify(data,null,2));
-  if(typeof data==='object') return renderKV(data);
-  return txt(String(data));
-}
-
-function renderKV(obj){
-  const keys=Object.keys(obj);
-  if(!keys.length) return txt('(empty)');
-  const tbl=document.createElement('table'); tbl.className='kv-table';
-  keys.forEach(k=>{
-    const tr=document.createElement('tr');
-    const td1=document.createElement('td'); td1.textContent=k;
-    const td2=document.createElement('td');
-    const v=obj[k];
-    if(v==null){td2.style.color='#8b949e'; td2.textContent='null';}
-    else if(typeof v==='string'&&v.length>80) td2.appendChild(makeJsonBlock(v));
-    else if(typeof v==='object') td2.appendChild(makeJsonBlock(JSON.stringify(v,null,2)));
-    else{td2.textContent=String(v);}
-    tr.appendChild(td1); tr.appendChild(td2); tbl.appendChild(tr);
-  });
-  return tbl;
-}
-
-function renderString(s){
-  if(!s||s==='') return txt('(empty)');
-  return makeJsonBlock(s);
-}
-
-function makeJsonBlock(content){
-  const wrap=document.createElement('div');
-  const btn=document.createElement('button'); btn.className='copy-btn'; btn.textContent='copy';
-  btn.addEventListener('click',()=>navigator.clipboard.writeText(content).then(()=>{btn.textContent='✓';setTimeout(()=>btn.textContent='copy',1500);}));
-  const pre=document.createElement('pre'); pre.className='json-block'; pre.textContent=content;
-  wrap.appendChild(btn); wrap.appendChild(pre);
-  return wrap;
-}
-
-function txt(s){const sp=document.createElement('span');sp.style.color='#8b949e';sp.textContent=s;return sp;}
-
-function showEmpty(){
-  document.getElementById('detail-pane').innerHTML='<div id="detail-empty">Click a node to inspect it</div>';
-}
-
-function escHtml(s){
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── pan + zoom ──
-const svg=document.getElementById('graph-svg');
-svg.addEventListener('mousedown',e=>{dragging=true;dragStart={x:e.clientX-panX,y:e.clientY-panY};});
-window.addEventListener('mousemove',e=>{if(dragging){panX=e.clientX-dragStart.x;panY=e.clientY-dragStart.y;applyTransform();}});
-window.addEventListener('mouseup',()=>dragging=false);
-svg.addEventListener('wheel',e=>{
-  const delta=e.deltaY<0?1.1:0.91;
-  scale=Math.max(0.15,Math.min(5,scale*delta));
-  applyTransform(); e.preventDefault();
-},{passive:false});
-svg.addEventListener('click',()=>{selectedId=null;document.querySelectorAll('.selected-ring').forEach(e=>e.remove());showEmpty();});
-
-function applyTransform(){
-  document.getElementById('graph-root').setAttribute('transform',`translate(${panX},${panY}) scale(${scale})`);
-}
-
-function svgEl(tag){return document.createElementNS(SVG_NS,tag);}
-
-boot();
+render(html`<${App}/>`, document.getElementById('app'));
 </script>
 </body>
 </html>"""
+
+
+def _check_vendor_assets() -> None:
+    """Fail fast if any vendored UI library is missing (CONTRIBUTE.md §11/§29).
+
+    Called at server startup so a broken install surfaces immediately rather
+    than as a 500 on the first page load.
+
+    Raises:
+        MyCodingAgentError: If one or more files in ``_VENDOR_FILES`` are absent.
+    """
+    missing = [name for name in _VENDOR_FILES if not (_VENDOR_DIR / name).is_file()]
+    if missing:
+        raise MyCodingAgentError(
+            f"Trace Explorer UI assets missing from {_VENDOR_DIR}: {', '.join(missing)}",
+            hint="Reinstall the package (e.g. `uv sync`) to restore the vendored UI libraries.",
+        )
+
+
+@lru_cache(maxsize=1)
+def _vendor_js() -> str:
+    """Concatenate the vendored Preact/hooks/htm sources, load order preserved.
+
+    Returns:
+        The three UMD bundles joined with newlines, ready to inline into a
+        ``<script>`` element.
+    """
+    return "\n".join(
+        (_VENDOR_DIR / name).read_text(encoding="utf-8") for name in _VENDOR_FILES
+    )
+
+
+@lru_cache(maxsize=1)
+def _full_html() -> str:
+    """Return the page with the vendored libraries inlined.
+
+    Cached so the vendor files are read from disk only once per process.
+
+    Returns:
+        The complete HTML document served at ``/``.
+    """
+    return EMBEDDED_HTML.replace(_VENDOR_TOKEN, _vendor_js())
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -414,8 +598,8 @@ class _TraceHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_html(self) -> None:
-        """Write the embedded HTML viewer as the response body."""
-        body = EMBEDDED_HTML.encode()
+        """Write the embedded HTML viewer (with vendored libs) as the response."""
+        body = _full_html().encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -442,7 +626,11 @@ def run_server(
         port: TCP port to listen on.
         base_dir: Root directory containing session subdirectories.
             Defaults to ``.my_coding_agent`` under the current working directory.
+
+    Raises:
+        MyCodingAgentError: If the vendored UI assets are missing.
     """
+    _check_vendor_assets()
     _TraceHandler.base_dir = base_dir or Path(".my_coding_agent")
     server = HTTPServer((host, port), _TraceHandler)
     click.echo(f"Trace Explorer → http://{host}:{port}")
