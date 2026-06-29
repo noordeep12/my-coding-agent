@@ -32,3 +32,11 @@ class TokenTrackingNode(BaseNode):
             ctx_str,
         )
         ctx.signal = "CONTINUE"
+        ctx.recorder.record_token_tracking(
+            step=ctx.step_num,
+            prompt_tokens=step_prompt,
+            completion_tokens=step_completion,
+            total_tokens=step_total,
+            ctx_pct=step_prompt / cw * 100 if cw else 0.0,
+            context_window=cw,
+        )

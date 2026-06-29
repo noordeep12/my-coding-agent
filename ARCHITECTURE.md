@@ -49,6 +49,14 @@ src/my_coding_agent/
 │   ├── recorder.py              ← Recorder: events.jsonl writer + event type constants + contextvars
 │   └── schema.py                ← JSONL event row shape constants
 │
+├── viewer/                      ← Active read-side: parse events.jsonl + serve browser UI
+│   ├── __init__.py              ← Public surface: TraceNode, TraceSession, load_session, list_sessions
+│   ├── schema.py                ← TraceNode + TraceSession dataclasses (typed contracts)
+│   ├── pricing.py               ← Model price table + compute_cost() helper
+│   ├── reader.py                ← Parse events.jsonl → flat TraceSession; ctx-window deltas, loop detection, analytics
+│   ├── server.py                ← Localhost HTTP server + embedded single-page Trace Explorer UI (Preact + htm)
+│   └── _vendor/                 ← Offline-vendored UI libs (Preact, hooks, htm) — no CDN
+│
 └── utils/                       ← Generic helpers
     ├── __init__.py              ← Re-export facade (get_logger, print_banner, etc.)
     ├── exceptions.py            ← MyCodingAgentError hierarchy
@@ -79,7 +87,7 @@ Holds the LLM client and selects the relevant tool subset for a message via **`r
 
 ### `ToolExecutor` (`engine/tool_execution/` package)
 
-Constructed **per assistant message** (`ToolExecutor(message, llm)`). Runs `before_tool_call` → `invoke_tool` → `after_tool_call` per call. Returns tool messages and records. Normalizes all results into the canonical `{schema_version, tool, ok, output, error, metadata}` envelope.
+Constructed **per assistant message** (`ToolExecutor(message, llm, tools=ctx.all_tools)`). Runs `before_tool_call` → `invoke_tool` → `after_tool_call` per call. Returns tool messages and records. Normalizes all results into the canonical `{schema_version, tool, ok, output, error, metadata}` envelope. Forwards the run's toolset to the `ToolRegistry` so toolset-aware tools (notably `delegate`) can read it.
 
 ### `pipeline/` — DAG Building and Execution
 
@@ -132,7 +140,7 @@ A plain class whose methods are the tools the LLM can call:
 | `write_file(file_path, content)` | Writes a file, creating parent dirs |
 | `read_article(url)` | Fetches a URL and converts HTML → markdown |
 | `read_tool_artifact(tool_call_id)` | Retrieves a previously stored large output |
-| `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task |
+| `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task; the subagent inherits the parent toolset **minus `delegate`** (to prevent recursive spawning) |
 
 The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings.
 
@@ -140,7 +148,17 @@ The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatib
 
 Receives events emitted by `engine/` and `pipeline/`; never controls execution. Writing directly to `events.jsonl` is its only side-effect.
 
-- **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
+- **`recorder.py`** — event type constants (`SESSION_START`, `LLM_CALL`, `TOKEN_TRACKING`, `FINISH_CHECK`, etc.); `Recorder` appends events as newline-delimited JSON. Two `ContextVar`s (`current_session_id`, `current_recorder`) let delegated subagents record their parent link.
+
+### `viewer/` — Active Read-Side (Trace Explorer)
+
+The read-side of the observability system. Separated from `observability/` because it is **active** — it controls execution (HTTP server), renders output (embedded HTML), and manages file handles — whereas `observability/` is passive capture only (CONTRIBUTE.md §25).
+
+- **`schema.py`** — `TraceNode` and `TraceSession` dataclasses: the typed contracts produced by `reader.py` and consumed by `server.py`. `TraceNode.ctx_state` holds the per-node context-window snapshot — cumulative `composition` by `system`/`user`/`assistant`/`tool` role, the per-role `added` this node appended (with `added_total`/`removed` and an `estimated` flag), plus `tokens`/`window`/`pct`. Each node also carries `agent` (owning session id) and `depth` (call-tree nesting level), so sub-agent traces nest under the main agent. `TraceSession.order` is the execution-order node spine the UI walks for keyboard navigation.
+- **`pricing.py`** — model price table (USD per 1M tokens) and `compute_cost()` helper.
+- **`reader.py`** — parses `events.jsonl` into a **flat** `TraceSession`: every pipeline `BaseNode` subclass (`ToolRoutingNode`, `LLMCallNode`, `ToolDispatchNode`, `ContextPreflightNode`, `TokenTrackingNode`, `FinishCheckNode`) becomes one `TraceNode` in a single chain off the session root — there is no `step` wrapper node; the step number is carried as an attribute. Reconstructs the context window as four role buckets in execution order (`_assign_ctx_state`): each node contributes the message(s) it appends — the session seeds system + opening user, an LLM call adds its `assistant` output (exact `completion`), a tool dispatch adds its result (character-estimated via a session tokens/char ratio, since tool tokens are never recorded); composition re-anchors to each LLM call's real input snapshot (`_role_split` splits the provider's flat `prompt_tokens` across the four roles by character share). Each agent gets its **own** context window: `_assign_ctx_state` processes only its session's nodes, so delegate sub-agents (loaded recursively at an incremented `depth` and grafted inline) keep the independent windows computed by their own load. Also does loop detection and aggregate analytics; falls back to `session_data.json` for sessions without `events.jsonl`.
+- **`server.py`** — minimal stdlib `http.server` with three routes (`/`, `/api/sessions`, `/api/session/{id}`) and an embedded single-page Trace Explorer UI built with **Preact + htm** (vendored offline under `_vendor/`, injected inline — no CDN, no build step). The UI is a nested call-**Tree** (Main Agent at the root; each `delegate` spawns a collapsible **Subagent** group, with a coloured rail, nested where it was called — derived from each node's `agent`/`depth`) with keyboard navigation (auto-select), a type filter, and a single per-node **Context window** box (a system/user/assistant/tool composition bar + legend and the running total/%, badged with the owning agent for sub-agents since each tracks its own window); Tree labels summarise each node's contribution (e.g. *+196 assistant*). Node detail is type-aware: tool dispatches render a success/error status badge with command/output/error log blocks, and LLM calls render the response plus parsed tool calls (function + arguments) rather than raw JSON. CLI entry point: `my-coding-agent-traces [--port 7474] [--dir .my_coding_agent]`.
+- **`_vendor/`** — third-party UI libraries (Preact, Preact Hooks, htm) vendored as offline UMD bundles so the localhost viewer needs no internet. JS only; excluded from coverage.
 
 ### `utils/` — Generic Helpers
 
@@ -161,6 +179,7 @@ Every module and sub-module owns a `schema.py` for its typed contracts and shape
 | `engine/tool_registry/schema.py` | OpenAI tool definition JSON key names |
 | `pipeline/schema.py` | ROUTER event type constant |
 | `observability/schema.py` | JSONL row top-level key names |
+| `viewer/schema.py` | `TraceNode` + `TraceSession` dataclasses |
 
 ---
 

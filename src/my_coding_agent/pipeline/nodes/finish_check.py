@@ -19,3 +19,8 @@ class FinishCheckNode(BaseNode):
             ctx.signal = "STOP"
         else:
             ctx.signal = "CONTINUE"
+        ctx.recorder.record_finish_check(
+            step=ctx.step_num,
+            finish_reason=finish_reason,
+            signal=ctx.signal,
+        )

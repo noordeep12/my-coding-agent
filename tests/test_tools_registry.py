@@ -254,3 +254,29 @@ def test_delegate_excludes_delegate_tool_from_subagent(mocker):
     names = [t["function"]["name"] for t in passed_tools]
     assert "delegate" not in names
     assert "bash" in names
+
+
+def test_delegate_forwards_parent_toolset_via_executor(mocker, bare_llm):
+    """Regression: a subagent spawned through the executor's registry receives
+    the parent toolset minus ``delegate`` — never an empty list.
+
+    Guards the zero-tools bug end-to-end: ToolExecutor must forward its toolset
+    so ``delegate`` has a populated ``_tools`` to pass down.
+    """
+    from my_coding_agent.engine.tool_execution import ToolExecutor
+
+    fake_agent = _make_fake_agent(mocker, [{"role": "assistant", "content": "ok"}])
+    spy = mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    tools = [
+        {"function": {"name": "bash"}},
+        {"function": {"name": "read_file"}},
+        {"function": {"name": "delegate"}},
+    ]
+    executor = ToolExecutor({"tool_calls": []}, bare_llm, tools=tools)
+    executor.registry.delegate(task="t", context="c")
+    _, kwargs = spy.call_args
+    names = [t["function"]["name"] for t in kwargs["tools"]]
+    assert names == ["bash", "read_file"]

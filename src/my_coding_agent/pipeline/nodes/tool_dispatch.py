@@ -22,7 +22,7 @@ class ToolDispatchNode(BaseNode):
             return
 
         last_message = ctx.messages[-1]
-        executor = ToolExecutor(last_message, ctx.llm)
+        executor = ToolExecutor(last_message, ctx.llm, tools=ctx.all_tools)
         tool_messages, records = executor.run()
 
         ctx.tool_artifacts.update(executor.tool_artifacts)
