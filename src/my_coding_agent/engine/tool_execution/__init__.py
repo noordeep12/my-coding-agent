@@ -65,16 +65,26 @@ class ToolExecutor:
     ``tool_messages`` / ``tool_records`` it fills and the ``tool_artifacts`` it
     offloads. It owns no LLM calls — the LLM client is kept only for the session
     log path and the observability recorder (``llm._recorder``).
+
+    The agent's available ``tools`` are forwarded to the ``ToolRegistry`` so
+    toolset-aware tools (notably ``delegate``, which spawns a subagent with the
+    parent toolset minus ``delegate``) can read them. Omitting ``tools`` leaves
+    the registry with an empty toolset.
     """
 
-    def __init__(self, message: dict[str, Any], llm: "LLM") -> None:
+    def __init__(
+        self,
+        message: dict[str, Any],
+        llm: "LLM",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.tool_calls = message.get("tool_calls", []) or []
         self.tool_messages: list[dict[str, Any]] = []
         self.tool_records: list[dict[str, Any]] = []
         self.tool_artifacts: dict = {}
         self.llm = llm
         self.logger = get_logger(self.__class__.__name__)
-        self.registry = ToolRegistry(artifacts=self.tool_artifacts)
+        self.registry = ToolRegistry(artifacts=self.tool_artifacts, tools=tools or [])
 
     def run(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Dispatch every tool call, filling ``tool_messages`` / ``tool_records``.

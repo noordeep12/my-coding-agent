@@ -14,6 +14,7 @@ import pytest
 from my_coding_agent.engine.tool_execution import (
     MAX_TOOL_OUTPUT_CHARS,
     TOOL_SCHEMA_VERSION,
+    ToolExecutor,
     _extract_summary,
     args,
     build_tool_result,
@@ -311,3 +312,23 @@ def test_run_parse_error(bare_executor):
     messages, records = bare_executor.run()
     assert messages[0]["status"] == "error"
     assert records[0]["ok"] is False
+
+
+# --- toolset forwarding (regression: subagents were spawned with 0 tools) ----
+
+
+def test_executor_forwards_tools_to_registry(bare_llm):
+    """The registry must be built with the toolset passed to ToolExecutor.
+
+    Regression for the zero-tools bug: the executor built ToolRegistry without
+    forwarding ``tools``, so ``delegate`` saw an empty ``_tools`` and spawned
+    subagents with no tools at all.
+    """
+    tools = [{"function": {"name": "bash"}}, {"function": {"name": "delegate"}}]
+    executor = ToolExecutor({"tool_calls": []}, bare_llm, tools=tools)
+    assert executor.registry._tools == tools
+
+
+def test_executor_defaults_to_empty_toolset(bare_llm):
+    executor = ToolExecutor({"tool_calls": []}, bare_llm)
+    assert executor.registry._tools == []

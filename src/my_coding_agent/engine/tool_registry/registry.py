@@ -160,11 +160,13 @@ class ToolRegistry:
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
         system_prompt = (
-            "You are a focused code exploration subagent. You receive a task "
-            "and context from the main agent. Read files, run targeted bash "
-            "commands, understand what is asked, and write a clear structured "
-            "report. Do NOT modify any files. Be concise — the main agent only "
-            "needs the key findings."
+            "You are a focused subagent working for a main coding assistant. "
+            "You receive a task and context, and you have the same tools as the "
+            "main agent. Use tools when needed — read files, run targeted bash "
+            "commands, fetch URLs for web/research, and gather context — then "
+            "write a clear, structured report. The task may be code or file "
+            "exploration, web research, or context gathering. Do NOT modify any "
+            "files. Be concise — the main agent only needs the key findings."
         )
         agent = AgentNode(
             api_url=OMLX_API_URL,

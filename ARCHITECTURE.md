@@ -87,7 +87,7 @@ Holds the LLM client and selects the relevant tool subset for a message via **`r
 
 ### `ToolExecutor` (`engine/tool_execution/` package)
 
-Constructed **per assistant message** (`ToolExecutor(message, llm)`). Runs `before_tool_call` → `invoke_tool` → `after_tool_call` per call. Returns tool messages and records. Normalizes all results into the canonical `{schema_version, tool, ok, output, error, metadata}` envelope.
+Constructed **per assistant message** (`ToolExecutor(message, llm, tools=ctx.all_tools)`). Runs `before_tool_call` → `invoke_tool` → `after_tool_call` per call. Returns tool messages and records. Normalizes all results into the canonical `{schema_version, tool, ok, output, error, metadata}` envelope. Forwards the run's toolset to the `ToolRegistry` so toolset-aware tools (notably `delegate`) can read it.
 
 ### `pipeline/` — DAG Building and Execution
 
@@ -140,7 +140,7 @@ A plain class whose methods are the tools the LLM can call:
 | `write_file(file_path, content)` | Writes a file, creating parent dirs |
 | `read_article(url)` | Fetches a URL and converts HTML → markdown |
 | `read_tool_artifact(tool_call_id)` | Retrieves a previously stored large output |
-| `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task |
+| `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task; the subagent inherits the parent toolset **minus `delegate`** (to prevent recursive spawning) |
 
 The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings.
 
