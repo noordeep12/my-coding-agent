@@ -6,6 +6,8 @@ import json
 
 from my_coding_agent.observability.recorder import (
     FINISH_CHECK,
+    HANDOFF,
+    REPORT,
     TOKEN_TRACKING,
     Recorder,
 )
@@ -77,6 +79,32 @@ class TestRecordTokenTracking:
             context_window=8192,
         )
         ev = _read_events(path)[-1]
+        assert "started_at" in ev and ev["started_at"]
+
+
+class TestRecordReport:
+    def test_emits_report_type(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_report(content="final report")
+        ev = _read_events(path)[-1]
+        assert ev["type"] == REPORT
+
+    def test_report_type_is_distinct_from_handoff(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_handoff(
+            step=1, ctx_tokens=100, ctx_pct=50.0, content="h", path="/tmp/h.md"
+        )
+        rec.record_report(content="r")
+        events = _read_events(path)
+        assert events[-2]["type"] == HANDOFF
+        assert events[-1]["type"] == REPORT
+        assert HANDOFF != REPORT
+
+    def test_content_and_started_at_present(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_report(content="the report body")
+        ev = _read_events(path)[-1]
+        assert ev["content"] == "the report body"
         assert "started_at" in ev and ev["started_at"]
 
 

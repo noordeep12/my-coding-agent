@@ -675,3 +675,43 @@ class TestRoleSplit:
         assert _role_split([], 100) is None
         assert _role_split([{"role": "user", "content": "hi"}], None) is None
         assert _role_split([{"role": "user", "content": "hi"}], 0) is None
+
+
+# ── Subagent report node ──────────────────────────────────────────────────────
+
+
+class TestReportNode:
+    """The ``report`` event becomes a distinct node, separate from ``handoff``."""
+
+    def _load_with(self, tmp_path, sid, extra):
+        # Report is emitted after the run finishes, so it follows session_end in
+        # the stream — mirror that ordering here.
+        events = _minimal_events(sid) + extra
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        return load_session(ep)
+
+    def test_report_event_becomes_distinct_node(self, tmp_path):
+        session = self._load_with(
+            tmp_path,
+            "reportsession",
+            [
+                _ev(
+                    "report",
+                    content="the final report",
+                    started_at="2026-01-01T10:00:10",
+                )
+            ],
+        )
+        reports = [n for n in session.nodes.values() if n.type == "report"]
+        assert len(reports) == 1
+        node = reports[0]
+        assert node.type == "report" and node.type != "handoff"
+        assert node.label == "Subagent Report"
+        assert node.outputs["content"] == "the final report"
+
+    def test_no_report_node_without_report_event(self, tmp_path):
+        session = self._load_with(tmp_path, "noreport", [])
+        assert not any(n.type == "report" for n in session.nodes.values())

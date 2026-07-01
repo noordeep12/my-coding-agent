@@ -193,6 +193,7 @@ const TYPE_META = {
   llm_call:       { name:'LLM Call',          dot:'#30b350' },
   tool_call:      { name:'Tool Dispatch',     dot:'#a05cf0' },
   handoff:        { name:'Context Preflight', dot:'#ff453a' },
+  report:         { name:'Subagent Report',   dot:'#5e5ce6' },
   token_tracking: { name:'Token Tracking',    dot:'#1aa3c4' },
   finish_check:   { name:'Finish Check',      dot:'#caa400' },
   session_end:    { name:'Session End',       dot:'#8e8e93' },
@@ -447,7 +448,17 @@ function Detail({node,mainAgent}){
 function outputsBody(node){
   if(node.type==='tool_call') return html`<${ToolResult} node=${node}/>`;
   if(node.type==='llm_call')  return html`<${LlmOutputs} node=${node}/>`;
+  if(node.type==='report')    return html`<${ReportOutput} node=${node}/>`;
   return null;
+}
+
+function ReportOutput({node}){
+  const content = (node.outputs && node.outputs.content) || '';
+  return html`<div class="toolres">
+    ${content ? html`<div class="tr-block"><div class="tr-label">report</div>
+      <${LogBlock} text=${content}/></div>`
+      : html`<div class="tr-block muted">No report content recorded.</div>`}
+  </div>`;
 }
 
 function parseToolResult(raw){

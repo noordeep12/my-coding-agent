@@ -386,6 +386,21 @@ def _build_handoff_node(
     )
 
 
+def _build_report_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the subagent report node for a ``report`` event."""
+    node_id = f"{session_id}::step{step}::report"
+    return node_id, _make_node(
+        id=node_id,
+        type="report",
+        label="Subagent Report",
+        inputs={},
+        outputs={"content": ev.get("content", "")},
+        attributes={"started_at": ev.get("started_at", "")},
+    )
+
+
 def _build_token_tracking_node(
     ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
 ) -> tuple[str, TraceNode]:
@@ -433,6 +448,7 @@ _EVENT_BUILDERS: dict[str, EventBuilder] = {
     "llm_call": _build_llm_node,
     "tool_call": _build_tool_node,
     "handoff": _build_handoff_node,
+    "report": _build_report_node,
     "token_tracking": _build_token_tracking_node,
     "finish_check": _build_finish_check_node,
 }

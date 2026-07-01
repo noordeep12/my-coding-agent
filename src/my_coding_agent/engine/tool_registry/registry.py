@@ -179,16 +179,16 @@ class ToolRegistry:
             tools=subagent_tools,
             label="SubAgent",
         )
-        messages = agent.execute(max_steps=5)
+        agent.execute(max_steps=5)
         # Link this subagent to the delegate tool call in the parent's trace tree.
         parent_recorder = current_recorder.get()
         if parent_recorder is not None:
             parent_recorder.note_delegate_child(agent.session_id)
-        for msg in reversed(messages):
-            if msg.get("role") == "assistant" and msg.get("content"):
-                content: str = msg["content"]
-                return content
-        return "(subagent produced no report)"
+        # Return an LLM-summarized final report of the whole subagent conversation
+        # (recorded as a distinct report node) instead of a reverse-scan of the
+        # last assistant message, which drops the final tool results whenever the
+        # subagent is cut off mid-progress at its step ceiling.
+        return agent.generate_report()
 
     def read_file(self, file_path: str) -> str:
         """Read and return the full contents of a file at the given file_path.

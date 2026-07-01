@@ -8,6 +8,7 @@ Wiring:
 - ``record_llm_call`` captures every LLM call with full conversation snapshots.
 - ``before_tool`` / ``after_tool`` time and capture each tool's full input/output.
 - ``record_handoff`` captures context-reset events.
+- ``record_report`` captures a subagent's end-of-turn final report.
 - ``current_session_id`` lets a delegated subagent link back to its parent.
 """
 
@@ -26,6 +27,7 @@ LLM_CALL = "llm_call"
 TOOL_CALL = "tool_call"
 ROUTER = "router"
 HANDOFF = "handoff"
+REPORT = "report"
 SESSION_END = "session_end"
 TOKEN_TRACKING = "token_tracking"
 FINISH_CHECK = "finish_check"
@@ -49,6 +51,7 @@ current_recorder: contextvars.ContextVar["Recorder | None"] = contextvars.Contex
 FULL_PAYLOAD_KINDS: set[str] = {
     "main",
     "handoff",
+    "report",
     "tool_router",
     "tool_output_summarizer",
     "tool_arg_correction",
@@ -215,6 +218,17 @@ class Recorder:
                 "ctx_pct": round(ctx_pct, 1),
                 "content": content,
                 "path": path,
+            }
+        )
+
+    # ── subagent report ─────────────────────────────────────────────────────────
+    def record_report(self, content: str) -> None:
+        """Record a subagent's end-of-turn final report (distinct from handoff)."""
+        self._emit(
+            {
+                "type": REPORT,
+                "content": content,
+                "started_at": _now(),
             }
         )
 
