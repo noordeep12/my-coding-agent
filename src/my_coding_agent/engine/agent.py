@@ -40,8 +40,9 @@ _HANDOFF_PROMPT = (
 )
 
 _REPORT_PROMPT = (
-    "Your task is complete. Write a final report of your findings for the "
-    "agent that delegated this task to you.\n\n"
+    "Your task is complete. Write your final report now, as plain text, for the "
+    "agent that delegated this task to you. Do NOT call any tools and do NOT "
+    "continue working — respond with the report text only.\n\n"
     "Include:\n"
     "1. **Task** — what you were asked to do\n"
     "2. **Findings** — the key results, answers, and evidence you gathered "
@@ -211,7 +212,15 @@ class AgentNode(BaseNode):
         """
         summary_messages = self.messages + [{"role": "user", "content": prompt}]
         resp = self.llm.chat_completion(summary_messages, tools=[], kind=kind)
-        return extract_message(resp).get("content", "") or ""
+        message = extract_message(resp)
+        # Reasoning models (e.g. Qwen3-thinking) often end the summary turn with a
+        # tool call or bare thinking, leaving ``content`` empty while the actual
+        # summary lives in ``reasoning_content``. Fall back to it so the summary is
+        # never lost to an empty ``content`` field.
+        content = message.get("content") or ""
+        if not content.strip():
+            content = message.get("reasoning_content") or ""
+        return content
 
     def generate_report(self) -> str:
         """Summarize the whole run as a final report and record it as a node.

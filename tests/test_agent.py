@@ -506,6 +506,43 @@ def test_generate_report_falls_back_when_empty(silent_logger, mocker):
     )
 
 
+def test_generate_report_uses_reasoning_when_content_empty(silent_logger, mocker):
+    """Reasoning models (Qwen3-thinking) end the summary turn with a tool call,
+    leaving ``content`` empty while the report sits in ``reasoning_content``.
+
+    Regression for session d31be8c8c224, where three subagents returned
+    "(subagent produced no report)" because the real summary was discarded from
+    ``reasoning_content``. The substance must be used, not the placeholder.
+    """
+    agent = _make_agent(silent_logger, messages=[{"role": "user", "content": "t"}])
+    agent.recorder = mocker.Mock()
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        return_value=_Resp(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "reasoning_content": "I fetched the data: 1631 CVEs.",
+                            "tool_calls": [{"id": "1", "function": {"name": "bash"}}],
+                        }
+                    }
+                ]
+            }
+        ),
+    )
+
+    result = agent.generate_report()
+
+    assert result == "I fetched the data: 1631 CVEs."
+    agent.recorder.record_report.assert_called_once_with(
+        "I fetched the data: 1631 CVEs."
+    )
+
+
 # --- _print_summary ----------------------------------------------------------
 
 
