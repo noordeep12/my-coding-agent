@@ -3,6 +3,7 @@
 # Recognized chat-completion call kinds (tagged per call for token accounting).
 CALL_KIND_MAIN = "main"
 CALL_KIND_HANDOFF = "handoff"
+CALL_KIND_REPORT = "report"
 CALL_KIND_TOOL_ROUTER = "tool_router"
 CALL_KIND_TOOL_OUTPUT_SUMMARIZER = "tool_output_summarizer"
 CALL_KIND_TOOL_ARG_CORRECTION = "tool_arg_correction"

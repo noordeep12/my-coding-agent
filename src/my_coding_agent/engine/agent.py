@@ -24,6 +24,10 @@ from ..utils import (
 from ..utils.parsing import extract_message
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 
+# Default step budget shared by the main agent (CLI), the ``execute`` default,
+# and delegated subagents, so all three run with the same ceiling.
+DEFAULT_MAX_STEPS = 50
+
 _HANDOFF_PROMPT = (
     "CONTEXT RESET REQUIRED: your context window is nearly full. "
     "Before the reset, write a structured handoff so the continuation agent "
@@ -37,6 +41,20 @@ _HANDOFF_PROMPT = (
     "6. **Critical context** — any state the next agent must know "
     "to continue correctly\n\n"
     "Be exhaustive. This will be the ONLY context the continuation agent starts with."
+)
+
+_REPORT_PROMPT = (
+    "Your task is complete. Write your final report now, as plain text, for the "
+    "agent that delegated this task to you. Do NOT call any tools and do NOT "
+    "continue working — respond with the report text only.\n\n"
+    "Include:\n"
+    "1. **Task** — what you were asked to do\n"
+    "2. **Findings** — the key results, answers, and evidence you gathered "
+    "(be specific: file paths, names, values, quotes)\n"
+    "3. **Conclusion** — a direct answer to the task\n\n"
+    "Be concise and self-contained: the delegating agent sees only this report, "
+    "not your conversation. Do not describe remaining work or a continuation — "
+    "this is your final output."
 )
 
 
@@ -107,7 +125,7 @@ class AgentNode(BaseNode):
         ctx.last_prompt_tokens = self.last_prompt_tokens
         ctx.signal = "STOP"
 
-    def execute(self, max_steps: int = 5) -> list[dict[str, Any]]:
+    def execute(self, max_steps: int = DEFAULT_MAX_STEPS) -> list[dict[str, Any]]:
         """Drive the agentic pipeline and return the final message list."""
         from ..pipeline import build_default_pipeline
 
@@ -181,14 +199,57 @@ class AgentNode(BaseNode):
         self.last_prompt_tokens = ctx.last_prompt_tokens
         self.elapsed_seconds = time.monotonic() - t_start
 
+    def _summarize_conversation(self, prompt: str, kind: str) -> str:
+        """Summarize the running conversation via one tool-free LLM call.
+
+        Appends *prompt* as a user turn to the current messages and issues a
+        single chat completion with no tools, tagged *kind*, returning the
+        assistant text. Shared by the context-reset handoff and the subagent
+        end-of-turn report so both go through one summarization path.
+
+        Args:
+            prompt: Instruction appended as the final user message.
+            kind: Call-kind tag for token accounting and the trace.
+
+        Returns:
+            The assistant's summary text (empty string if none was produced).
+        """
+        summary_messages = self.messages + [{"role": "user", "content": prompt}]
+        resp = self.llm.chat_completion(summary_messages, tools=[], kind=kind)
+        message = extract_message(resp)
+        # Reasoning models (e.g. Qwen3-thinking) often end the summary turn with a
+        # tool call or bare thinking, leaving ``content`` empty while the actual
+        # summary lives in ``reasoning_content``. Fall back to it so the summary is
+        # never lost to an empty ``content`` field.
+        content = message.get("content") or ""
+        if not content.strip():
+            content = message.get("reasoning_content") or ""
+        return content
+
+    def generate_report(self) -> str:
+        """Summarize the whole run as a final report and record it as a node.
+
+        Issues one tool-free LLM call over the full conversation with a
+        report-specific prompt, records the result as a distinct report node,
+        and returns it. Reused by ``delegate`` so the main agent receives a
+        complete synthesized report rather than a scraped last message. Falls
+        back to a placeholder when the model returns nothing, so the caller
+        never receives an empty report.
+
+        Returns:
+            The final report text (never empty).
+        """
+        self.logger.info("Generating subagent report summary...")
+        content = self._summarize_conversation(_REPORT_PROMPT, "report")
+        if not content.strip():
+            content = "(subagent produced no report)"
+        self.recorder.record_report(content)
+        return content
+
     def _generate_handoff(self, step_num: int, prompt_tokens: int) -> ContextHandoff:
         """Ask the LLM to summarize current state, persist the handoff, return it."""
-        handoff_messages = self.messages + [
-            {"role": "user", "content": _HANDOFF_PROMPT}
-        ]
         self.logger.info("Generating context handoff summary...")
-        resp = self.llm.chat_completion(handoff_messages, tools=[], kind="handoff")
-        content = extract_message(resp).get("content", "") or ""
+        content = self._summarize_conversation(_HANDOFF_PROMPT, "handoff")
         handoff = ContextHandoff(
             agent_label=self.label,
             step_num=step_num,

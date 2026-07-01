@@ -5,7 +5,7 @@ import warnings
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from .engine import LLM, AgentNode, ToolRegistry, tool
+from .engine import DEFAULT_MAX_STEPS, LLM, AgentNode, ToolRegistry, tool
 from .pipeline.nodes.handoff import ContextHandoff
 from .utils.exceptions import (
     APIResponseError,
@@ -36,6 +36,7 @@ __all__ = [
     "__version__",
     "LLM",
     "AgentNode",
+    "DEFAULT_MAX_STEPS",
     "Agent",
     "ContextHandoff",
     "tool",

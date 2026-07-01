@@ -5,9 +5,10 @@ proceeds, so a session that crashes mid-run still leaves a diagnosable trail. It
 never touches the ``logger`` package — capture is entirely separate from logging.
 
 Wiring:
-- ``record_llm_call`` captures every LLM call with full conversation snapshots.
+- ``record_llm_call`` captures each LLM call's messages and tool definitions.
 - ``before_tool`` / ``after_tool`` time and capture each tool's full input/output.
 - ``record_handoff`` captures context-reset events.
+- ``record_report`` captures a subagent's end-of-turn final report.
 - ``current_session_id`` lets a delegated subagent link back to its parent.
 """
 
@@ -26,6 +27,7 @@ LLM_CALL = "llm_call"
 TOOL_CALL = "tool_call"
 ROUTER = "router"
 HANDOFF = "handoff"
+REPORT = "report"
 SESSION_END = "session_end"
 TOKEN_TRACKING = "token_tracking"
 FINISH_CHECK = "finish_check"
@@ -42,13 +44,15 @@ current_recorder: contextvars.ContextVar["Recorder | None"] = contextvars.Contex
     "current_recorder", default=None
 )
 
-# Which LLM call kinds store the full ``messages`` snapshot. Every chat-completion
-# kind — including the ancillary ones (tool_router, summarizer, arg_correction) —
-# keeps its input so the viewer can show each call's input/output like the main
-# call. Trim this set to bound the event-stream size if needed.
+# Which LLM call kinds store the full input payload — the ``messages`` snapshot
+# and the ``tools`` definitions given to the model. Every chat-completion kind —
+# including the ancillary ones (tool_router, summarizer, arg_correction) — keeps
+# its input so the viewer can show each call's input/output like the main call.
+# Trim this set to bound the event-stream size if needed.
 FULL_PAYLOAD_KINDS: set[str] = {
     "main",
     "handoff",
+    "report",
     "tool_router",
     "tool_output_summarizer",
     "tool_arg_correction",
@@ -136,9 +140,16 @@ class Recorder:
         messages: list[dict[str, Any]],
         context_window: int,
         response_data: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Record one chat-completion call (full snapshot for payload kinds)."""
-        keep_messages = messages if kind in FULL_PAYLOAD_KINDS else None
+        """Record one chat-completion call (full snapshot for payload kinds).
+
+        For kinds in ``FULL_PAYLOAD_KINDS`` the ``messages`` snapshot and the
+        ``tools`` definitions given to the model this turn are both kept, so the
+        viewer can show the exact input (conversation + available tools) the
+        model saw. Other kinds keep neither, to bound the event-stream size.
+        """
+        keep_payload = kind in FULL_PAYLOAD_KINDS
         self._emit(
             {
                 "type": LLM_CALL,
@@ -150,7 +161,8 @@ class Recorder:
                 "completion": usage.get("completion_tokens", 0),
                 "total": usage.get("total_tokens", 0),
                 "context_window": context_window,
-                "messages": keep_messages,
+                "messages": messages if keep_payload else None,
+                "tools": (tools or []) if keep_payload else None,
                 "response": _response_summary(response_data),
             }
         )
@@ -215,6 +227,17 @@ class Recorder:
                 "ctx_pct": round(ctx_pct, 1),
                 "content": content,
                 "path": path,
+            }
+        )
+
+    # ── subagent report ─────────────────────────────────────────────────────────
+    def record_report(self, content: str) -> None:
+        """Record a subagent's end-of-turn final report (distinct from handoff)."""
+        self._emit(
+            {
+                "type": REPORT,
+                "content": content,
+                "started_at": _now(),
             }
         )
 

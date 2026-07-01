@@ -281,6 +281,32 @@ def test_run_stops_on_finish_reason_stop(silent_logger, mocker):
     assert agent.stop_reason == "stop"
 
 
+def test_main_agent_execute_records_no_report_node(silent_logger, mocker):
+    """execute() must not emit a report node; that is only for delegated subagents."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    resp = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "all done"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
+    mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
+
+    agent.execute(max_steps=5)
+    agent.recorder.record_report.assert_not_called()
+
+
 def test_run_stops_at_max_steps(silent_logger, mocker):
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
@@ -411,6 +437,110 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
     assert handoff.content == "handoff summary"
     assert handoff.step_num == 2
     saved.assert_called_once()
+
+
+# --- generate_report ---------------------------------------------------------
+
+
+def test_generate_report_single_no_tools_call_over_full_conversation(
+    silent_logger, mocker
+):
+    """One tool-free call is made over the whole conversation plus a prompt."""
+    convo = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "find X"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+        {"role": "tool", "content": "X is at line 42"},
+    ]
+    agent = _make_agent(silent_logger, messages=convo)
+    agent.recorder = mocker.Mock()
+    chat = mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        return_value=_Resp({"choices": [{"message": {"content": "final report"}}]}),
+    )
+
+    result = agent.generate_report()
+
+    assert result == "final report"
+    chat.assert_called_once()
+    sent_messages = chat.call_args[0][0]
+    _, kwargs = chat.call_args
+    assert kwargs["tools"] == []
+    assert kwargs["kind"] == "report"
+    # The full conversation is preserved, with exactly one report prompt appended,
+    # so the final tool call and its result are included in the summarized input.
+    assert sent_messages[: len(convo)] == convo
+    assert len(sent_messages) == len(convo) + 1
+    assert sent_messages[-1]["role"] == "user"
+
+
+def test_generate_report_records_distinct_report_node(silent_logger, mocker):
+    agent = _make_agent(silent_logger, messages=[{"role": "user", "content": "t"}])
+    agent.recorder = mocker.Mock()
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        return_value=_Resp({"choices": [{"message": {"content": "report body"}}]}),
+    )
+
+    agent.generate_report()
+
+    agent.recorder.record_report.assert_called_once_with("report body")
+
+
+def test_generate_report_falls_back_when_empty(silent_logger, mocker):
+    agent = _make_agent(silent_logger, messages=[{"role": "user", "content": "t"}])
+    agent.recorder = mocker.Mock()
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        return_value=_Resp({"choices": [{"message": {"content": ""}}]}),
+    )
+
+    result = agent.generate_report()
+
+    assert result == "(subagent produced no report)"
+    agent.recorder.record_report.assert_called_once_with(
+        "(subagent produced no report)"
+    )
+
+
+def test_generate_report_uses_reasoning_when_content_empty(silent_logger, mocker):
+    """Reasoning models (Qwen3-thinking) end the summary turn with a tool call,
+    leaving ``content`` empty while the report sits in ``reasoning_content``.
+
+    Regression for session d31be8c8c224, where three subagents returned
+    "(subagent produced no report)" because the real summary was discarded from
+    ``reasoning_content``. The substance must be used, not the placeholder.
+    """
+    agent = _make_agent(silent_logger, messages=[{"role": "user", "content": "t"}])
+    agent.recorder = mocker.Mock()
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        return_value=_Resp(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "reasoning_content": "I fetched the data: 1631 CVEs.",
+                            "tool_calls": [{"id": "1", "function": {"name": "bash"}}],
+                        }
+                    }
+                ]
+            }
+        ),
+    )
+
+    result = agent.generate_report()
+
+    assert result == "I fetched the data: 1631 CVEs."
+    agent.recorder.record_report.assert_called_once_with(
+        "I fetched the data: 1631 CVEs."
+    )
 
 
 # --- _print_summary ----------------------------------------------------------

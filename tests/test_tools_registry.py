@@ -10,6 +10,7 @@ import subprocess
 import httpx
 import pytest
 
+from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS
 from my_coding_agent.engine.tool_registry import ARTIFACT_THRESHOLD
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 
@@ -198,46 +199,30 @@ def test_read_article_truncates_long_content(mocker):
 # --- delegate ----------------------------------------------------------------
 
 
-def _make_fake_agent(mocker, messages):
-    """Return a mock AgentNode whose execute() returns *messages*."""
+def _make_fake_agent(mocker, report="report text"):
+    """Return a mock AgentNode whose generate_report() returns *report*."""
     fake = mocker.Mock()
-    fake.execute.return_value = messages
     fake.session_id = "abc123"
+    fake.generate_report.return_value = report
     return fake
 
 
-def test_delegate_returns_last_assistant_content(mocker):
-    fake_agent = _make_fake_agent(
-        mocker,
-        [
-            {"role": "user", "content": "task"},
-            {"role": "assistant", "content": "report text"},
-        ],
-    )
+def test_delegate_returns_generated_report(mocker):
+    """delegate returns the subagent's generated report, not a message scrape."""
+    fake_agent = _make_fake_agent(mocker, report="final report")
     mocker.patch(
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
     out = ToolsRegistry().delegate(task="do X", context="ctx")
-    assert out == "report text"
-    fake_agent.execute.assert_called_once_with(max_steps=5)
-
-
-def test_delegate_no_report_fallback(mocker):
-    fake_agent = _make_fake_agent(
-        mocker, [{"role": "user", "content": "only user msg"}]
-    )
-    mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
-        return_value=fake_agent,
-    )
-    out = ToolsRegistry().delegate(task="do X", context="ctx")
-    assert out == "(subagent produced no report)"
+    assert out == "final report"
+    fake_agent.execute.assert_called_once_with(max_steps=DEFAULT_MAX_STEPS)
+    fake_agent.generate_report.assert_called_once_with()
 
 
 def test_delegate_excludes_delegate_tool_from_subagent(mocker):
     """The subagent must not receive the delegate tool to prevent recursion."""
-    fake_agent = _make_fake_agent(mocker, [{"role": "assistant", "content": "ok"}])
+    fake_agent = _make_fake_agent(mocker)
     spy = mocker.patch(
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
@@ -265,7 +250,7 @@ def test_delegate_forwards_parent_toolset_via_executor(mocker, bare_llm):
     """
     from my_coding_agent.engine.tool_execution import ToolExecutor
 
-    fake_agent = _make_fake_agent(mocker, [{"role": "assistant", "content": "ok"}])
+    fake_agent = _make_fake_agent(mocker)
     spy = mocker.patch(
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
