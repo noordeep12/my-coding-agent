@@ -10,6 +10,7 @@ import subprocess
 import httpx
 import pytest
 
+from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS
 from my_coding_agent.engine.tool_registry import ARTIFACT_THRESHOLD
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 
@@ -215,7 +216,7 @@ def test_delegate_returns_generated_report(mocker):
     )
     out = ToolsRegistry().delegate(task="do X", context="ctx")
     assert out == "final report"
-    fake_agent.execute.assert_called_once_with(max_steps=5)
+    fake_agent.execute.assert_called_once_with(max_steps=DEFAULT_MAX_STEPS)
     fake_agent.generate_report.assert_called_once_with()
 
 

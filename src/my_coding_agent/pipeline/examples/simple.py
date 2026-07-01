@@ -19,7 +19,13 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 
-from my_coding_agent import AgentNode, ToolRegistry, __version__, tool
+from my_coding_agent import (
+    DEFAULT_MAX_STEPS,
+    AgentNode,
+    ToolRegistry,
+    __version__,
+    tool,
+)
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -125,7 +131,7 @@ def _read_interactive_prompt() -> str:
 )
 @click.option(
     "--max-steps",
-    default=50,
+    default=DEFAULT_MAX_STEPS,
     show_default=True,
     type=click.IntRange(1, 100),
     help="Maximum agent loop steps.",

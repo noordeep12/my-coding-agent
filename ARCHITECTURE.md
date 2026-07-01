@@ -114,7 +114,7 @@ The node-based DAG execution engine. `pipeline/` only knows how to build and exe
 
 The top-level entry point. Holds an `LLM` client via composition (`self.llm`) — not a subclass. `__init__` builds the client, assigns a session id, attaches the session log, and initializes run stats.
 
-- **`execute(max_steps)`** — stand-alone entry: constructs a `RunContext`, builds the pipeline via `build_default_pipeline(spawn_fn=...)`, delegates to `pipeline.execute(ctx)`, saves session data, and prints the summary.
+- **`execute(max_steps)`** — stand-alone entry: constructs a `RunContext`, builds the pipeline via `build_default_pipeline(spawn_fn=...)`, delegates to `pipeline.execute(ctx)`, saves session data, and prints the summary. `max_steps` defaults to the shared `DEFAULT_MAX_STEPS` (50) — the single source of truth used by the CLI, the `execute` default, and delegated subagents so all three share one step ceiling.
 - **`run(ctx)`** — embedded entry: runs `execute()` and writes results back to the provided `RunContext`; used when `AgentNode` is a step in a larger outer pipeline.
 
 `AgentNode` owns session bookkeeping: banner printing, session log attachment/detachment, `session_data.json` + `tool_artifacts.json` persistence, run summary, and observability recorder start/finish. It also owns `_generate_handoff`, `_spawn_continuation`, and `_handle_context_reset` — the context-reset machinery called by `ContextPreflightNode` via the `spawn_fn` closure. A shared `_summarize_conversation(prompt, kind)` helper backs both `_generate_handoff` and `generate_report` — a single tool-free LLM call over the whole conversation; when the model returns empty `content` (reasoning models such as Qwen3-thinking often end the summary turn with a tool call, leaving `content` null and the substance in `reasoning_content`), it falls back to `reasoning_content` so the summary is never lost. `generate_report()` produces a subagent's end-of-turn final report (a distinct `report` node) and is invoked by the `delegate` tool after `execute()`, so it fires for delegated subagents only, never spontaneously for the main agent.
@@ -140,7 +140,7 @@ A plain class whose methods are the tools the LLM can call:
 | `write_file(file_path, content)` | Writes a file, creating parent dirs |
 | `read_article(url)` | Fetches a URL and converts HTML → markdown |
 | `read_tool_artifact(tool_call_id)` | Retrieves a previously stored large output |
-| `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task; the subagent inherits the parent toolset **minus `delegate`** (to prevent recursive spawning). Returns the subagent's LLM-summarized final report (`generate_report()`), not a scrape of its last message, so the final tool results survive even when the subagent is cut off at its step ceiling |
+| `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task; the subagent inherits the parent toolset **minus `delegate`** (to prevent recursive spawning) and runs with the same `DEFAULT_MAX_STEPS` budget as the main agent. Returns the subagent's LLM-summarized final report (`generate_report()`), not a scrape of its last message, so the final tool results survive even when the subagent is cut off at its step ceiling |
 
 The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings.
 

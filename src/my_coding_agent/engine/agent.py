@@ -24,6 +24,10 @@ from ..utils import (
 from ..utils.parsing import extract_message
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 
+# Default step budget shared by the main agent (CLI), the ``execute`` default,
+# and delegated subagents, so all three run with the same ceiling.
+DEFAULT_MAX_STEPS = 50
+
 _HANDOFF_PROMPT = (
     "CONTEXT RESET REQUIRED: your context window is nearly full. "
     "Before the reset, write a structured handoff so the continuation agent "
@@ -121,7 +125,7 @@ class AgentNode(BaseNode):
         ctx.last_prompt_tokens = self.last_prompt_tokens
         ctx.signal = "STOP"
 
-    def execute(self, max_steps: int = 5) -> list[dict[str, Any]]:
+    def execute(self, max_steps: int = DEFAULT_MAX_STEPS) -> list[dict[str, Any]]:
         """Drive the agentic pipeline and return the final message list."""
         from ..pipeline import build_default_pipeline
 

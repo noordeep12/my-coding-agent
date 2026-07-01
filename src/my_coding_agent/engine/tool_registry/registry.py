@@ -153,9 +153,8 @@ class ToolRegistry:
                 goal, and key names. Example: 'We are adding a hook to the agent
                 loop. Relevant files: agent.py, llm.py at /abs/path/'
         """
-        from my_coding_agent.engine.agent import (
-            AgentNode,  # lazy import — avoids circular dependency
-        )
+        # Lazy import — avoids a circular dependency (agent → tools → registry).
+        from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS, AgentNode
         from my_coding_agent.engine.llm import OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
@@ -179,7 +178,7 @@ class ToolRegistry:
             tools=subagent_tools,
             label="SubAgent",
         )
-        agent.execute(max_steps=5)
+        agent.execute(max_steps=DEFAULT_MAX_STEPS)
         # Link this subagent to the delegate tool call in the parent's trace tree.
         parent_recorder = current_recorder.get()
         if parent_recorder is not None:
