@@ -280,7 +280,8 @@ class LLM:
         )
         # Observability capture (separate from logging). The single choke point
         # for every call kind: records latency, tokens, the input conversation
-        # snapshot, and the response. No-op when no recorder is attached.
+        # snapshot, the tool definitions given this turn, and the response. No-op
+        # when no recorder is attached.
         if self._recorder is not None:
             self._recorder.record_llm_call(
                 kind=kind,
@@ -290,6 +291,7 @@ class LLM:
                 messages=messages,
                 context_window=self.context_window,
                 response_data=data,
+                tools=tools,
             )
         self.logger.api(
             "call #%d [%s] usage — prompt: %s, completion: %s, total: %s",

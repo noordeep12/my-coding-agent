@@ -112,7 +112,9 @@ Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, serve
 - **Right pane** — node detail:
   - a single **Context window** box: the running window (total / max · %) and a composition bar + legend split into **system / user / assistant / tool** tokens, so you can see which role is inflating the window — subagent nodes show that subagent's **own** window, badged with its id
   - every node has the same three collapsible sections — **Outputs**, **Inputs**, **Attributes**
-  - in **Outputs**, **Tool Dispatch** nodes render a status badge (**✓ success** / **✗ error**), the command that ran, and the output/error in dedicated log blocks; **LLM Call** nodes render the response text and each tool call (function + parsed arguments) instead of raw JSON — for fast debugging
+  - in **Outputs**, **Tool Dispatch** nodes render a status badge (**✓ success** / **✗ error**), the command that ran, and the output/error; **LLM Call** nodes render the response text, reasoning, and tool calls — each in a mini-editor
+  - in **Inputs**, **LLM Call** nodes show both the `messages` sent to the model and the `tools` definitions the model was given that turn (the tool schemas that reached the LLM, not just the calls it suggested)
+  - every content box (JSON and raw text) is a **mini VS Code-style editor** (powered by CodeMirror, vendored offline): syntax highlighting, line numbers, and code folding; a clickable **schema breadcrumb** for JSON (e.g. `root › [0] › function`); **collapse all / expand all**, **copy all**, and **find** with keyboard next/previous (Enter / Shift+Enter)
 - The current **session id** is shown in the header (click to copy); the picker dropdown lists all sessions
 - Loop-detected tool calls are flagged inline
 

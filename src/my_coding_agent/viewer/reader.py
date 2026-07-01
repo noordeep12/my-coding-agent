@@ -325,7 +325,10 @@ def _build_llm_node(
         id=node_id,
         type="llm_call",
         label=label,
-        inputs={"messages": ev.get("messages") or []},
+        inputs={
+            "messages": ev.get("messages") or [],
+            "tools": ev.get("tools") or [],
+        },
         outputs={
             "content": resp.get("content", ""),
             "reasoning": resp.get("reasoning", ""),

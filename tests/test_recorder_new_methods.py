@@ -7,10 +7,15 @@ import json
 from my_coding_agent.observability.recorder import (
     FINISH_CHECK,
     HANDOFF,
+    LLM_CALL,
     REPORT,
     TOKEN_TRACKING,
     Recorder,
 )
+
+_TOOLS = [{"type": "function", "function": {"name": "read_file"}}]
+_USAGE = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+_RESPONSE = {"choices": [{"message": {"content": "hi"}}]}
 
 
 def _make_recorder(tmp_path):
@@ -128,3 +133,51 @@ class TestRecordFinishCheck:
         rec.record_finish_check(step=1, finish_reason="stop", signal="STOP")
         ev = _read_events(path)[-1]
         assert "started_at" in ev and ev["started_at"]
+
+
+class TestRecordLlmCallTools:
+    def test_tools_kept_for_full_payload_kind(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_llm_call(
+            kind="main",
+            call=1,
+            latency_s=0.1,
+            usage=_USAGE,
+            messages=[{"role": "user", "content": "hi"}],
+            context_window=8192,
+            response_data=_RESPONSE,
+            tools=_TOOLS,
+        )
+        ev = _read_events(path)[-1]
+        assert ev["type"] == LLM_CALL
+        assert ev["tools"] == _TOOLS
+
+    def test_tools_dropped_for_non_payload_kind(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_llm_call(
+            kind="other",
+            call=1,
+            latency_s=0.1,
+            usage=_USAGE,
+            messages=[{"role": "user", "content": "hi"}],
+            context_window=8192,
+            response_data=_RESPONSE,
+            tools=_TOOLS,
+        )
+        ev = _read_events(path)[-1]
+        assert ev["tools"] is None
+        assert ev["messages"] is None
+
+    def test_tools_default_empty_when_omitted(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_llm_call(
+            kind="main",
+            call=1,
+            latency_s=0.1,
+            usage=_USAGE,
+            messages=[],
+            context_window=8192,
+            response_data=_RESPONSE,
+        )
+        ev = _read_events(path)[-1]
+        assert ev["tools"] == []

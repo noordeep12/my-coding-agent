@@ -715,3 +715,70 @@ class TestReportNode:
     def test_no_report_node_without_report_event(self, tmp_path):
         session = self._load_with(tmp_path, "noreport", [])
         assert not any(n.type == "report" for n in session.nodes.values())
+
+
+class TestLlmToolDefinitions:
+    """LLM-call nodes surface the tool definitions from the event's ``tools``."""
+
+    def _load(self, tmp_path, sid, events):
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        return load_session(ep)
+
+    def _llm_nodes(self, session):
+        return [n for n in session.nodes.values() if n.type == "llm_call"]
+
+    def test_tools_surfaced_in_inputs(self, tmp_path):
+        sid = "tooldefs00001"
+        tools = [{"type": "function", "function": {"name": "bash"}}]
+        events = [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="T",
+                model="gpt-4o-mini",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _ev(
+                "router",
+                signal="go",
+                selected=["bash"],
+                phase="phase1_keyword",
+                used_llm=False,
+                started_at="2026-01-01T10:00:01",
+            ),
+            _ev(
+                "llm_call",
+                call=1,
+                kind="main",
+                latency_s=1.0,
+                prompt=10,
+                completion=5,
+                total=15,
+                context_window=8192,
+                messages=[{"role": "user", "content": "hi"}],
+                tools=tools,
+                response={
+                    "content": "ok",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+                started_at="2026-01-01T10:00:02",
+            ),
+        ]
+        session = self._load(tmp_path, sid, events)
+        nodes = self._llm_nodes(session)
+        assert len(nodes) == 1
+        assert nodes[0].inputs["tools"] == tools
+
+    def test_missing_tools_field_renders_empty(self, tmp_path):
+        # _minimal_events predates tool capture — no ``tools`` key on the events.
+        session = self._load(tmp_path, "aabbccdd1234", _minimal_events())
+        nodes = self._llm_nodes(session)
+        assert nodes
+        assert all(n.inputs["tools"] == [] for n in nodes)

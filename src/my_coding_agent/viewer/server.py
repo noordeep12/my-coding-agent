@@ -33,7 +33,12 @@ _SID_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
 # ── Vendored UI libraries (offline, no CDN) — see viewer/_vendor/README.md ─────
 _VENDOR_DIR = Path(__file__).parent / "_vendor"
-_VENDOR_FILES = ("preact.min.js", "hooks.umd.js", "htm.umd.js")
+_VENDOR_FILES = (
+    "preact.min.js",
+    "hooks.umd.js",
+    "htm.umd.js",
+    "codemirror.bundle.js",
+)
 _VENDOR_TOKEN = "/*__VENDOR__*/"
 
 # ── Embedded single-page HTML (Apple-minimalist Preact UI) ────────────────────
@@ -143,18 +148,19 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .shead{display:flex;align-items:center;gap:8px;padding:12px 22px;font-weight:600;font-size:12px;cursor:pointer;user-select:none}
 .shead:hover{background:var(--bg2)}
 .sbody{padding:0 22px 16px}
-.kv{width:100%;border-collapse:collapse;font-size:12px}
-.kv td{padding:5px 8px;vertical-align:top;border-bottom:1px solid var(--bg2)}
-.kk{color:var(--muted);white-space:nowrap;width:34%;font-family:var(--mono);font-size:11px}
-.kv-v{word-break:break-word}
-.jb{position:relative;margin-top:2px}
-.jb pre{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:11px 12px;font-family:var(--mono);font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto}
-.copy{position:absolute;top:7px;right:7px;font-family:var(--font);font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer;opacity:0;transition:opacity .12s}
-.jb:hover .copy{opacity:1}
-.copy:hover{color:var(--accent);border-color:var(--accent)}
-.jb.cmd pre{border-left:3px solid var(--accent)}
-.jb.out pre{border-left:3px solid #c7c7cc}
-.jb.err pre{border-left:3px solid var(--neg);color:var(--neg);background:var(--neg-bg)}
+/* ── code box: mini CodeMirror viewer (offline, read-only) ── */
+.cb{margin-top:2px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.cb-bar{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--line);min-height:30px}
+.cb-crumbs{flex:1;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:2px;font-family:var(--mono);font-size:10px;overflow:hidden}
+.cb-crumb{color:var(--sub);cursor:pointer;padding:1px 3px;border-radius:4px;white-space:nowrap}
+.cb-crumb:hover{background:var(--sub-soft)}
+.cb-sep{color:var(--line);margin:0 1px}
+.cb-crumbs.muted{color:var(--muted);cursor:default}
+.cb-actions{display:flex;align-items:center;gap:5px;flex:none}
+.cb-btn{font-family:var(--font);font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer}
+.cb-btn:hover{color:var(--accent);border-color:var(--accent)}
+.cb-editor .cm-editor{max-height:340px}
+.cb-editor .cm-scroller{overflow:auto}
 
 /* ── tool result / llm body (rendered inside .sbody) ── */
 .toolres{display:flex;flex-direction:column}
@@ -168,8 +174,6 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tr-block.muted{font-size:12px}
 .tr-label{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:lowercase}
 .tr-label.err{color:var(--neg)}
-.tcall{margin-top:10px}
-.tc-top{margin-bottom:6px}
 
 /* scrollbars */
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -185,6 +189,70 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 const { h, render } = window.preact;
 const { useState, useEffect, useRef, useMemo, useCallback } = window.preactHooks;
 const html = window.htm.bind(h);
+
+// ── CodeMirror 6 (vendored, offline) — read-only editor theme for content boxes ──
+const CM = window.CM6;
+const CB_THEME = CM.EditorView.theme({
+  '&':{fontSize:'11px',backgroundColor:'transparent',color:'var(--text)'},
+  '.cm-content':{fontFamily:'var(--mono)',padding:'8px 0'},
+  '.cm-scroller':{lineHeight:'1.6',maxHeight:'340px'},
+  '.cm-gutters':{backgroundColor:'transparent',border:'none',color:'#b8b8bf'},
+  '.cm-activeLine':{backgroundColor:'#eef4ff66'},
+  '.cm-activeLineGutter':{backgroundColor:'transparent',color:'var(--muted)'},
+  '.cm-foldGutter span':{color:'#b8b8bf'},
+  '&.cm-focused':{outline:'none'},
+  '.cm-selectionMatch':{backgroundColor:'#fff3a8'},
+  '.cm-searchMatch':{backgroundColor:'#fff3a8',outline:'1px solid #e0c200'},
+  '.cm-searchMatch-selected':{backgroundColor:'#ffd400'},
+  '.cm-panels':{backgroundColor:'var(--bg)',color:'var(--text)',borderTop:'1px solid var(--line)'},
+  '.cm-panel input':{fontFamily:'var(--font)',fontSize:'11px'},
+});
+
+// Walk the JSON syntax tree from the caret to the root, building a clickable
+// breadcrumb of property names and array indices (VS Code style). Best-effort:
+// any parse hiccup just yields a shorter path.
+function jsonPathAt(state){
+  try{
+    const tree = CM.syntaxTree(state);
+    const pos = state.selection.main.head;
+    const parts = [];
+    let child = null;
+    const VALUE = ['Object','Array','String','Number','True','False','Null'];
+    for(let cur=tree.resolveInner(pos,-1); cur; child=cur, cur=cur.parent){
+      if(cur.name==='Property'){
+        const pn = cur.getChild('PropertyName');
+        if(pn){
+          let nm = state.sliceDoc(pn.from,pn.to);
+          try{ nm = JSON.parse(nm); }catch(e){}
+          parts.unshift({label:String(nm), from:cur.from});
+        }
+      } else if(cur.name==='Array' && child){
+        let idx=-1;
+        for(let ch=cur.firstChild; ch; ch=ch.nextSibling){
+          if(!VALUE.includes(ch.name)) continue;
+          idx++;
+          if(ch.from===child.from){ break; }
+        }
+        if(idx>=0) parts.unshift({label:'['+idx+']', from:child.from});
+      }
+    }
+    return parts;
+  }catch(e){ return []; }
+}
+
+// Coerce any input/output value into a document + language for the CodeBox:
+// objects/arrays and JSON-looking strings become pretty JSON; everything else
+// stays raw text.
+function toDoc(value){
+  if(typeof value==='string'){
+    const t = value.trim();
+    if(t && (t[0]==='{' || t[0]==='[')){
+      try{ return {text:JSON.stringify(JSON.parse(value),null,2), lang:'json'}; }catch(e){}
+    }
+    return {text:value, lang:'text'};
+  }
+  return {text:JSON.stringify(value,null,2), lang:'json'};
+}
 
 // ── node type metadata ──
 const TYPE_META = {
@@ -423,6 +491,8 @@ function displayAttrs(node){
 function Detail({node,mainAgent}){
   const m = meta(node.type), a = node.attributes||{};
   const subAgent = node.agent && node.agent!==mainAgent ? node.agent : null;
+  const attrs = displayAttrs(node);
+  const attrsBody = Object.keys(attrs).length ? html`<${CodeBox} value=${attrs}/>` : null;
   return html`<div class="dwrap">
     <div class="dhead">
       <span class="dbadge" style=${{background:m.dot}}>${m.name}</span>
@@ -439,7 +509,7 @@ function Detail({node,mainAgent}){
     <${CtxCard} cs=${node.ctx_state} agent=${subAgent}/>
     <${Section} title="Outputs" data=${node.outputs} body=${outputsBody(node)} open=${true}/>
     <${Section} title="Inputs" data=${node.inputs} open=${true}/>
-    <${Section} title="Attributes" data=${displayAttrs(node)} open=${false}/>
+    <${Section} title="Attributes" data=${attrs} body=${attrsBody} open=${false}/>
   </div>`;
 }
 
@@ -456,7 +526,7 @@ function ReportOutput({node}){
   const content = (node.outputs && node.outputs.content) || '';
   return html`<div class="toolres">
     ${content ? html`<div class="tr-block"><div class="tr-label">report</div>
-      <${LogBlock} text=${content}/></div>`
+      <${CodeBox} value=${content}/></div>`
       : html`<div class="tr-block muted">No report content recorded.</div>`}
   </div>`;
 }
@@ -488,11 +558,11 @@ function ToolResult({node}){
         : r.ok===false ? html`<span class="tr-badge err">✗ error</span>` : null}
     </div>
     ${cmd ? html`<div class="tr-block"><div class="tr-label">command</div>
-      <${LogBlock} text=${cmd} kind="cmd"/></div>` : null}
+      <${CodeBox} value=${cmd}/></div>` : null}
     ${r.output ? html`<div class="tr-block"><div class="tr-label">output</div>
-      <${LogBlock} text=${r.output} kind="out"/></div>` : null}
+      <${CodeBox} value=${r.output}/></div>` : null}
     ${r.error ? html`<div class="tr-block"><div class="tr-label err">error</div>
-      <${LogBlock} text=${r.error} kind="err"/></div>` : null}
+      <${CodeBox} value=${r.error}/></div>` : null}
     ${(!cmd && !r.output && !r.error) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
   </div>`;
 }
@@ -502,34 +572,78 @@ function LlmOutputs({node}){
   const calls = o.tool_calls || [];
   return html`<div class="toolres">
     ${o.content ? html`<div class="tr-block"><div class="tr-label">response</div>
-      <${LogBlock} text=${o.content}/></div>` : null}
+      <${CodeBox} value=${o.content}/></div>` : null}
     ${o.reasoning ? html`<div class="tr-block"><div class="tr-label">reasoning</div>
-      <${LogBlock} text=${o.reasoning}/></div>` : null}
+      <${CodeBox} value=${o.reasoning}/></div>` : null}
     ${calls.length ? html`<div class="tr-block"><div class="tr-label">tool calls · ${calls.length}</div>
-      <${ToolCalls} calls=${calls}/></div>` : null}
+      <${CodeBox} value=${calls}/></div>` : null}
     ${(!o.content && !o.reasoning && !calls.length) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
   </div>`;
 }
 
-function ToolCalls({calls}){
-  return html`${calls.map((c,i)=>{
-    const fn = c.function || {};
-    let args = fn.arguments;
-    try { args = JSON.parse(fn.arguments); } catch(e){}
-    return html`<div key=${c.id||i} class="tcall">
-      <div class="tc-top"><span class="tr-tool">${fn.name||'?'}</span></div>
-      <${LogBlock} text=${cmdText(args)} kind="cmd"/>
-    </div>`;
-  })}`;
-}
-
-function LogBlock({text,kind}){
+// Mini read-only CodeMirror viewer: pretty JSON/text with syntax highlighting,
+// a clickable JSON breadcrumb, fold/expand all, copy all, and ⌘F find (with
+// Enter/Shift-Enter next/prev via CodeMirror's search keymap).
+function CodeBox({value}){
+  const {text,lang} = useMemo(()=>toDoc(value), [value]);
+  const host = useRef(null);
+  const viewRef = useRef(null);
+  const [crumb,setCrumb] = useState([]);
   const [copied,setCopied] = useState(false);
+
+  useEffect(()=>{
+    if(!host.current || !CM) return;
+    const exts = [
+      CM.lineNumbers(),
+      CM.EditorState.readOnly.of(true),
+      CM.drawSelection(),
+      CM.highlightActiveLine(),
+      CM.highlightActiveLineGutter(),
+      CM.syntaxHighlighting(CM.defaultHighlightStyle,{fallback:true}),
+      CM.codeFolding(),
+      CM.foldGutter(),
+      CM.highlightSelectionMatches(),
+      CM.search({top:true}),
+      CM.keymap.of([...CM.searchKeymap, ...CM.foldKeymap]),
+      CM.EditorView.lineWrapping,
+      CB_THEME,
+    ];
+    if(lang==='json'){
+      exts.push(CM.json());
+      exts.push(CM.EditorView.updateListener.of(u=>{
+        if(u.selectionSet || u.docChanged) setCrumb(jsonPathAt(u.state));
+      }));
+    }
+    const view = new CM.EditorView({
+      state: CM.EditorState.create({doc:text, extensions:exts}),
+      parent: host.current,
+    });
+    viewRef.current = view;
+    return ()=>{ view.destroy(); viewRef.current=null; };
+  }, [text, lang]);
+
+  const run = (fn)=>()=>{ const v=viewRef.current; if(v){ fn(v); v.focus(); } };
+  const jump = (from)=>()=>{ const v=viewRef.current; if(!v) return;
+    v.dispatch({selection:{anchor:from}, scrollIntoView:true}); v.focus(); };
   const copy = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(text)
     .then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),1200); }); };
-  return html`<div class=${'jb '+(kind||'')}>
-    <button class="copy" onClick=${copy}>${copied?'✓ copied':'copy'}</button>
-    <pre>${text}</pre>
+
+  return html`<div class="cb">
+    <div class="cb-bar">
+      ${lang==='json' ? html`<div class="cb-crumbs">
+        <span class="cb-crumb" onClick=${jump(0)}>root</span>
+        ${crumb.map((c,i)=>html`<span key=${i}><span class="cb-sep">›</span>
+          <span class="cb-crumb" onClick=${jump(c.from)}>${c.label}</span></span>`)}
+      </div>` : html`<div class="cb-crumbs muted">text</div>`}
+      <div class="cb-actions">
+        <button class="cb-btn" title="Find (⌘F)" onClick=${run(CM.openSearchPanel)}>find</button>
+        ${lang==='json' ? html`
+          <button class="cb-btn" title="Collapse all" onClick=${run(CM.foldAll)}>collapse</button>
+          <button class="cb-btn" title="Expand all" onClick=${run(CM.unfoldAll)}>expand</button>` : null}
+        <button class="cb-btn" onClick=${copy}>${copied?'✓ copied':'copy'}</button>
+      </div>
+    </div>
+    <div class="cb-editor" ref=${host}></div>
   </div>`;
 }
 
@@ -575,31 +689,21 @@ function Section({title,data,open,body}){
 
 function DataView({data}){
   if(data==null) return html`<span class="muted">—</span>`;
-  if(typeof data==='string') return html`<${JsonBlock} text=${data}/>`;
-  if(Array.isArray(data)) return html`<${JsonBlock} text=${JSON.stringify(data,null,2)}/>`;
+  if(typeof data==='string') return html`<${CodeBox} value=${data}/>`;
+  if(Array.isArray(data)) return html`<${CodeBox} value=${data}/>`;
   if(typeof data==='object'){
     const keys = Object.keys(data);
-    return html`<table class="kv">${keys.map(k=>html`<tr key=${k}>
-      <td class="kk">${k}</td><td class="kv-v"><${Value} v=${data[k]}/></td></tr>`)}</table>`;
+    return html`${keys.map(k=>html`<div key=${k} class="tr-block">
+      <div class="tr-label">${k}</div><${Value} v=${data[k]}/></div>`)}`;
   }
   return html`<span>${String(data)}</span>`;
 }
 
 function Value({v}){
   if(v==null) return html`<span class="muted">null</span>`;
-  if(typeof v==='object') return html`<${JsonBlock} text=${JSON.stringify(v,null,2)}/>`;
-  if(typeof v==='string' && v.length>80) return html`<${JsonBlock} text=${v}/>`;
+  if(typeof v==='object') return html`<${CodeBox} value=${v}/>`;
+  if(typeof v==='string' && (v.length>60 || v.includes('\\n'))) return html`<${CodeBox} value=${v}/>`;
   return html`<span>${String(v)}</span>`;
-}
-
-function JsonBlock({text}){
-  const [copied,setCopied] = useState(false);
-  const copy = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(text)
-    .then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),1200); }); };
-  return html`<div class="jb">
-    <button class="copy" onClick=${copy}>${copied?'✓ copied':'copy'}</button>
-    <pre>${text}</pre>
-  </div>`;
 }
 
 render(html`<${App}/>`, document.getElementById('app'));
@@ -627,11 +731,11 @@ def _check_vendor_assets() -> None:
 
 @lru_cache(maxsize=1)
 def _vendor_js() -> str:
-    """Concatenate the vendored Preact/hooks/htm sources, load order preserved.
+    """Concatenate the vendored UI library sources, load order preserved.
 
     Returns:
-        The three UMD bundles joined with newlines, ready to inline into a
-        ``<script>`` element.
+        The Preact/hooks/htm UMD bundles plus the CodeMirror IIFE bundle joined
+        with newlines, ready to inline into a ``<script>`` element.
     """
     return "\n".join(
         (_VENDOR_DIR / name).read_text(encoding="utf-8") for name in _VENDOR_FILES

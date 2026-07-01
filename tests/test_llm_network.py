@@ -144,6 +144,35 @@ def test_chat_completion_records_usage(bare_llm, mocker):
     ]
 
 
+def test_chat_completion_captures_tools_on_event(bare_llm, mocker, tmp_path):
+    from my_coding_agent.observability.recorder import Recorder
+
+    bare_llm.api_url = "http://x/v1"
+    bare_llm.model = "m"
+    bare_llm._context_window = 8192  # avoid the lazy network probe
+    sdir = tmp_path / "sid"
+    sdir.mkdir()
+    bare_llm._recorder = Recorder(session_id="sid", session_dir=sdir)
+    tools = [{"type": "function", "function": {"name": "bash"}}]
+    req = mocker.patch.object(
+        bare_llm,
+        "_request_with_retry",
+        return_value=_Resp({"choices": [], "usage": {}}),
+    )
+    bare_llm.chat_completion(
+        [{"role": "user", "content": "q"}], tools=tools, kind="main"
+    )
+    # The request body still carries the tools (capture must not alter it).
+    assert req.call_args.kwargs["json"]["tools"] == tools
+    # And the recorded event carries the same tool definitions.
+    events = [
+        json.loads(line)
+        for line in (sdir / "events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert events[-1]["tools"] == tools
+
+
 def test_chat_completion_passes_max_tokens(bare_llm, mocker):
     bare_llm.api_url = "http://x/v1"
     bare_llm.model = "m"
