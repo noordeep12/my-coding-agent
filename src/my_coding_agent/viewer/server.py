@@ -169,6 +169,8 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tr-badge{font-size:11px;font-weight:600;border-radius:6px;padding:2px 9px}
 .tr-badge.ok{color:var(--pos);background:var(--pos-bg)}
 .tr-badge.err{color:var(--neg);background:var(--neg-bg)}
+.tr-badge.lat{color:var(--amber);background:var(--bg2)}
+.tr-badge.art{color:var(--sub);background:var(--sub-soft)}
 .tr-block{padding:12px 0 0}
 .tr-block:first-child{padding-top:0}
 .tr-block.muted{font-size:12px}
@@ -240,16 +242,21 @@ function jsonPathAt(state){
   }catch(e){ return []; }
 }
 
-// Coerce any input/output value into a document + language for the CodeBox:
-// objects/arrays and JSON-looking strings become pretty JSON; everything else
+// Coerce any input/output value into a document + language for the CodeBox.
+// An explicit `hint` from the backend (python/shell/json/text) wins; otherwise
+// objects/arrays and JSON-looking strings become pretty JSON and everything else
 // stays raw text.
-function toDoc(value){
+function toDoc(value, hint){
+  if(hint && hint!=='json' && hint!=='text'){
+    const text = typeof value==='string' ? value : JSON.stringify(value,null,2);
+    return {text, lang:hint};
+  }
   if(typeof value==='string'){
     const t = value.trim();
-    if(t && (t[0]==='{' || t[0]==='[')){
+    if(hint==='json' || (t && (t[0]==='{' || t[0]==='['))){
       try{ return {text:JSON.stringify(JSON.parse(value),null,2), lang:'json'}; }catch(e){}
     }
-    return {text:value, lang:'text'};
+    return {text:value, lang:hint||'text'};
   }
   return {text:JSON.stringify(value,null,2), lang:'json'};
 }
@@ -551,19 +558,29 @@ function ToolResult({node}){
   const raw = node.outputs && node.outputs.result;
   const r = parseToolResult(raw) || {};
   const cmd = cmdText(node.inputs && node.inputs.args);
+  const meta = r.metadata || {};
+  const lang = meta.lang || {};
+  const latency = node.attributes && node.attributes.latency_s;
   const hasResult = raw!=null && raw!=='';
-  // Render the WHOLE result envelope ({schema_version,tool,ok,output,error,
-  // metadata}) so nothing is hidden — an empty `output` with the real signal in
-  // `metadata.stderr`/`error` would otherwise look like "no output".
+  // Split the envelope into labelled, language-highlighted boxes (command /
+  // output / error) and always keep raw_envelope so nothing is hidden — an empty
+  // `output` with the real signal in `error` would otherwise look like "no
+  // output". Each box's language comes from the backend `metadata.lang` hint.
   return html`<div class="toolres">
     <div class="tr-head">
       ${r.tool ? html`<span class="tr-tool">${r.tool}</span>` : null}
       ${r.ok===true ? html`<span class="tr-badge ok">✓ success</span>`
         : r.ok===false ? html`<span class="tr-badge err">✗ error</span>` : null}
+      ${latency!=null ? html`<span class="tr-badge lat">⚡ ${latency}s</span>` : null}
+      ${meta.artifact===true ? html`<span class="tr-badge art">📦 artifact</span>` : null}
     </div>
     ${cmd ? html`<div class="tr-block"><div class="tr-label">command</div>
-      <${CodeBox} value=${cmd}/></div>` : null}
-    ${hasResult ? html`<div class="tr-block"><div class="tr-label">envelope</div>
+      <${CodeBox} value=${cmd} lang=${lang.command}/></div>` : null}
+    ${r.output ? html`<div class="tr-block"><div class="tr-label">output</div>
+      <${CodeBox} value=${r.output} lang=${lang.output}/></div>` : null}
+    ${r.error ? html`<div class="tr-block"><div class="tr-label err">error</div>
+      <${CodeBox} value=${r.error} lang=${lang.error}/></div>` : null}
+    ${hasResult ? html`<div class="tr-block"><div class="tr-label">raw_envelope</div>
       <${CodeBox} value=${r}/></div>`
       : html`<div class="tr-block muted">No result recorded.</div>`}
   </div>`;
@@ -586,8 +603,8 @@ function LlmOutputs({node}){
 // Mini read-only CodeMirror viewer: pretty JSON/text with syntax highlighting,
 // a clickable JSON breadcrumb, fold/expand all, copy all, and ⌘F find (with
 // Enter/Shift-Enter next/prev via CodeMirror's search keymap).
-function CodeBox({value}){
-  const {text,lang} = useMemo(()=>toDoc(value), [value]);
+function CodeBox({value, lang:hint}){
+  const {text,lang} = useMemo(()=>toDoc(value, hint), [value, hint]);
   const host = useRef(null);
   const viewRef = useRef(null);
   const [crumb,setCrumb] = useState([]);
@@ -615,6 +632,10 @@ function CodeBox({value}){
       exts.push(CM.EditorView.updateListener.of(u=>{
         if(u.selectionSet || u.docChanged) setCrumb(jsonPathAt(u.state));
       }));
+    } else if(lang==='python' && CM.python){
+      exts.push(CM.python());
+    } else if(lang==='shell' && CM.shell){
+      exts.push(CM.shell());
     }
     const view = new CM.EditorView({
       state: CM.EditorState.create({doc:text, extensions:exts}),
@@ -636,7 +657,7 @@ function CodeBox({value}){
         <span class="cb-crumb" onClick=${jump(0)}>root</span>
         ${crumb.map((c,i)=>html`<span key=${i}><span class="cb-sep">›</span>
           <span class="cb-crumb" onClick=${jump(c.from)}>${c.label}</span></span>`)}
-      </div>` : html`<div class="cb-crumbs muted">text</div>`}
+      </div>` : html`<div class="cb-crumbs muted">${lang}</div>`}
       <div class="cb-actions">
         <button class="cb-btn" title="Find (⌘F)" onClick=${run(CM.openSearchPanel)}>find</button>
         ${lang==='json' ? html`

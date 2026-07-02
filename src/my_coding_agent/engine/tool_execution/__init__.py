@@ -22,6 +22,7 @@ from .envelope import (
     result_envelope,
     validate_tool_result,
 )
+from .lang import resolve_lang
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
     PREVIEW_MAX_CHARS,
@@ -105,6 +106,7 @@ class ToolExecutor:
                 env = build_tool_result(
                     name, False, "", error, {"reason": "parse_error"}
                 )
+                env["metadata"]["lang"] = resolve_lang(name, {}, env)
                 self.tool_messages.append(
                     {
                         "role": "tool",
@@ -250,6 +252,7 @@ class ToolExecutor:
                 func_name, args, tool_call_id, env, is_artifact, is_truncated
             )
 
+        env["metadata"]["lang"] = resolve_lang(func_name, args, env)
         serialized = json.dumps(validate_tool_result(env), default=str)
         return capture(serialized), status, record
 
