@@ -6,19 +6,57 @@ tools therefore stay simple and need not know about the schema.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
 import html2text
 import httpx
 
-from ...observability.recorder import current_recorder
+from ...observability.recorder import current_recorder, current_session_id
 from ...utils.exceptions import PathTraversalError
 
 # Single source of truth for the large-tool-output boundary (chars). bash output
 # above this triggers artifact separation; tool_execution.MAX_TOOL_OUTPUT_CHARS
 # aliases this.
 ARTIFACT_THRESHOLD = 8_000
+
+# A tool_call_id doubles as a per-artifact filename; restrict it to a safe set so
+# a crafted id can never traverse out of the session's artifacts directory.
+_SAFE_ARTIFACT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def artifact_file_path(
+    session_id: str | None, tool_call_id: str, stream: str = "stdout"
+) -> Path | None:
+    """Return the on-disk path for a tool call's per-stream artifact file, or None.
+
+    Single source of truth for the per-artifact path scheme
+    ``.my_coding_agent/<session>/artifacts/<tool_call_id>.<stream>.txt``, shared by
+    the write side (executor) and the read side (``read_tool_artifact``) so the two
+    can never drift apart. Each output stream (``stdout``/``stderr``) is offloaded
+    to its own file so a large stream in either channel can be skimmed.
+
+    Returns None when there is no session id or the id is unsafe as a filename
+    (would traverse out of the artifacts directory). Performs no filesystem
+    I/O — callers create the directory and read/write the file.
+
+    Args:
+        session_id: The current session id, or None outside an agent run.
+        tool_call_id: The id whose artifact file path is requested.
+        stream: The output stream this file holds — ``stdout`` or ``stderr``.
+
+    Returns:
+        The artifact file path, or None when it cannot be safely constructed.
+    """
+    if not session_id or not _SAFE_ARTIFACT_ID.match(tool_call_id):
+        return None
+    return (
+        Path(".my_coding_agent")
+        / session_id
+        / "artifacts"
+        / f"{tool_call_id}.{stream}.txt"
+    )
 
 
 class ToolRegistry:
@@ -120,16 +158,28 @@ class ToolRegistry:
 
     def read_tool_artifact(self, tool_call_id: str) -> str:
         """Return the full stored output for a previous tool call by its id.
-        Use this when a bash or read_file result was summarized and you need
-        the complete content.
+
+        Prefer the preview and skim the on-disk artifact file with bash text tools
+        (grep/rg, sed, awk, jq, head/tail, wc) — that keeps only what you need in
+        context. Use this tool only when you deliberately need the whole output.
 
         Tags:
             artifact, output, result, retrieve
 
         Args:
-            tool_call_id: The tool_call_id from a previous call whose output
-                was summarized. Example: 'call_abc123'
+            tool_call_id: The tool_call_id from a previous call whose output was
+                offloaded. Example: 'call_abc123'
         """
+        # The per-stream files persist for the whole run, so this works from any
+        # step after the one that created it (unlike the per-step in-memory store).
+        # Resolve stdout first, then stderr; for a specific stream, skim the exact
+        # file path named in the preview guidance instead.
+        session_id = current_session_id.get()
+        for stream in ("stdout", "stderr"):
+            path = artifact_file_path(session_id, tool_call_id, stream)
+            if path is not None and path.exists():
+                return path.read_text()
+        # Fallback: in-memory store (same step, or when no session dir exists).
         artifact = self._artifacts.get(tool_call_id)
         if artifact is None:
             return f"Error: no artifact found for tool_call_id '{tool_call_id}'"

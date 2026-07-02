@@ -22,6 +22,13 @@ logger = get_logger(__name__)
 # boundary and this truncation boundary are the same concept (large tool output).
 MAX_TOOL_OUTPUT_CHARS = ARTIFACT_THRESHOLD
 
+# Preview budget for an offloaded artifact: only a bounded excerpt goes into the
+# tool result `output`; the full content stays on disk. Kept well under
+# ARTIFACT_THRESHOLD so the preview never itself approaches the offload boundary.
+PREVIEW_TOKEN_BUDGET = 500  # approx. tokens shown in the preview excerpt
+_CHARS_PER_TOKEN = 4  # rough chars/token estimate used only for budgeting
+PREVIEW_MAX_CHARS = PREVIEW_TOKEN_BUDGET * _CHARS_PER_TOKEN
+
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL | re.IGNORECASE)
 _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 
@@ -73,30 +80,60 @@ def validate_tool_output(
     return result
 
 
-def describe_artifact(artifact: dict, tool_call_id: str) -> str:
-    """Deterministically describe an offloaded artifact (no LLM), with a pointer.
-
-    Reports just enough for the agent to decide whether to fetch the full output
-    via ``read_tool_artifact`` — file metadata for file reads, exit status and
-    byte counts for command output.
-    """
-    if "content" in artifact:
-        summary = json.dumps(
-            {"file_path": artifact.get("file_path"), "size": artifact.get("size")}
-        )
-    else:
-        summary = json.dumps(
-            {
-                "exit_code": artifact.get("exit_code"),
-                "ok": artifact.get("ok"),
-                "stdout_chars": len(artifact.get("stdout", "")),
-                "stderr_chars": len(artifact.get("stderr", "")),
-            }
-        )
-    return summary + (
-        f"\n\n[Full output stored as artifact — use read_tool_artifact("
-        f'tool_call_id="{tool_call_id}") to inspect it.]'
+def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str:
+    """Build the inline guidance that steers the model to skim, not load whole."""
+    counts = (
+        f"showing {preview['shown_lines']}/{preview['total_lines']} lines, "
+        f"{preview['shown_bytes']}/{preview['total_bytes']} bytes"
     )
+    if full_output_path:
+        p = full_output_path
+        return (
+            f"[Preview: {counts}. Full output on disk at {p}. Do NOT read the whole "
+            f"file — skim it with bash text tools: grep/rg '<pattern>' {p}; "
+            f"sed -n '<start>,<end>p' {p}; awk; jq (JSON); head/tail; wc -l {p}.]"
+        )
+    return (
+        f"[Preview: {counts}. Do NOT load the whole output — inspect only what you "
+        "need via read_tool_artifact(tool_call_id=...).]"
+    )
+
+
+def build_stream_preview(
+    text: str, full_output_path: str | None
+) -> tuple[str, dict[str, int | str | None]]:
+    """Build the agent-facing field value and the ``preview`` descriptor for a stream.
+
+    Returns ``(value, preview)`` where ``value`` is a token-bounded excerpt of the
+    stream followed by inline skim guidance, and ``preview`` carries the shown/total
+    line and byte counts plus the full-output file path. The full stream is never
+    returned — only the bounded excerpt. Used for stdout (→ ``output``) and stderr
+    (→ ``error``) alike.
+    """
+    total_bytes = len(text)
+    total_lines = text.count("\n") + 1 if text else 0
+
+    excerpt = text[:PREVIEW_MAX_CHARS]
+    if len(text) > PREVIEW_MAX_CHARS:
+        cut = excerpt.rfind("\n")
+        if cut > 0:
+            excerpt = excerpt[:cut]  # trim to a whole line for readability
+    shown_bytes = len(excerpt)
+    shown_lines = excerpt.count("\n") + 1 if excerpt else 0
+
+    counts = {
+        "shown_lines": shown_lines,
+        "total_lines": total_lines,
+        "shown_bytes": shown_bytes,
+        "total_bytes": total_bytes,
+    }
+    guidance = _skim_guidance(full_output_path, counts)
+    output = f"{excerpt}\n\n{guidance}" if excerpt else guidance
+    preview: dict[str, int | str | None] = {
+        **counts,
+        "full_output_path": full_output_path,
+    }
+    return output, preview
 
 
 def summarize_artifact(

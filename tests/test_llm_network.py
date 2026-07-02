@@ -376,23 +376,27 @@ def test_invoke_tool_plain_string_not_truncated(bare_executor, tmp_path):
     assert record["truncated"] is False
 
 
-def test_invoke_tool_artifact_tuple_is_described(bare_executor, mocker):
-    """A (None, dict) artifact tuple is offloaded and described deterministically
-    (no LLM) — the full output is stored, the agent gets a pointer."""
+def test_invoke_tool_artifact_tuple_is_previewed(bare_executor, mocker):
+    """A (None, dict) artifact tuple with a large stdout is offloaded: the agent
+    gets a bounded preview excerpt + skim guidance (not the whole blob)."""
     bare_executor.llm._session_log_path = None
+    from my_coding_agent.engine.tool_execution.output import PREVIEW_MAX_CHARS
+
+    body = "x" * (PREVIEW_MAX_CHARS * 2) + "TAILZZZ"
     mocker.patch.object(
         ToolsRegistry,
         "bash",
         lambda self, command, timeout=60: (
             None,
-            {"exit_code": 0, "ok": True, "stdout": "x", "stderr": ""},
+            {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
         ),
     )
     env, status, record = _invoke(
         bare_executor, "c1", "bash", {"command": "x"}, ToolsRegistry()
     )
-    assert '"exit_code": 0' in env["output"]
-    assert 'read_tool_artifact(tool_call_id="c1")' in env["output"]
+    assert "[Preview:" in env["output"]
+    assert "TAILZZZ" not in env["output"]  # bounded, not the whole blob
+    assert env["metadata"]["preview"]["stdout"]["total_bytes"] == len(body)
     assert record["artifact"] is True
     assert bare_executor.tool_artifacts["c1"]["exit_code"] == 0
 

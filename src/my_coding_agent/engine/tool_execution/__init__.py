@@ -2,8 +2,9 @@
 
 Defines ``ToolExecutor``, constructed per message: it parses and validates each
 raw tool call, applies argument aliases and strips unknown kwargs, dispatches
-through the ``ToolRegistry``, and separates oversized outputs into artifacts —
-described deterministically. It makes no LLM calls itself; the LLM client is held
+through the ``ToolRegistry``, and offloads oversized outputs: each is written to
+a per-artifact file on disk and replaced in the result by a bounded preview (an
+excerpt plus skim guidance). It makes no LLM calls itself; the LLM client is held
 only for the session log path and the observability recorder.
 """
 
@@ -12,22 +13,25 @@ import json
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from ...observability import current_session_id
 from ...utils import get_logger
-from ..tool_registry import ToolRegistry
+from ..tool_registry import ToolRegistry, artifact_file_path
 from . import args as arg_prep
-from .output import (
-    MAX_TOOL_OUTPUT_CHARS,
-    _extract_summary,
-    describe_artifact,
-    validate_tool_output,
-)
-from .records import call_record, error_record
-from .schema import (
-    TOOL_SCHEMA_VERSION,
+from .envelope import (
     build_tool_result,
     result_envelope,
     validate_tool_result,
 )
+from .lang import resolve_lang
+from .output import (
+    MAX_TOOL_OUTPUT_CHARS,
+    PREVIEW_MAX_CHARS,
+    _extract_summary,
+    build_stream_preview,
+    validate_tool_output,
+)
+from .records import call_record, error_record
+from .schema import TOOL_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from ..llm import LLM
@@ -52,10 +56,11 @@ _RECOVERABLE_EXCEPTIONS = (
     subprocess.TimeoutExpired,  # belt-and-suspenders (bash catches this itself)
 )
 
-# Data contract, output post-processing, and argument prep live in the sibling
-# modules schema / output / args; the executor below composes them. The
-# canonical schema (build/validate/envelope), the truncation limit
-# (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported above.
+# Data contract, envelope builders, output post-processing, and argument prep
+# live in the sibling modules schema / envelope / output / args; the executor
+# below composes them. The envelope builders (build/validate/normalize), the
+# truncation limit (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported
+# above.
 
 
 class ToolExecutor:
@@ -101,6 +106,7 @@ class ToolExecutor:
                 env = build_tool_result(
                     name, False, "", error, {"reason": "parse_error"}
                 )
+                env["metadata"]["lang"] = resolve_lang(name, {}, env)
                 self.tool_messages.append(
                     {
                         "role": "tool",
@@ -195,10 +201,10 @@ class ToolExecutor:
         """Turn the tool's raw return (or failure) into (content, status, record).
 
         On failure, builds the error envelope from the ``{reason, error}``
-        descriptor. On success, offloads artifact tuples (described
-        deterministically — no LLM), coerces to str, truncates, and normalizes
-        into the canonical envelope. Serializes, then lets the recorder capture
-        the final agent-facing content.
+        descriptor. On success, offloads artifact tuples (writing each to a
+        per-artifact file and replacing it with a bounded preview — no LLM),
+        coerces to str, truncates, and normalizes into the canonical envelope.
+        Serializes, then lets the recorder capture the final agent-facing content.
         """
 
         def capture(content: str) -> str:
@@ -215,10 +221,12 @@ class ToolExecutor:
             record = error_record(func_name, args, tool_call_id, failure["error"])
         else:
             is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
+            preview: dict[str, Any] | None = None
+            error: str | None = None
             if is_artifact:
                 _, artifact = raw_result
                 self.tool_artifacts[tool_call_id] = artifact
-                result = describe_artifact(artifact, tool_call_id)
+                result, error, preview = self._offload_streams(tool_call_id, artifact)
             else:
                 result = raw_result
             if not isinstance(result, str):
@@ -237,10 +245,84 @@ class ToolExecutor:
                 is_truncated,
                 tool_call_id,
                 self.tool_artifacts.get(tool_call_id),
+                preview=preview,
+                error=error,
             )
             status, record = call_record(
                 func_name, args, tool_call_id, env, is_artifact, is_truncated
             )
 
+        env["metadata"]["lang"] = resolve_lang(func_name, args, env)
         serialized = json.dumps(validate_tool_result(env), default=str)
         return capture(serialized), status, record
+
+    def _offload_streams(
+        self, tool_call_id: str, artifact: dict[str, Any]
+    ) -> tuple[str, str | None, dict[str, Any]]:
+        """Bound each output stream of an offloaded command artifact independently.
+
+        Returns ``(output, error, preview)``: ``output`` is the composed stdout
+        (bounded preview when large, else inline), ``error`` is the composed stderr
+        (preview, inline, or ``None`` when empty), and ``preview`` maps each stream
+        that was previewed to its descriptor.
+        """
+        preview: dict[str, Any] = {}
+        output, out_desc = self._offload_stream(
+            tool_call_id, "stdout", artifact.get("stdout") or ""
+        )
+        if out_desc is not None:
+            preview["stdout"] = out_desc
+        error, err_desc = self._offload_stream(
+            tool_call_id, "stderr", artifact.get("stderr") or ""
+        )
+        if err_desc is not None:
+            preview["stderr"] = err_desc
+        return output, (error or None), preview
+
+    def _offload_stream(
+        self, tool_call_id: str, stream: str, text: str
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Return ``(field_value, preview_descriptor)`` for one output stream.
+
+        Small streams (within the preview budget) are inlined with no descriptor
+        and no file; larger streams are written to a per-stream file and replaced
+        with a bounded excerpt + skim guidance.
+        """
+        if len(text) <= PREVIEW_MAX_CHARS:
+            return text, None
+        path = self._write_artifact_file(tool_call_id, stream, text)
+        return build_stream_preview(text, path)
+
+    def _write_artifact_file(
+        self, tool_call_id: str, stream: str, text: str
+    ) -> str | None:
+        """Write a stream's full content to its per-run file so bash can skim it.
+
+        The file lives at
+        ``.my_coding_agent/<session>/artifacts/<tool_call_id>.<stream>.txt`` and
+        persists for the run, so a later step can inspect it with bash text tools.
+        Returns the path, or ``None`` when the session directory or id is
+        unavailable (e.g. unit tests invoking the executor without an agent run),
+        or when the write itself fails (full disk / permissions) — a failed write
+        is logged and downgraded to "no on-disk copy" so offloading continues
+        rather than aborting the run.
+        """
+        path = artifact_file_path(current_session_id.get(), tool_call_id, stream)
+        if path is None:
+            return None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        except OSError as exc:
+            # A full disk or bad permissions must not abort the run: offloading
+            # and the preview continue without an on-disk copy (the preview
+            # guidance falls back to read_tool_artifact when the path is None).
+            self.logger.warning(
+                "artifact write failed for %s (%s) at %s: %s",
+                tool_call_id,
+                stream,
+                path,
+                exc,
+            )
+            return None
+        return str(path)

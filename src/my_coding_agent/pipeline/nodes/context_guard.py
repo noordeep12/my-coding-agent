@@ -1,4 +1,4 @@
-"""ContextPreflightNode — check context usage before each step."""
+"""ContextGuardNode — guard each step on the context-window budget."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from ..node import BaseNode
 _logger = get_logger(__name__)
 
 
-class ContextPreflightNode(BaseNode):
+class ContextGuardNode(BaseNode):
     """Check the context-window usage ratio and signal STOP or RESET as needed.
 
     When the ratio hits 100 % the node sets signal=STOP (context exhausted).
@@ -28,7 +28,7 @@ class ContextPreflightNode(BaseNode):
         t_start: monotonic start time for elapsed-seconds accounting on reset.
     """
 
-    name = "context_preflight"
+    name = "context_guard"
 
     def __init__(
         self,

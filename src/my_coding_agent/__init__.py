@@ -6,7 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from .engine import DEFAULT_MAX_STEPS, LLM, AgentNode, ToolRegistry, tool
-from .pipeline.nodes.handoff import ContextHandoff
+from .pipeline.schema import ContextHandoff
 from .utils.exceptions import (
     APIResponseError,
     MyCodingAgentError,

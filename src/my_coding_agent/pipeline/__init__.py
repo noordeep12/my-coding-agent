@@ -4,19 +4,18 @@ from __future__ import annotations
 
 from typing import Callable
 
+from ..engine.routing import ToolRouter
 from .context import RunContext
 from .dag import Pipeline
 from .node import BaseNode, Node
 from .nodes import (
-    ContextPreflightNode,
-    FinishCheckNode,
+    ContextGuardNode,
+    FinalizeStepNode,
     LLMCallNode,
-    TokenTrackingNode,
     ToolDispatchNode,
     ToolRoutingNode,
 )
-from .nodes.handoff import ContextHandoff
-from .nodes.router import ToolRouter
+from .schema import ContextHandoff
 
 __all__ = [
     "RunContext",
@@ -25,10 +24,9 @@ __all__ = [
     "BaseNode",
     "ContextHandoff",
     "ToolRouter",
-    "ContextPreflightNode",
-    "FinishCheckNode",
+    "ContextGuardNode",
+    "FinalizeStepNode",
     "LLMCallNode",
-    "TokenTrackingNode",
     "ToolDispatchNode",
     "ToolRoutingNode",
     "build_default_pipeline",
@@ -38,21 +36,20 @@ __all__ = [
 def build_default_pipeline(
     spawn_fn: Callable[[], list[dict]] | None = None,
 ) -> Pipeline:
-    """Return a Pipeline with the standard 6-node agentic loop.
+    """Return a Pipeline with the standard 5-node agentic loop.
 
     Args:
-        spawn_fn: Optional callable passed to ``ContextPreflightNode`` for
+        spawn_fn: Optional callable passed to ``ContextGuardNode`` for
             spawning continuation agents on context reset.  ``Agent`` passes
             ``self._spawn_continuation`` here to avoid a circular import between
             this package and ``agent.py``.
     """
     return Pipeline(
         [
-            ContextPreflightNode(spawn_fn=spawn_fn),
+            ContextGuardNode(spawn_fn=spawn_fn),
             ToolRoutingNode(),
             LLMCallNode(),
             ToolDispatchNode(),
-            TokenTrackingNode(),
-            FinishCheckNode(),
+            FinalizeStepNode(),
         ]
     )

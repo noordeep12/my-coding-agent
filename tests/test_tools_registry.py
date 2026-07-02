@@ -13,6 +13,7 @@ import pytest
 from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS
 from my_coding_agent.engine.tool_registry import ARTIFACT_THRESHOLD
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
+from my_coding_agent.observability import current_session_id
 
 # --- read_file / write_file --------------------------------------------------
 
@@ -80,6 +81,43 @@ def test_read_tool_artifact_missing():
     reg = ToolsRegistry(artifacts={})
     out = reg.read_tool_artifact("nope")
     assert "no artifact found" in out
+
+
+def test_read_tool_artifact_reads_session_file_cross_step(tmp_path, monkeypatch):
+    """Regression for #64: a later step's registry has an empty in-memory store,
+    yet retrieval still succeeds by reading the on-disk per-artifact file."""
+    monkeypatch.chdir(tmp_path)
+    art_dir = tmp_path / ".my_coding_agent" / "sessX" / "artifacts"
+    art_dir.mkdir(parents=True)
+    (art_dir / "call9.stdout.txt").write_text("FULL CONTENT")
+    token = current_session_id.set("sessX")
+    try:
+        reg = ToolsRegistry(artifacts={})  # empty, like a later step's registry
+        assert reg.read_tool_artifact("call9") == "FULL CONTENT"
+    finally:
+        current_session_id.reset(token)
+
+
+def test_read_tool_artifact_missing_file_falls_back_to_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    token = current_session_id.set("sessX")
+    try:
+        reg = ToolsRegistry(artifacts={})
+        assert "no artifact found" in reg.read_tool_artifact("absent")
+    finally:
+        current_session_id.reset(token)
+
+
+def test_read_tool_artifact_rejects_unsafe_id(tmp_path, monkeypatch):
+    """A crafted id cannot traverse out of the artifacts directory; it skips the
+    file path and falls back to the in-memory store (miss → error)."""
+    monkeypatch.chdir(tmp_path)
+    token = current_session_id.set("sessX")
+    try:
+        reg = ToolsRegistry(artifacts={})
+        assert "no artifact found" in reg.read_tool_artifact("../../etc/passwd")
+    finally:
+        current_session_id.reset(token)
 
 
 # --- bash --------------------------------------------------------------------

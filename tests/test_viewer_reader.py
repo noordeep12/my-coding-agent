@@ -433,6 +433,31 @@ class TestLoadSession:
         assert session.analytics["tool_call_count"] == 1
         assert session.analytics["total_tokens"] == 380  # 150 + 230
 
+    def test_finalize_step_merges_token_tracking_and_finish_check(self, tmp_path):
+        # FinalizeStepNode emits token_tracking + finish_check as two events;
+        # the trace must render them as a single finalize_step node with the
+        # attributes of both combined.
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))
+        session = load_session(ep)
+
+        finalize = [n for n in session.nodes.values() if n.type == "finalize_step"]
+        assert len(finalize) == 1
+        assert not any(
+            n.type in ("token_tracking", "finish_check") for n in session.nodes.values()
+        )
+        node = finalize[0]
+        assert node.label == "FinalizeStepNode"
+        # token-tracking attributes
+        assert node.attributes["prompt_tokens"] == 100
+        assert node.attributes["total_tokens"] == 150
+        # finish-check attributes, on the same node
+        assert node.attributes["finish_reason"] == "tool_use"
+        assert node.attributes["signal"] == "CONTINUE"
+
     def test_fallback_when_no_events_jsonl(self, tmp_path):
         sid = "deadbeef0000"
         sdir = tmp_path / sid

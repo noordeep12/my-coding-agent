@@ -1,9 +1,9 @@
 """Tests for the pipeline/ package: Pipeline, nodes, and RunContext.
 
-Node unit tests for ContextPreflightNode, TokenTrackingNode, and _routing_signal
-live in test_agent.py alongside the Agent integration tests that exercise those
-same nodes end-to-end.  This file covers the remaining nodes and the pipeline
-engine itself.
+Node unit tests for ContextGuardNode, FinalizeStepNode token tracking, and
+_routing_signal live in test_agent.py alongside the Agent integration tests that
+exercise those same nodes end-to-end.  This file covers the remaining nodes and
+the pipeline engine itself.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from my_coding_agent.engine.llm import LLM
 from my_coding_agent.pipeline.context import RunContext
 from my_coding_agent.pipeline.dag import Pipeline
 from my_coding_agent.pipeline.node import BaseNode
-from my_coding_agent.pipeline.nodes.finish_check import FinishCheckNode
+from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
 from my_coding_agent.pipeline.nodes.llm_call import LLMCallNode
 from my_coding_agent.pipeline.nodes.tool_dispatch import ToolDispatchNode
 from my_coding_agent.pipeline.nodes.tool_routing import ToolRoutingNode
@@ -59,7 +59,7 @@ class _Resp:
 
 
 # ---------------------------------------------------------------------------
-# FinishCheckNode
+# FinalizeStepNode
 # ---------------------------------------------------------------------------
 
 
@@ -68,7 +68,7 @@ def test_finish_check_stop_on_stop_reason():
     ctx.last_response = _Resp(
         {"choices": [{"message": {"role": "assistant"}, "finish_reason": "stop"}]}
     )
-    FinishCheckNode().run(ctx)
+    FinalizeStepNode().run(ctx)
     assert ctx.signal == "STOP"
     assert ctx.stop_reason == "stop"
 
@@ -78,7 +78,7 @@ def test_finish_check_stop_on_quit():
     ctx.last_response = _Resp(
         {"choices": [{"message": {"role": "assistant"}, "finish_reason": "quit"}]}
     )
-    FinishCheckNode().run(ctx)
+    FinalizeStepNode().run(ctx)
     assert ctx.signal == "STOP"
 
 
@@ -87,14 +87,14 @@ def test_finish_check_continue_on_tool_calls():
     ctx.last_response = _Resp(
         {"choices": [{"message": {"role": "assistant"}, "finish_reason": "tool_calls"}]}
     )
-    FinishCheckNode().run(ctx)
+    FinalizeStepNode().run(ctx)
     assert ctx.signal == "CONTINUE"
 
 
 def test_finish_check_continue_on_missing_reason():
     ctx = _make_ctx()
     ctx.last_response = _Resp({})
-    FinishCheckNode().run(ctx)
+    FinalizeStepNode().run(ctx)
     assert ctx.signal == "CONTINUE"
 
 

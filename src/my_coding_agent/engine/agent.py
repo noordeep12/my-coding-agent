@@ -13,7 +13,7 @@ from ..observability import Recorder, current_session_id
 from ..observability.recorder import current_recorder
 from ..pipeline.context import RunContext
 from ..pipeline.node import BaseNode
-from ..pipeline.nodes.handoff import ContextHandoff
+from ..pipeline.schema import ContextHandoff
 from ..utils import (
     attach_session_log,
     detach_session_log,
