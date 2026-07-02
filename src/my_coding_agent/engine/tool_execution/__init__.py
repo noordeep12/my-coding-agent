@@ -2,8 +2,9 @@
 
 Defines ``ToolExecutor``, constructed per message: it parses and validates each
 raw tool call, applies argument aliases and strips unknown kwargs, dispatches
-through the ``ToolRegistry``, and separates oversized outputs into artifacts —
-described deterministically. It makes no LLM calls itself; the LLM client is held
+through the ``ToolRegistry``, and offloads oversized outputs: each is written to
+a per-artifact file on disk and replaced in the result by a bounded preview (an
+excerpt plus skim guidance). It makes no LLM calls itself; the LLM client is held
 only for the session log path and the observability recorder.
 """
 
@@ -198,10 +199,10 @@ class ToolExecutor:
         """Turn the tool's raw return (or failure) into (content, status, record).
 
         On failure, builds the error envelope from the ``{reason, error}``
-        descriptor. On success, offloads artifact tuples (described
-        deterministically — no LLM), coerces to str, truncates, and normalizes
-        into the canonical envelope. Serializes, then lets the recorder capture
-        the final agent-facing content.
+        descriptor. On success, offloads artifact tuples (writing each to a
+        per-artifact file and replacing it with a bounded preview — no LLM),
+        coerces to str, truncates, and normalizes into the canonical envelope.
+        Serializes, then lets the recorder capture the final agent-facing content.
         """
 
         def capture(content: str) -> str:
