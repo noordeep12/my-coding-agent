@@ -19,7 +19,7 @@ src/my_coding_agent/
 │   │   ├── schema.py            ← Canonical envelope shapes (version, keys, preview descriptor)
 │   │   ├── envelope.py          ← Envelope builders: build/validate/normalize
 │   │   ├── args.py              ← Tool-call parse + alias remap + kwarg strip
-│   │   ├── output.py            ← Truncation + artifact preview (bounded excerpt + skim guidance)
+│   │   ├── output.py            ← Truncation + artifact preview builder (bounded excerpt + skim guidance)
 │   │   └── records.py           ← Call-record builders (error_record, call_record)
 │   └── tool_registry/           ← ToolRegistry class + tool definition converter
 │       ├── __init__.py          ← Re-export facade (ToolRegistry, tool)

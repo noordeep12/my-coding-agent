@@ -116,7 +116,7 @@ def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str
 
 def build_artifact_preview(
     artifact: Any, full_output_path: str | None
-) -> "tuple[str, dict[str, int | str | None]]":
+) -> tuple[str, dict[str, int | str | None]]:
     """Build the agent-facing ``output`` and the ``preview`` metadata descriptor.
 
     Returns ``(output, preview)`` where ``output`` is a token-bounded excerpt of
