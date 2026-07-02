@@ -23,7 +23,7 @@ src/my_coding_agent/
 │   └── tool_registry/           ← ToolRegistry class + tool definition converter
 │       ├── __init__.py          ← Re-export facade (ToolRegistry, tool)
 │       ├── converter.py         ← function_to_json + tool decorator
-│       ├── registry.py          ← ToolRegistry: callable tool methods
+│       ├── registry.py          ← ToolRegistry methods + artifact_file_path (path scheme SoT)
 │       └── schema.py            ← Tool definition JSON shape constants
 │
 ├── pipeline/                    ← Pure DAG building and execution
@@ -89,7 +89,7 @@ Holds the LLM client and selects the relevant tool subset for a message via **`r
 
 Constructed **per assistant message** (`ToolExecutor(message, llm, tools=ctx.all_tools)`). Runs `before_tool_call` → `invoke_tool` → `after_tool_call` per call. Returns tool messages and records. Normalizes all results into the canonical `{schema_version, tool, ok, output, error, metadata}` envelope. Forwards the run's toolset to the `ToolRegistry` so toolset-aware tools (notably `delegate`) can read it.
 
-When a tool output is large enough to offload (above `ARTIFACT_THRESHOLD`), `after_tool_call` writes the **full body to a per-artifact file** at `.my_coding_agent/<session>/artifacts/<tool_call_id>.txt` at creation time, and the envelope carries only a **bounded preview**: `output` holds a token-bounded excerpt followed by inline guidance to skim that file with bash text tools (`grep`/`rg`, `sed`, `awk`, `jq`, `head`/`tail`, `wc`) rather than load it whole; `metadata.preview` describes it (shown/total line and byte counts + `full_output_path`). The full raw output never enters the context window. Because the file persists for the run, any later step can inspect it — this is why cross-step retrieval works.
+When a tool output is large enough to offload (above `ARTIFACT_THRESHOLD`), `after_tool_call` writes the **full body to a per-artifact file** at `.my_coding_agent/<session>/artifacts/<tool_call_id>.txt` at creation time, and the envelope carries only a **bounded preview**: `output` holds a token-bounded excerpt followed by inline guidance to skim that file with bash text tools (`grep`/`rg`, `sed`, `awk`, `jq`, `head`/`tail`, `wc`) rather than load it whole; `metadata.preview` describes it (shown/total line and byte counts + `full_output_path`). The full raw output never enters the context window. Because the file persists for the run, any later step can inspect it — this is why cross-step retrieval works. The path scheme (and its safe-id guard) lives in one place, `tool_registry.artifact_file_path`, shared by the write side (executor) and the read side (`read_tool_artifact`) so the two can never drift.
 
 ### `pipeline/` — DAG Building and Execution
 

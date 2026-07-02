@@ -26,6 +26,30 @@ ARTIFACT_THRESHOLD = 8_000
 _SAFE_ARTIFACT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
+def artifact_file_path(session_id: str | None, tool_call_id: str) -> Path | None:
+    """Return the on-disk path for a tool call's artifact file, or None.
+
+    Single source of truth for the per-artifact path scheme
+    ``.my_coding_agent/<session>/artifacts/<tool_call_id>.txt``, shared by the
+    write side (executor) and the read side (``read_tool_artifact``) so the two
+    can never drift apart.
+
+    Returns None when there is no session id or the id is unsafe as a filename
+    (would traverse out of the artifacts directory). Performs no filesystem
+    I/O — callers create the directory and read/write the file.
+
+    Args:
+        session_id: The current session id, or None outside an agent run.
+        tool_call_id: The id whose artifact file path is requested.
+
+    Returns:
+        The artifact file path, or None when it cannot be safely constructed.
+    """
+    if not session_id or not _SAFE_ARTIFACT_ID.match(tool_call_id):
+        return None
+    return Path(".my_coding_agent") / session_id / "artifacts" / f"{tool_call_id}.txt"
+
+
 class ToolRegistry:
     """Hold the callable tools exposed to the agent.
 
@@ -139,16 +163,9 @@ class ToolRegistry:
         """
         # The per-artifact file persists for the whole run, so this works from any
         # step after the one that created it (unlike the per-step in-memory store).
-        session_id = current_session_id.get()
-        if session_id and _SAFE_ARTIFACT_ID.match(tool_call_id):
-            path = (
-                Path(".my_coding_agent")
-                / session_id
-                / "artifacts"
-                / f"{tool_call_id}.txt"
-            )
-            if path.exists():
-                return path.read_text()
+        path = artifact_file_path(current_session_id.get(), tool_call_id)
+        if path is not None and path.exists():
+            return path.read_text()
         # Fallback: in-memory store (same step, or when no session dir exists).
         artifact = self._artifacts.get(tool_call_id)
         if artifact is None:

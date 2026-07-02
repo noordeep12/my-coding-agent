@@ -9,14 +9,12 @@ only for the session log path and the observability recorder.
 
 import inspect
 import json
-import re
 import subprocess
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...observability import current_session_id
 from ...utils import get_logger
-from ..tool_registry import ToolRegistry
+from ..tool_registry import ToolRegistry, artifact_file_path
 from . import args as arg_prep
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
@@ -60,10 +58,6 @@ _RECOVERABLE_EXCEPTIONS = (
 # modules schema / output / args; the executor below composes them. The
 # canonical schema (build/validate/envelope), the truncation limit
 # (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported above.
-
-# A tool_call_id is used as a per-artifact filename; restrict it to a safe set so
-# a crafted id can never traverse out of the session's artifacts directory.
-_SAFE_ARTIFACT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ToolExecutor:
@@ -264,11 +258,9 @@ class ToolExecutor:
         tools. Returns the path, or ``None`` when the session directory or id is
         unavailable (e.g. unit tests invoking the executor without an agent run).
         """
-        session_id = current_session_id.get()
-        if not session_id or not _SAFE_ARTIFACT_ID.match(tool_call_id):
+        path = artifact_file_path(current_session_id.get(), tool_call_id)
+        if path is None:
             return None
-        art_dir = Path(".my_coding_agent") / session_id / "artifacts"
-        art_dir.mkdir(parents=True, exist_ok=True)
-        path = art_dir / f"{tool_call_id}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(artifact_text(artifact))
         return str(path)
