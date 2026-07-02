@@ -256,11 +256,23 @@ class ToolExecutor:
         The file lives at ``.my_coding_agent/<session>/artifacts/<tool_call_id>.txt``
         and persists for the run, so a later step can inspect it with bash text
         tools. Returns the path, or ``None`` when the session directory or id is
-        unavailable (e.g. unit tests invoking the executor without an agent run).
+        unavailable (e.g. unit tests invoking the executor without an agent run),
+        or when the write itself fails (full disk / permissions) — a failed write
+        is logged and downgraded to "no on-disk copy" so offloading continues
+        rather than aborting the run.
         """
         path = artifact_file_path(current_session_id.get(), tool_call_id)
         if path is None:
             return None
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(artifact_text(artifact))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(artifact_text(artifact))
+        except OSError as exc:
+            # A full disk or bad permissions must not abort the run: offloading
+            # and the preview continue without an on-disk copy (the preview
+            # guidance falls back to read_tool_artifact when the path is None).
+            self.logger.warning(
+                "artifact write failed for %s at %s: %s", tool_call_id, path, exc
+            )
+            return None
         return str(path)

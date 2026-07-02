@@ -407,3 +407,40 @@ def test_executor_writes_artifact_file_and_omits_full_output(
     assert "TAILMARKER" not in env["output"]  # full output NOT in the envelope
     assert env["metadata"]["preview"]["full_output_path"].endswith("call1.txt")
     assert env["metadata"]["preview"]["total_bytes"] == len(body)
+
+
+def test_write_artifact_file_returns_none_on_oserror(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """A failed artifact write (full disk / permissions) must not abort the run:
+    ``_write_artifact_file`` returns None and the offload still yields a valid
+    envelope with no on-disk copy (preview falls back to read_tool_artifact)."""
+    monkeypatch.chdir(tmp_path)
+    body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAILMARKER"
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
+        ),
+    )
+
+    def _boom(self, *_args, **_kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr("pathlib.Path.write_text", _boom)
+
+    token = current_session_id.set("sess123")
+    try:
+        env, status, _record = _invoke(
+            bare_executor, "call1", "bash", {"command": "x"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    art = tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.txt"
+    assert not art.exists()  # no on-disk copy was written
+    assert status == "success"  # offload continued despite the write failure
+    assert env["metadata"]["artifact"] is True
+    assert env["metadata"]["preview"]["full_output_path"] is None
