@@ -6,19 +6,24 @@ tools therefore stay simple and need not know about the schema.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
 import html2text
 import httpx
 
-from ...observability.recorder import current_recorder
+from ...observability.recorder import current_recorder, current_session_id
 from ...utils.exceptions import PathTraversalError
 
 # Single source of truth for the large-tool-output boundary (chars). bash output
 # above this triggers artifact separation; tool_execution.MAX_TOOL_OUTPUT_CHARS
 # aliases this.
 ARTIFACT_THRESHOLD = 8_000
+
+# A tool_call_id doubles as a per-artifact filename; restrict it to a safe set so
+# a crafted id can never traverse out of the session's artifacts directory.
+_SAFE_ARTIFACT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ToolRegistry:
@@ -120,16 +125,31 @@ class ToolRegistry:
 
     def read_tool_artifact(self, tool_call_id: str) -> str:
         """Return the full stored output for a previous tool call by its id.
-        Use this when a bash or read_file result was summarized and you need
-        the complete content.
+
+        Prefer the preview and skim the on-disk artifact file with bash text tools
+        (grep/rg, sed, awk, jq, head/tail, wc) — that keeps only what you need in
+        context. Use this tool only when you deliberately need the whole output.
 
         Tags:
             artifact, output, result, retrieve
 
         Args:
-            tool_call_id: The tool_call_id from a previous call whose output
-                was summarized. Example: 'call_abc123'
+            tool_call_id: The tool_call_id from a previous call whose output was
+                offloaded. Example: 'call_abc123'
         """
+        # The per-artifact file persists for the whole run, so this works from any
+        # step after the one that created it (unlike the per-step in-memory store).
+        session_id = current_session_id.get()
+        if session_id and _SAFE_ARTIFACT_ID.match(tool_call_id):
+            path = (
+                Path(".my_coding_agent")
+                / session_id
+                / "artifacts"
+                / f"{tool_call_id}.txt"
+            )
+            if path.exists():
+                return path.read_text()
+        # Fallback: in-memory store (same step, or when no session dir exists).
         artifact = self._artifacts.get(tool_call_id)
         if artifact is None:
             return f"Error: no artifact found for tool_call_id '{tool_call_id}'"

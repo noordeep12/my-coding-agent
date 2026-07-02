@@ -21,8 +21,14 @@ from my_coding_agent.engine.tool_execution import (
     output,
     validate_tool_result,
 )
+from my_coding_agent.engine.tool_execution.output import (
+    PREVIEW_MAX_CHARS,
+    artifact_text,
+    build_artifact_preview,
+)
 from my_coding_agent.engine.tool_execution.schema import result_envelope
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
+from my_coding_agent.observability import current_session_id
 
 
 def test_extract_summary_prefers_summary_tags():
@@ -332,3 +338,72 @@ def test_executor_forwards_tools_to_registry(bare_llm):
 def test_executor_defaults_to_empty_toolset(bare_llm):
     executor = ToolExecutor({"tool_calls": []}, bare_llm)
     assert executor.registry._tools == []
+
+
+# ── artifact preview: bounded excerpt + skim guidance in `output` ─────────────
+
+
+def test_artifact_text_prefers_stdout_and_appends_stderr():
+    assert artifact_text({"stdout": "out", "stderr": "", "ok": True}) == "out"
+    assert (
+        artifact_text({"stdout": "out", "stderr": "err"}) == "out\n--- stderr ---\nerr"
+    )
+    assert artifact_text({"k": "v"}) == json.dumps({"k": "v"}, indent=2)
+
+
+def test_build_artifact_preview_bounds_output_and_reports_true_totals():
+    body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAILMARKER"
+    art = {"stdout": body, "stderr": "", "ok": True, "exit_code": 0}
+    output_text, preview = build_artifact_preview(art, "/s/artifacts/c1.txt")
+    # Bounded: the whole body (and its tail) is NOT in the agent-facing output.
+    assert "TAILMARKER" not in output_text
+    assert len(output_text) < len(body)
+    # True totals reported; excerpt is smaller than the full body.
+    assert preview["total_bytes"] == len(body)
+    assert preview["shown_bytes"] < preview["total_bytes"]
+    assert preview["full_output_path"] == "/s/artifacts/c1.txt"
+    # Guidance is inline in output, naming the path + skim tools, and NOT
+    # duplicated into the preview descriptor.
+    assert "[Preview:" in output_text
+    assert "/s/artifacts/c1.txt" in output_text
+    assert "grep" in output_text and "sed" in output_text
+    assert "guidance" not in preview
+
+
+def test_build_artifact_preview_small_output_shown_in_full():
+    output_text, preview = build_artifact_preview(
+        {"stdout": "hello", "stderr": "", "ok": True}, None
+    )
+    assert output_text.startswith("hello")
+    assert preview["shown_bytes"] == preview["total_bytes"] == 5
+
+
+def test_executor_writes_artifact_file_and_omits_full_output(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """Offloading writes the full output to a per-session file at creation, and
+    the envelope carries only the bounded preview (not the full output)."""
+    monkeypatch.chdir(tmp_path)
+    body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAILMARKER"
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
+        ),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        env, _status, _record = _invoke(
+            bare_executor, "call1", "bash", {"command": "x"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    art = tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.txt"
+    assert art.exists()
+    assert art.read_text() == body  # full output on disk
+    assert "TAILMARKER" not in env["output"]  # full output NOT in the envelope
+    assert env["metadata"]["preview"]["full_output_path"].endswith("call1.txt")
+    assert env["metadata"]["preview"]["total_bytes"] == len(body)

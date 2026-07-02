@@ -376,9 +376,9 @@ def test_invoke_tool_plain_string_not_truncated(bare_executor, tmp_path):
     assert record["truncated"] is False
 
 
-def test_invoke_tool_artifact_tuple_is_described(bare_executor, mocker):
-    """A (None, dict) artifact tuple is offloaded and described deterministically
-    (no LLM) — the full output is stored, the agent gets a pointer."""
+def test_invoke_tool_artifact_tuple_is_previewed(bare_executor, mocker):
+    """A (None, dict) artifact tuple is offloaded: the full output is stored, and
+    the agent gets a bounded preview excerpt + skim guidance (not the whole blob)."""
     bare_executor.llm._session_log_path = None
     mocker.patch.object(
         ToolsRegistry,
@@ -391,8 +391,9 @@ def test_invoke_tool_artifact_tuple_is_described(bare_executor, mocker):
     env, status, record = _invoke(
         bare_executor, "c1", "bash", {"command": "x"}, ToolsRegistry()
     )
-    assert '"exit_code": 0' in env["output"]
-    assert 'read_tool_artifact(tool_call_id="c1")' in env["output"]
+    assert "x" in env["output"]
+    assert "[Preview:" in env["output"]
+    assert env["metadata"]["preview"]["total_bytes"] == 1
     assert record["artifact"] is True
     assert bare_executor.tool_artifacts["c1"]["exit_code"] == 0
 

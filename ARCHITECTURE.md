@@ -18,7 +18,7 @@ src/my_coding_agent/
 │   │   ├── __init__.py          ← ToolExecutor: per-message run() (before/call/after)
 │   │   ├── schema.py            ← Canonical envelope: build/validate/normalize
 │   │   ├── args.py              ← Tool-call parse + alias remap + kwarg strip
-│   │   ├── output.py            ← Truncation + artifact description
+│   │   ├── output.py            ← Truncation + artifact preview (bounded excerpt + skim guidance)
 │   │   └── records.py           ← Call-record builders (error_record, call_record)
 │   └── tool_registry/           ← ToolRegistry class + tool definition converter
 │       ├── __init__.py          ← Re-export facade (ToolRegistry, tool)
@@ -89,6 +89,8 @@ Holds the LLM client and selects the relevant tool subset for a message via **`r
 
 Constructed **per assistant message** (`ToolExecutor(message, llm, tools=ctx.all_tools)`). Runs `before_tool_call` → `invoke_tool` → `after_tool_call` per call. Returns tool messages and records. Normalizes all results into the canonical `{schema_version, tool, ok, output, error, metadata}` envelope. Forwards the run's toolset to the `ToolRegistry` so toolset-aware tools (notably `delegate`) can read it.
 
+When a tool output is large enough to offload (above `ARTIFACT_THRESHOLD`), `after_tool_call` writes the **full body to a per-artifact file** at `.my_coding_agent/<session>/artifacts/<tool_call_id>.txt` at creation time, and the envelope carries only a **bounded preview**: `output` holds a token-bounded excerpt followed by inline guidance to skim that file with bash text tools (`grep`/`rg`, `sed`, `awk`, `jq`, `head`/`tail`, `wc`) rather than load it whole; `metadata.preview` describes it (shown/total line and byte counts + `full_output_path`). The full raw output never enters the context window. Because the file persists for the run, any later step can inspect it — this is why cross-step retrieval works.
+
 ### `pipeline/` — DAG Building and Execution
 
 The node-based DAG execution engine. `pipeline/` only knows how to build and execute a DAG — it has no knowledge of LLM client internals or session management.
@@ -139,7 +141,7 @@ A plain class whose methods are the tools the LLM can call:
 | `read_file(file_path)` | Reads a file; large files become artifacts |
 | `write_file(file_path, content)` | Writes a file, creating parent dirs |
 | `read_article(url)` | Fetches a URL and converts HTML → markdown |
-| `read_tool_artifact(tool_call_id)` | Retrieves a previously stored large output |
+| `read_tool_artifact(tool_call_id)` | Reads a previously offloaded large output from its per-artifact file (works from any later step of the run). De-emphasized: the preview + bash-skim path is preferred; this returns the whole output, so guidance steers the model to skim the file instead |
 | `delegate(task, context)` | Spawns a fresh read-only subagent for a focused task; the subagent inherits the parent toolset **minus `delegate`** (to prevent recursive spawning) and runs with the same `DEFAULT_MAX_STEPS` budget as the main agent. Returns the subagent's LLM-summarized final report (`generate_report()`), not a scrape of its last message, so the final tool results survive even when the subagent is cut off at its step ceiling |
 
 The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatible tool definition by inspecting its signature and parsing Google-style docstrings.
@@ -206,7 +208,8 @@ Each run creates `.my_coding_agent/<session_id>/`:
 | `stderr_colored.log` | Same log with ANSI color codes |
 | `session_data.json` | Metrics, tool records, LLM call log, stop reason |
 | `events.jsonl` | Structured observability event stream |
-| `tool_artifacts.json` | Full outputs for large tool results |
+| `artifacts/<tool_call_id>.txt` | Full body of each offloaded large output, written at creation so bash can skim it during the run |
+| `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
 
 Handoffs are saved under `.my_coding_agent/handoffs/`.
 

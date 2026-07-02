@@ -20,6 +20,17 @@ TOOL_SCHEMA_VERSION = 1
 _TOOL_RESULT_KEYS = ("schema_version", "tool", "ok", "output", "error", "metadata")
 _ERROR_PREFIX_RE = re.compile(r"^Error\b")
 
+# Shape of ``metadata.preview`` for an offloaded artifact: a descriptor of the
+# bounded excerpt carried in ``output``. The excerpt itself and the skim guidance
+# live in ``output`` (not here); the full raw output lives only on disk.
+PREVIEW_KEYS = (
+    "shown_lines",
+    "total_lines",
+    "shown_bytes",
+    "total_bytes",
+    "full_output_path",
+)
+
 
 def build_tool_result(
     tool: str,
@@ -84,21 +95,25 @@ def result_envelope(
     is_truncated: bool,
     tool_call_id: str,
     artifact: Any = None,
+    preview: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalize a tool's raw return into the canonical schema envelope.
 
     Detects failure via structured returns (bash-family ``ok``/``exit_code``, or
-    the stored ``artifact`` for summarized bash output) and the ``Error…`` string
+    the stored ``artifact`` for an offloaded bash output) and the ``Error…`` string
     convention the file/web tools use, defaulting to success otherwise.
 
     Args:
         tool: Tool name.
-        result: The raw (possibly summarized/truncated) string the tool produced.
-        is_artifact: Whether ``result`` is a summary of an offloaded artifact.
+        result: The agent-facing string the tool produced. For an offloaded
+            artifact this is the bounded preview excerpt plus inline skim guidance.
+        is_artifact: Whether ``result`` is the preview of an offloaded artifact.
         is_truncated: Whether ``result`` was truncated to the output limit.
         tool_call_id: The call id, echoed into artifact metadata.
         artifact: The stored full artifact for this call, if any (injected by the
             executor so this function stays pure).
+        preview: The ``preview`` descriptor (see ``PREVIEW_KEYS``) for an offloaded
+            artifact. When supplied it is attached to ``metadata.preview``.
     """
     metadata: dict[str, Any] = {}
     if is_truncated:
@@ -110,11 +125,14 @@ def result_envelope(
         output = parsed.get("stdout", "")
         return _structured_envelope(tool, parsed, output, metadata)
 
-    # bash large output: summarized; the outcome lives in the stored artifact.
+    # bash large output: offloaded; the outcome lives in the stored artifact and
+    # `result` carries the bounded preview + skim guidance.
     if is_artifact:
-        metadata.update(
-            {"artifact": True, "summarized": True, "tool_call_id": tool_call_id}
-        )
+        metadata.update({"artifact": True, "tool_call_id": tool_call_id})
+        if preview is not None:
+            metadata["preview"] = preview
+        else:
+            metadata["summarized"] = True  # legacy path: no preview supplied
         if isinstance(artifact, dict):
             return _structured_envelope(tool, artifact, result, metadata)
         return build_tool_result(tool, True, result, None, metadata)

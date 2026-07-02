@@ -9,16 +9,20 @@ only for the session log path and the observability recorder.
 
 import inspect
 import json
+import re
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...observability import current_session_id
 from ...utils import get_logger
 from ..tool_registry import ToolRegistry
 from . import args as arg_prep
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
     _extract_summary,
-    describe_artifact,
+    artifact_text,
+    build_artifact_preview,
     validate_tool_output,
 )
 from .records import call_record, error_record
@@ -56,6 +60,10 @@ _RECOVERABLE_EXCEPTIONS = (
 # modules schema / output / args; the executor below composes them. The
 # canonical schema (build/validate/envelope), the truncation limit
 # (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported above.
+
+# A tool_call_id is used as a per-artifact filename; restrict it to a safe set so
+# a crafted id can never traverse out of the session's artifacts directory.
+_SAFE_ARTIFACT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ToolExecutor:
@@ -215,10 +223,12 @@ class ToolExecutor:
             record = error_record(func_name, args, tool_call_id, failure["error"])
         else:
             is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
+            preview: dict[str, Any] | None = None
             if is_artifact:
                 _, artifact = raw_result
                 self.tool_artifacts[tool_call_id] = artifact
-                result = describe_artifact(artifact, tool_call_id)
+                full_output_path = self._write_artifact_file(tool_call_id, artifact)
+                result, preview = build_artifact_preview(artifact, full_output_path)
             else:
                 result = raw_result
             if not isinstance(result, str):
@@ -237,6 +247,7 @@ class ToolExecutor:
                 is_truncated,
                 tool_call_id,
                 self.tool_artifacts.get(tool_call_id),
+                preview=preview,
             )
             status, record = call_record(
                 func_name, args, tool_call_id, env, is_artifact, is_truncated
@@ -244,3 +255,20 @@ class ToolExecutor:
 
         serialized = json.dumps(validate_tool_result(env), default=str)
         return capture(serialized), status, record
+
+    def _write_artifact_file(self, tool_call_id: str, artifact: Any) -> str | None:
+        """Write the full artifact body to a per-run file so bash can skim it.
+
+        The file lives at ``.my_coding_agent/<session>/artifacts/<tool_call_id>.txt``
+        and persists for the run, so a later step can inspect it with bash text
+        tools. Returns the path, or ``None`` when the session directory or id is
+        unavailable (e.g. unit tests invoking the executor without an agent run).
+        """
+        session_id = current_session_id.get()
+        if not session_id or not _SAFE_ARTIFACT_ID.match(tool_call_id):
+            return None
+        art_dir = Path(".my_coding_agent") / session_id / "artifacts"
+        art_dir.mkdir(parents=True, exist_ok=True)
+        path = art_dir / f"{tool_call_id}.txt"
+        path.write_text(artifact_text(artifact))
+        return str(path)
