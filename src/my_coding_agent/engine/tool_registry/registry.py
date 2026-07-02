@@ -26,13 +26,16 @@ ARTIFACT_THRESHOLD = 8_000
 _SAFE_ARTIFACT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def artifact_file_path(session_id: str | None, tool_call_id: str) -> Path | None:
-    """Return the on-disk path for a tool call's artifact file, or None.
+def artifact_file_path(
+    session_id: str | None, tool_call_id: str, stream: str = "stdout"
+) -> Path | None:
+    """Return the on-disk path for a tool call's per-stream artifact file, or None.
 
     Single source of truth for the per-artifact path scheme
-    ``.my_coding_agent/<session>/artifacts/<tool_call_id>.txt``, shared by the
-    write side (executor) and the read side (``read_tool_artifact``) so the two
-    can never drift apart.
+    ``.my_coding_agent/<session>/artifacts/<tool_call_id>.<stream>.txt``, shared by
+    the write side (executor) and the read side (``read_tool_artifact``) so the two
+    can never drift apart. Each output stream (``stdout``/``stderr``) is offloaded
+    to its own file so a large stream in either channel can be skimmed.
 
     Returns None when there is no session id or the id is unsafe as a filename
     (would traverse out of the artifacts directory). Performs no filesystem
@@ -41,13 +44,19 @@ def artifact_file_path(session_id: str | None, tool_call_id: str) -> Path | None
     Args:
         session_id: The current session id, or None outside an agent run.
         tool_call_id: The id whose artifact file path is requested.
+        stream: The output stream this file holds — ``stdout`` or ``stderr``.
 
     Returns:
         The artifact file path, or None when it cannot be safely constructed.
     """
     if not session_id or not _SAFE_ARTIFACT_ID.match(tool_call_id):
         return None
-    return Path(".my_coding_agent") / session_id / "artifacts" / f"{tool_call_id}.txt"
+    return (
+        Path(".my_coding_agent")
+        / session_id
+        / "artifacts"
+        / f"{tool_call_id}.{stream}.txt"
+    )
 
 
 class ToolRegistry:
@@ -161,11 +170,15 @@ class ToolRegistry:
             tool_call_id: The tool_call_id from a previous call whose output was
                 offloaded. Example: 'call_abc123'
         """
-        # The per-artifact file persists for the whole run, so this works from any
+        # The per-stream files persist for the whole run, so this works from any
         # step after the one that created it (unlike the per-step in-memory store).
-        path = artifact_file_path(current_session_id.get(), tool_call_id)
-        if path is not None and path.exists():
-            return path.read_text()
+        # Resolve stdout first, then stderr; for a specific stream, skim the exact
+        # file path named in the preview guidance instead.
+        session_id = current_session_id.get()
+        for stream in ("stdout", "stderr"):
+            path = artifact_file_path(session_id, tool_call_id, stream)
+            if path is not None and path.exists():
+                return path.read_text()
         # Fallback: in-memory store (same step, or when no session dir exists).
         artifact = self._artifacts.get(tool_call_id)
         if artifact is None:

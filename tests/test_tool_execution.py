@@ -24,8 +24,7 @@ from my_coding_agent.engine.tool_execution import (
 from my_coding_agent.engine.tool_execution.envelope import result_envelope
 from my_coding_agent.engine.tool_execution.output import (
     PREVIEW_MAX_CHARS,
-    artifact_text,
-    build_artifact_preview,
+    build_stream_preview,
 )
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 from my_coding_agent.observability import current_session_id
@@ -167,13 +166,18 @@ def test_envelope_truncated_flag_is_recorded():
     assert env["metadata"]["truncated"] is True
 
 
-def test_envelope_artifact_branch_reads_stored_artifact():
+def test_envelope_artifact_branch_uses_composed_error_and_exit_code():
+    # The executor composes stdout→result and stderr→error per stream; the artifact
+    # branch attaches them verbatim (no stderr in metadata) and reads ok/exit_code.
     artifact = {"stdout": "x", "stderr": "err", "exit_code": 1, "ok": False}
-    env = result_envelope("bash", "summary text", True, False, "c1", artifact)
+    env = result_envelope(
+        "bash", "stdout preview", True, False, "c1", artifact, error="err"
+    )
     assert env["ok"] is False
-    assert env["output"] == "summary text"
+    assert env["output"] == "stdout preview"
     assert env["error"] == "err"
-    assert env["metadata"]["summarized"] is True
+    assert env["metadata"]["exit_code"] == 1
+    assert "stderr" not in env["metadata"]
     assert env["metadata"]["artifact"] is True
 
 
@@ -380,44 +384,34 @@ def test_executor_defaults_to_empty_toolset(bare_llm):
 # ── artifact preview: bounded excerpt + skim guidance in `output` ─────────────
 
 
-def test_artifact_text_is_stdout_only():
-    assert artifact_text({"stdout": "out", "stderr": "", "ok": True}) == "out"
-    # stderr is surfaced in the envelope `error`, not mixed into the artifact body:
-    assert artifact_text({"stdout": "out", "stderr": "err"}) == "out"
-
-
-def test_build_artifact_preview_bounds_output_and_reports_true_totals():
+def test_build_stream_preview_bounds_output_and_reports_true_totals():
     body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAILMARKER"
-    art = {"stdout": body, "stderr": "", "ok": True, "exit_code": 0}
-    output_text, preview = build_artifact_preview(art, "/s/artifacts/c1.txt")
-    # Bounded: the whole body (and its tail) is NOT in the agent-facing output.
+    output_text, preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    # Bounded: the whole body (and its tail) is NOT in the agent-facing value.
     assert "TAILMARKER" not in output_text
     assert len(output_text) < len(body)
     # True totals reported; excerpt is smaller than the full body.
     assert preview["total_bytes"] == len(body)
     assert preview["shown_bytes"] < preview["total_bytes"]
-    assert preview["full_output_path"] == "/s/artifacts/c1.txt"
-    # Guidance is inline in output, naming the path + skim tools, and NOT
-    # duplicated into the preview descriptor.
+    assert preview["full_output_path"] == "/s/artifacts/c1.stdout.txt"
+    # Guidance is inline in the value, naming the path + skim tools.
     assert "[Preview:" in output_text
-    assert "/s/artifacts/c1.txt" in output_text
+    assert "/s/artifacts/c1.stdout.txt" in output_text
     assert "grep" in output_text and "sed" in output_text
     assert "guidance" not in preview
 
 
-def test_build_artifact_preview_small_output_shown_in_full():
-    output_text, preview = build_artifact_preview(
-        {"stdout": "hello", "stderr": "", "ok": True}, None
-    )
+def test_build_stream_preview_small_shown_in_full():
+    output_text, preview = build_stream_preview("hello", None)
     assert output_text.startswith("hello")
     assert preview["shown_bytes"] == preview["total_bytes"] == 5
 
 
-def test_executor_writes_artifact_file_and_omits_full_output(
+def test_executor_offloads_stdout_stream_and_omits_full_output(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
-    """Offloading writes the full output to a per-session file at creation, and
-    the envelope carries only the bounded preview (not the full output)."""
+    """A large stdout is written to its per-stream file at creation, and the
+    envelope carries only the bounded stdout preview under metadata.preview.stdout."""
     monkeypatch.chdir(tmp_path)
     body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAILMARKER"
     mocker.patch.object(
@@ -436,12 +430,115 @@ def test_executor_writes_artifact_file_and_omits_full_output(
     finally:
         current_session_id.reset(token)
 
-    art = tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.txt"
+    art = tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.stdout.txt"
     assert art.exists()
-    assert art.read_text() == body  # full output on disk
-    assert "TAILMARKER" not in env["output"]  # full output NOT in the envelope
-    assert env["metadata"]["preview"]["full_output_path"].endswith("call1.txt")
-    assert env["metadata"]["preview"]["total_bytes"] == len(body)
+    assert art.read_text() == body  # full stdout on disk
+    assert "TAILMARKER" not in env["output"]  # full stdout NOT in the envelope
+    assert env["metadata"]["preview"]["stdout"]["full_output_path"].endswith(
+        "call1.stdout.txt"
+    )
+    assert env["metadata"]["preview"]["stdout"]["total_bytes"] == len(body)
+
+
+def test_executor_offloads_large_stderr_into_error(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """A large stderr with empty stdout is bounded in `error` and written to its
+    own .stderr.txt file — not flooded verbatim into the envelope."""
+    monkeypatch.chdir(tmp_path)
+    err = "ERRHEAD\n" + ("e" * (PREVIEW_MAX_CHARS + 500)) + "\nERRTAIL"
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            {"exit_code": 1, "ok": False, "stdout": "", "stderr": err},
+        ),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        env, _status, _record = _invoke(
+            bare_executor, "call1", "bash", {"command": "x"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    stderr_file = (
+        tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.stderr.txt"
+    )
+    stdout_file = (
+        tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.stdout.txt"
+    )
+    assert stderr_file.exists() and stderr_file.read_text() == err
+    assert not stdout_file.exists()  # empty stdout writes no file
+    assert env["ok"] is False
+    assert env["output"] == "(tool returned empty output)"  # stdout was empty
+    assert "ERRTAIL" not in env["error"]  # full stderr NOT in the envelope
+    assert "[Preview:" in env["error"]
+    assert env["metadata"]["preview"]["stderr"]["total_bytes"] == len(err)
+    assert "stdout" not in env["metadata"]["preview"]
+
+
+def test_executor_offloads_both_streams_separately(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """Both streams large → each previewed into its own file; preview has both keys."""
+    monkeypatch.chdir(tmp_path)
+    out = "OUT\n" + ("o" * (PREVIEW_MAX_CHARS + 500)) + "\nOUTTAIL"
+    err = "ERR\n" + ("e" * (PREVIEW_MAX_CHARS + 500)) + "\nERRTAIL"
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            {"exit_code": 2, "ok": False, "stdout": out, "stderr": err},
+        ),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        env, _status, _record = _invoke(
+            bare_executor, "call1", "bash", {"command": "x"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    base = tmp_path / ".my_coding_agent" / "sess123" / "artifacts"
+    assert (base / "call1.stdout.txt").read_text() == out
+    assert (base / "call1.stderr.txt").read_text() == err
+    assert "OUTTAIL" not in env["output"] and "[Preview:" in env["output"]
+    assert "ERRTAIL" not in env["error"] and "[Preview:" in env["error"]
+    assert set(env["metadata"]["preview"]) == {"stdout", "stderr"}
+    assert env["metadata"]["exit_code"] == 2
+
+
+def test_executor_inlines_small_stderr_when_stdout_offloaded(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """When stdout is large but stderr is small, stderr stays inline in `error`."""
+    monkeypatch.chdir(tmp_path)
+    body = "x" * (PREVIEW_MAX_CHARS + 500)
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            {"exit_code": 0, "ok": True, "stdout": body, "stderr": "just a warning"},
+        ),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        env, _status, _record = _invoke(
+            bare_executor, "call1", "bash", {"command": "x"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert env["error"] == "just a warning"  # small stderr inline, no preview
+    assert "stderr" not in env["metadata"]["preview"]
+    assert "stdout" in env["metadata"]["preview"]
+    assert not (
+        tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.stderr.txt"
+    ).exists()
 
 
 def test_write_artifact_file_returns_none_on_oserror(
@@ -474,11 +571,11 @@ def test_write_artifact_file_returns_none_on_oserror(
     finally:
         current_session_id.reset(token)
 
-    art = tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.txt"
+    art = tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.stdout.txt"
     assert not art.exists()  # no on-disk copy was written
     assert status == "success"  # offload continued despite the write failure
     assert env["metadata"]["artifact"] is True
-    assert env["metadata"]["preview"]["full_output_path"] is None
+    assert env["metadata"]["preview"]["stdout"]["full_output_path"] is None
 
 
 def test_executor_writes_artifacts_under_each_session_dir(
@@ -515,14 +612,14 @@ def test_executor_writes_artifacts_under_each_session_dir(
     offload("sessB", "callB", "B")
 
     artifacts = tmp_path / ".my_coding_agent"
-    art_a = artifacts / "sessA" / "artifacts" / "callA.txt"
-    art_b = artifacts / "sessB" / "artifacts" / "callB.txt"
+    art_a = artifacts / "sessA" / "artifacts" / "callA.stdout.txt"
+    art_b = artifacts / "sessB" / "artifacts" / "callB.stdout.txt"
     # Each run's full output landed under its own session dir with its own body.
     assert art_a.read_text() == f"BODY-A\n{filler}\n"
     assert art_b.read_text() == f"BODY-B\n{filler}\n"
     # Neither run leaked into the other session's artifacts dir.
-    assert not (artifacts / "sessA" / "artifacts" / "callB.txt").exists()
-    assert not (artifacts / "sessB" / "artifacts" / "callA.txt").exists()
+    assert not (artifacts / "sessA" / "artifacts" / "callB.stdout.txt").exists()
+    assert not (artifacts / "sessB" / "artifacts" / "callA.stdout.txt").exists()
     # read_tool_artifact scoped to sessA cannot retrieve sessB's file.
     token = current_session_id.set("sessA")
     try:

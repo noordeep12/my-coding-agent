@@ -89,7 +89,7 @@ def test_read_tool_artifact_reads_session_file_cross_step(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     art_dir = tmp_path / ".my_coding_agent" / "sessX" / "artifacts"
     art_dir.mkdir(parents=True)
-    (art_dir / "call9.txt").write_text("FULL CONTENT")
+    (art_dir / "call9.stdout.txt").write_text("FULL CONTENT")
     token = current_session_id.set("sessX")
     try:
         reg = ToolsRegistry(artifacts={})  # empty, like a later step's registry

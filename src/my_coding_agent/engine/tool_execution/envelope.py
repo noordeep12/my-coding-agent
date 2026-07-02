@@ -88,6 +88,7 @@ def result_envelope(
     tool_call_id: str,
     artifact: Any = None,
     preview: dict[str, Any] | None = None,
+    error: str | None = None,
 ) -> dict[str, Any]:
     """Normalize a tool's raw return into the canonical schema envelope.
 
@@ -104,8 +105,12 @@ def result_envelope(
         tool_call_id: The call id, echoed into artifact metadata.
         artifact: The stored full artifact for this call, if any (injected by the
             executor so this function stays pure).
-        preview: The ``preview`` descriptor (see ``PREVIEW_KEYS``) for an offloaded
-            artifact. When supplied it is attached to ``metadata.preview``.
+        preview: Per-stream ``preview`` descriptor for an offloaded artifact
+            (``{"stdout": {...}, "stderr": {...}}``, a key per previewed stream).
+            When non-empty it is attached to ``metadata.preview``.
+        error: The composed ``error`` (stderr) for an offloaded artifact — a bounded
+            preview when the stderr was large, the inline stderr when small, or
+            ``None`` when empty. Ignored on non-artifact paths.
     """
     metadata: dict[str, Any] = {}
     if is_truncated:
@@ -117,16 +122,20 @@ def result_envelope(
         output = parsed.get("stdout", "")
         return _structured_envelope(tool, parsed, output, metadata)
 
-    # bash large output: offloaded; the outcome lives in the stored artifact and
-    # `result` carries the bounded preview + skim guidance.
+    # bash large output: offloaded per stream — `result` is the composed stdout
+    # (preview or inline) and `error` is the composed stderr; each large stream's
+    # full content lives in its own on-disk file described by `preview`.
     if is_artifact:
         metadata.update({"artifact": True, "tool_call_id": tool_call_id})
-        if preview is not None:
+        if preview:
             metadata["preview"] = preview
         else:
             metadata["summarized"] = True  # legacy path: no preview supplied
         if isinstance(artifact, dict):
-            return _structured_envelope(tool, artifact, result, metadata)
+            ok = bool(artifact.get("ok", True))
+            if "exit_code" in artifact:
+                metadata["exit_code"] = artifact["exit_code"]
+            return build_tool_result(tool, ok, result, error, metadata)
         return build_tool_result(tool, True, result, None, metadata)
 
     # error-string convention used by the file/web/artifact tools.

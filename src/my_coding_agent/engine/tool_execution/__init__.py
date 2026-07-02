@@ -24,9 +24,9 @@ from .envelope import (
 )
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
+    PREVIEW_MAX_CHARS,
     _extract_summary,
-    artifact_text,
-    build_artifact_preview,
+    build_stream_preview,
     validate_tool_output,
 )
 from .records import call_record, error_record
@@ -220,11 +220,11 @@ class ToolExecutor:
         else:
             is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
             preview: dict[str, Any] | None = None
+            error: str | None = None
             if is_artifact:
                 _, artifact = raw_result
                 self.tool_artifacts[tool_call_id] = artifact
-                full_output_path = self._write_artifact_file(tool_call_id, artifact)
-                result, preview = build_artifact_preview(artifact, full_output_path)
+                result, error, preview = self._offload_streams(tool_call_id, artifact)
             else:
                 result = raw_result
             if not isinstance(result, str):
@@ -244,6 +244,7 @@ class ToolExecutor:
                 tool_call_id,
                 self.tool_artifacts.get(tool_call_id),
                 preview=preview,
+                error=error,
             )
             status, record = call_record(
                 func_name, args, tool_call_id, env, is_artifact, is_truncated
@@ -252,29 +253,73 @@ class ToolExecutor:
         serialized = json.dumps(validate_tool_result(env), default=str)
         return capture(serialized), status, record
 
-    def _write_artifact_file(self, tool_call_id: str, artifact: Any) -> str | None:
-        """Write the full artifact body to a per-run file so bash can skim it.
+    def _offload_streams(
+        self, tool_call_id: str, artifact: dict[str, Any]
+    ) -> tuple[str, str | None, dict[str, Any]]:
+        """Bound each output stream of an offloaded command artifact independently.
 
-        The file lives at ``.my_coding_agent/<session>/artifacts/<tool_call_id>.txt``
-        and persists for the run, so a later step can inspect it with bash text
-        tools. Returns the path, or ``None`` when the session directory or id is
+        Returns ``(output, error, preview)``: ``output`` is the composed stdout
+        (bounded preview when large, else inline), ``error`` is the composed stderr
+        (preview, inline, or ``None`` when empty), and ``preview`` maps each stream
+        that was previewed to its descriptor.
+        """
+        preview: dict[str, Any] = {}
+        output, out_desc = self._offload_stream(
+            tool_call_id, "stdout", artifact.get("stdout") or ""
+        )
+        if out_desc is not None:
+            preview["stdout"] = out_desc
+        error, err_desc = self._offload_stream(
+            tool_call_id, "stderr", artifact.get("stderr") or ""
+        )
+        if err_desc is not None:
+            preview["stderr"] = err_desc
+        return output, (error or None), preview
+
+    def _offload_stream(
+        self, tool_call_id: str, stream: str, text: str
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Return ``(field_value, preview_descriptor)`` for one output stream.
+
+        Small streams (within the preview budget) are inlined with no descriptor
+        and no file; larger streams are written to a per-stream file and replaced
+        with a bounded excerpt + skim guidance.
+        """
+        if len(text) <= PREVIEW_MAX_CHARS:
+            return text, None
+        path = self._write_artifact_file(tool_call_id, stream, text)
+        return build_stream_preview(text, path)
+
+    def _write_artifact_file(
+        self, tool_call_id: str, stream: str, text: str
+    ) -> str | None:
+        """Write a stream's full content to its per-run file so bash can skim it.
+
+        The file lives at
+        ``.my_coding_agent/<session>/artifacts/<tool_call_id>.<stream>.txt`` and
+        persists for the run, so a later step can inspect it with bash text tools.
+        Returns the path, or ``None`` when the session directory or id is
         unavailable (e.g. unit tests invoking the executor without an agent run),
         or when the write itself fails (full disk / permissions) — a failed write
         is logged and downgraded to "no on-disk copy" so offloading continues
         rather than aborting the run.
         """
-        path = artifact_file_path(current_session_id.get(), tool_call_id)
+        path = artifact_file_path(current_session_id.get(), tool_call_id, stream)
         if path is None:
             return None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(artifact_text(artifact))
+            path.write_text(text)
         except OSError as exc:
             # A full disk or bad permissions must not abort the run: offloading
             # and the preview continue without an on-disk copy (the preview
             # guidance falls back to read_tool_artifact when the path is None).
             self.logger.warning(
-                "artifact write failed for %s at %s: %s", tool_call_id, path, exc
+                "artifact write failed for %s (%s) at %s: %s",
+                tool_call_id,
+                stream,
+                path,
+                exc,
             )
             return None
         return str(path)

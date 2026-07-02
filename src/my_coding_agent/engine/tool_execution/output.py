@@ -7,7 +7,7 @@ explicitly (an injected dependency) so this module owns no execution state.
 
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ...utils import get_logger
 from ...utils.parsing import extract_message
@@ -80,18 +80,6 @@ def validate_tool_output(
     return result
 
 
-def artifact_text(artifact: Any) -> str:
-    """Return the skimmable stdout body of a command artifact.
-
-    This is what gets written to the per-artifact file and what the preview
-    excerpt is taken from. Only ``bash`` offloads an artifact today, and its
-    shape is ``{stdout, stderr, exit_code, ok}``; stderr is surfaced in the
-    envelope ``error`` field, so the artifact body is stdout alone (never
-    re-mixed, to keep one field per datum).
-    """
-    return artifact.get("stdout") or ""
-
-
 def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str:
     """Build the inline guidance that steers the model to skim, not load whole."""
     counts = (
@@ -111,17 +99,17 @@ def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str
     )
 
 
-def build_artifact_preview(
-    artifact: Any, full_output_path: str | None
+def build_stream_preview(
+    text: str, full_output_path: str | None
 ) -> tuple[str, dict[str, int | str | None]]:
-    """Build the agent-facing ``output`` and the ``preview`` metadata descriptor.
+    """Build the agent-facing field value and the ``preview`` descriptor for a stream.
 
-    Returns ``(output, preview)`` where ``output`` is a token-bounded excerpt of
-    the artifact body followed by inline skim guidance, and ``preview`` carries the
-    shown/total line and byte counts plus the full-output file path. The full body
-    is never returned — only the bounded excerpt.
+    Returns ``(value, preview)`` where ``value`` is a token-bounded excerpt of the
+    stream followed by inline skim guidance, and ``preview`` carries the shown/total
+    line and byte counts plus the full-output file path. The full stream is never
+    returned — only the bounded excerpt. Used for stdout (→ ``output``) and stderr
+    (→ ``error``) alike.
     """
-    text = artifact_text(artifact)
     total_bytes = len(text)
     total_lines = text.count("\n") + 1 if text else 0
 
