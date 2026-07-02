@@ -139,6 +139,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .nbadge.ts{color:var(--muted);background:var(--bg2)}
 .nbadge.step{color:var(--muted);background:var(--bg2)}
 .nbadge.art{color:var(--sub);background:var(--sub-soft)}
+.nbadge.trunc{color:var(--amber);background:#fdf1e5}
 .nbadge.phase{color:var(--muted);background:var(--bg2)}
 .nbadge.count{color:var(--muted);background:var(--bg2)}
 .nbadge.stop{color:var(--muted);background:var(--bg2)}
@@ -452,6 +453,7 @@ function nodeBadges(node){
   else if(r && r.ok===false) b.push({t:'✗ error', c:'err'});
   // 3. colored type signals
   if(r && r.metadata && r.metadata.artifact===true) b.push({t:'📦 artifact', c:'art'});
+  if(r && r.metadata && r.metadata.truncated===true) b.push({t:'✂️ truncated', c:'trunc'});
   if(node.type==='router' && a.phase) b.push({t:'🧭 '+phaseLabel(a.phase), c:'phase'});
   // 4. counts (neutral type signals)
   if(node.type==='router'){
@@ -475,7 +477,7 @@ function nodeBadges(node){
 
 // Compact subset for the tree row: the glanceable badges only (timestamp/step
 // are redundant in the ordered tree, so they are dropped to save width).
-const TREE_BADGE = new Set(['name','ok','err','lat','art','phase','count']);
+const TREE_BADGE = new Set(['name','ok','err','lat','art','trunc','phase','count']);
 const treeBadges = node => nodeBadges(node).filter(x=>TREE_BADGE.has(x.c));
 
 function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
