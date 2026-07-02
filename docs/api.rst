@@ -44,6 +44,14 @@ Tool execution
    :show-inheritance:
 
 
+Tool routing
+------------
+
+.. automodule:: my_coding_agent.engine.routing
+   :members:
+   :show-inheritance:
+
+
 Pipeline
 --------
 
@@ -60,10 +68,15 @@ Pipeline
    :show-inheritance:
 
 
+.. automodule:: my_coding_agent.pipeline.schema
+   :members:
+   :show-inheritance:
+
+
 Pipeline nodes
 --------------
 
-.. automodule:: my_coding_agent.pipeline.nodes.handoff
+.. automodule:: my_coding_agent.pipeline.nodes.context_guard
    :members:
    :show-inheritance:
 
@@ -79,19 +92,7 @@ Pipeline nodes
    :members:
    :show-inheritance:
 
-.. automodule:: my_coding_agent.pipeline.nodes.router
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.pipeline.nodes.context_preflight
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.pipeline.nodes.finish_check
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.pipeline.nodes.token_tracking
+.. automodule:: my_coding_agent.pipeline.nodes.finalize_step
    :members:
    :show-inheritance:
 

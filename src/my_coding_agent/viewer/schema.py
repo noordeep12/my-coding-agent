@@ -19,8 +19,8 @@ class TraceNode:
     Args:
         id: Unique stable identifier, e.g. ``"s0::step1::llm::1"``.
         type: Semantic type — one of ``session``, ``router``, ``llm_call``,
-            ``tool_call``, ``handoff``, ``report``, ``token_tracking``,
-            ``finish_check``, ``session_end``.
+            ``tool_call``, ``handoff``, ``report``, ``finalize_step``,
+            ``session_end``.
         label: Human-readable display name (the pipeline node's class name).
         inputs: Structured inputs for this event (prompt messages, tool args, …).
         outputs: Structured outputs (LLM response, tool result, …).

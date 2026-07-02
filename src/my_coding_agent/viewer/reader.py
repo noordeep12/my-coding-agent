@@ -251,6 +251,38 @@ def _group_into_steps(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]
 # ── Node building ─────────────────────────────────────────────────────────────
 
 
+def _merge_finalize_events(
+    group: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse a step's ``token_tracking`` + ``finish_check`` events into one.
+
+    ``FinalizeStepNode`` records token usage and the finish check as two separate
+    events; the trace should show them as a single node.  Replace both (whichever
+    are present) with one ``finalize_step`` event, merging their attributes, kept
+    at the position of the first — preserving execution order.
+    """
+    finalize = {
+        k: v
+        for ev in group
+        if ev.get("type") in ("token_tracking", "finish_check")
+        for k, v in ev.items()
+        if k != "type"
+    }
+    if not finalize:
+        return group
+
+    out: list[dict[str, Any]] = []
+    inserted = False
+    for ev in group:
+        if ev.get("type") in ("token_tracking", "finish_check"):
+            if not inserted:
+                out.append({"type": "finalize_step", **finalize})
+                inserted = True
+            continue
+        out.append(ev)
+    return out
+
+
 def _build_step_nodes(
     group: list[dict[str, Any]],
     graph: _Graph,
@@ -277,7 +309,7 @@ def _build_step_nodes(
     step = step_idx + 1
     counters = {"llm": 0, "tool": 0}
 
-    for ev in group:
+    for ev in _merge_finalize_events(group):
         built = _build_event_node(ev, session_id, step, counters)
         if built is None:
             continue
@@ -372,12 +404,12 @@ def _build_tool_node(
 def _build_handoff_node(
     ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
 ) -> tuple[str, TraceNode]:
-    """Build the ContextPreflightNode node for a ``handoff`` event."""
+    """Build the ContextGuardNode node for a ``handoff`` event."""
     node_id = f"{session_id}::step{step}::handoff"
     return node_id, _make_node(
         id=node_id,
         type="handoff",
-        label="ContextPreflightNode",
+        label="ContextGuardNode",
         inputs={},
         outputs={"content": ev.get("content", "")},
         attributes={
@@ -404,15 +436,21 @@ def _build_report_node(
     )
 
 
-def _build_token_tracking_node(
+def _build_finalize_step_node(
     ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
 ) -> tuple[str, TraceNode]:
-    """Build the TokenTrackingNode node for a ``token_tracking`` event."""
-    node_id = f"{session_id}::step{step}::token_tracking"
+    """Build the single FinalizeStepNode node for a merged ``finalize_step`` event.
+
+    ``FinalizeStepNode`` emits two records per step — ``token_tracking`` then
+    ``finish_check`` — which ``_merge_finalize_events`` combines into one
+    ``finalize_step`` event carrying both attribute sets, so the trace shows a
+    single node with token usage and the finish signal together.
+    """
+    node_id = f"{session_id}::step{step}::finalize_step"
     return node_id, _make_node(
         id=node_id,
-        type="token_tracking",
-        label="TokenTrackingNode",
+        type="finalize_step",
+        label="FinalizeStepNode",
         inputs={},
         outputs={},
         attributes={
@@ -421,23 +459,6 @@ def _build_token_tracking_node(
             "total_tokens": ev.get("total_tokens"),
             "ctx_pct": ev.get("ctx_pct"),
             "context_window": ev.get("context_window"),
-            "started_at": ev.get("started_at", ""),
-        },
-    )
-
-
-def _build_finish_check_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
-) -> tuple[str, TraceNode]:
-    """Build the FinishCheckNode node for a ``finish_check`` event."""
-    node_id = f"{session_id}::step{step}::finish_check"
-    return node_id, _make_node(
-        id=node_id,
-        type="finish_check",
-        label="FinishCheckNode",
-        inputs={},
-        outputs={},
-        attributes={
             "finish_reason": ev.get("finish_reason"),
             "signal": ev.get("signal"),
             "started_at": ev.get("started_at", ""),
@@ -452,8 +473,7 @@ _EVENT_BUILDERS: dict[str, EventBuilder] = {
     "tool_call": _build_tool_node,
     "handoff": _build_handoff_node,
     "report": _build_report_node,
-    "token_tracking": _build_token_tracking_node,
-    "finish_check": _build_finish_check_node,
+    "finalize_step": _build_finalize_step_node,
 }
 
 
@@ -622,7 +642,7 @@ def _node_added(
     Each pipeline node may push one kind of message onto the running window: the
     session seeds it with the system prompt and opening user message, an LLM call
     appends its assistant reply, a tool dispatch appends its result.  Nodes that
-    add nothing (router, finish_check, …) return an empty delta.
+    add nothing (router, finalize_step, …) return an empty delta.
 
     Args:
         node: The node being placed.

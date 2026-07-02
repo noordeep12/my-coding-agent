@@ -9,11 +9,11 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
-from ...utils import get_logger
-from ...utils.parsing import extract_message
+from ..utils import get_logger
+from ..utils.parsing import extract_message
 
 if TYPE_CHECKING:
-    from ...engine.llm import LLM
+    from .llm import LLM
 
 _BASELINE_TOOLS = {"bash", "read_file", "read_tool_artifact"}
 

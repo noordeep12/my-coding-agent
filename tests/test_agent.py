@@ -16,8 +16,8 @@ import pytest
 from my_coding_agent.engine.agent import AgentNode as Agent
 from my_coding_agent.engine.llm import LLM
 from my_coding_agent.pipeline.context import RunContext
-from my_coding_agent.pipeline.nodes.context_preflight import ContextPreflightNode
-from my_coding_agent.pipeline.nodes.token_tracking import TokenTrackingNode
+from my_coding_agent.pipeline.nodes.context_guard import ContextGuardNode
+from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
 from my_coding_agent.pipeline.nodes.tool_routing import _routing_signal
 
 # --- helpers -----------------------------------------------------------------
@@ -103,7 +103,7 @@ def test_routing_signal_skips_none_content():
     assert _routing_signal(messages) == "only this"
 
 
-# --- TokenTrackingNode (previously _track_step_usage on Agent) ---------------
+# --- FinalizeStepNode (previously _track_step_usage on Agent) ---------------
 
 
 def _make_ctx(llm, messages=None, **kwargs):
@@ -129,7 +129,7 @@ def test_track_step_usage_records_last_prompt_tokens(silent_logger):
     ctx.last_response = _Resp(
         {"usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}}
     )
-    TokenTrackingNode().run(ctx)
+    FinalizeStepNode().run(ctx)
     assert ctx.last_prompt_tokens == 120
 
 
@@ -138,7 +138,7 @@ def test_track_step_usage_missing_usage_defaults_zero(silent_logger):
     llm.context_window = 1000
     ctx = _make_ctx(llm)
     ctx.last_response = _Resp({})
-    TokenTrackingNode().run(ctx)
+    FinalizeStepNode().run(ctx)
     assert ctx.last_prompt_tokens == 0
 
 
@@ -147,15 +147,15 @@ def test_track_step_usage_handles_no_context_window(silent_logger):
     llm.context_window = 0
     ctx = _make_ctx(llm)
     ctx.last_response = _Resp({"usage": {"prompt_tokens": 50}})
-    TokenTrackingNode().run(ctx)
+    FinalizeStepNode().run(ctx)
     assert ctx.last_prompt_tokens == 50
 
 
-# --- ContextPreflightNode (previously _context_preflight on Agent) -----------
+# --- ContextGuardNode (previously _context_preflight on Agent) -----------
 
 
 def _make_preflight_ctx(context_window, last_prompt_tokens=0, messages=None):
-    """Minimal RunContext for ContextPreflightNode tests."""
+    """Minimal RunContext for ContextGuardNode tests."""
     import unittest.mock as mock
 
     llm = LLM()
@@ -175,26 +175,26 @@ def _make_preflight_ctx(context_window, last_prompt_tokens=0, messages=None):
 
 def test_preflight_ok_when_below_all_thresholds():
     ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=100)
-    ContextPreflightNode().run(ctx)
+    ContextGuardNode().run(ctx)
     assert ctx.signal == "CONTINUE"
 
 
 def test_preflight_ok_when_no_context_window():
     ctx = _make_preflight_ctx(context_window=0)
-    ContextPreflightNode().run(ctx)
+    ContextGuardNode().run(ctx)
     assert ctx.signal == "CONTINUE"
 
 
 def test_preflight_warn_path_still_ok():
     # 0.6 <= pct < threshold(0.75) → warns but proceeds.
     ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=650)
-    ContextPreflightNode().run(ctx)
+    ContextGuardNode().run(ctx)
     assert ctx.signal == "CONTINUE"
 
 
 def test_preflight_stop_when_context_exhausted():
     ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=1000)
-    ContextPreflightNode().run(ctx)
+    ContextGuardNode().run(ctx)
     assert ctx.signal == "STOP"
     assert ctx.stop_reason == "context_limit"
 
@@ -202,7 +202,7 @@ def test_preflight_stop_when_context_exhausted():
 def test_preflight_reset_triggers_spawn():
     ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=800)
     cont = [{"role": "assistant", "content": "done"}]
-    node = ContextPreflightNode(spawn_fn=lambda: cont)
+    node = ContextGuardNode(spawn_fn=lambda: cont)
     node.run(ctx)
     assert ctx.signal == "RESET"
     assert ctx.continuation_messages == cont
@@ -211,7 +211,7 @@ def test_preflight_reset_triggers_spawn():
 def test_preflight_reset_without_spawn_fn_stops():
     # When no spawn_fn is provided, a reset threshold hit becomes a STOP.
     ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=800)
-    ContextPreflightNode(spawn_fn=None).run(ctx)
+    ContextGuardNode(spawn_fn=None).run(ctx)
     assert ctx.signal == "STOP"
     assert ctx.stop_reason == "context_limit"
 
@@ -225,7 +225,7 @@ def test_preflight_estimates_tokens_when_no_last_prompt():
         messages=[{"role": "user", "content": big}],
     )
     # len(json.dumps(messages)) // 2 is well over 1000 → hard stop.
-    ContextPreflightNode().run(ctx)
+    ContextGuardNode().run(ctx)
     assert ctx.signal == "STOP"
 
 
@@ -398,14 +398,14 @@ def test_run_returns_continuation_result_on_reset(silent_logger, mocker):
     _stub_run_internals(agent, mocker)
     cont = [{"role": "assistant", "content": "continuation finished"}]
 
-    # Patch ContextPreflightNode.run to immediately signal RESET with the
+    # Patch ContextGuardNode.run to immediately signal RESET with the
     # continuation result — this replaces patching the old _context_preflight.
     def _fake_preflight(ctx):
         ctx.signal = "RESET"
         ctx.continuation_messages = cont
 
     mocker.patch(
-        "my_coding_agent.pipeline.nodes.context_preflight.ContextPreflightNode.run",
+        "my_coding_agent.pipeline.nodes.context_guard.ContextGuardNode.run",
         side_effect=_fake_preflight,
     )
     mocker.patch.object(agent.llm, "chat_completion")  # must not be reached

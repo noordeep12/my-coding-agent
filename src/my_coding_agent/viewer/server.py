@@ -260,10 +260,9 @@ const TYPE_META = {
   router:         { name:'Tool Routing',      dot:'#ff9f0a' },
   llm_call:       { name:'LLM Call',          dot:'#30b350' },
   tool_call:      { name:'Tool Dispatch',     dot:'#a05cf0' },
-  handoff:        { name:'Context Preflight', dot:'#ff453a' },
+  handoff:        { name:'Context Guard',     dot:'#ff453a' },
   report:         { name:'Subagent Report',   dot:'#5e5ce6' },
-  token_tracking: { name:'Token Tracking',    dot:'#1aa3c4' },
-  finish_check:   { name:'Finish Check',      dot:'#caa400' },
+  finalize_step:  { name:'Finalize Step',     dot:'#1aa3c4' },
   session_end:    { name:'Session End',       dot:'#8e8e93' },
 };
 const meta = t => TYPE_META[t] || { name:t, dot:'#8e8e93' };

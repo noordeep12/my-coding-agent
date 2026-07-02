@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from ...engine.routing import ToolRouter
 from ..context import RunContext
 from ..node import BaseNode
-from .router import ToolRouter
 
 
 class ToolRoutingNode(BaseNode):

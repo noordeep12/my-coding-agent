@@ -11,6 +11,7 @@ src/my_coding_agent/
 │   ├── __init__.py              ← Public surface: AgentNode, LLM, ToolRegistry, tool
 │   ├── agent.py                 ← AgentNode: session bookkeeping + pipeline runner (main entry)
 │   ├── schema.py                ← Engine event type constants (SESSION_START, LLM_CALL, etc.)
+│   ├── routing.py               ← ToolRouter: two-phase tool selection
 │   ├── llm/                     ← LLM HTTP client
 │   │   ├── __init__.py          ← LLM class, OMLX_* constants
 │   │   └── schema.py            ← LLM request/response shape constants
@@ -32,16 +33,13 @@ src/my_coding_agent/
 │   ├── context.py               ← RunContext dataclass: explicit data contract between nodes
 │   ├── node.py                  ← Node protocol + BaseNode ABC
 │   ├── dag.py                   ← Pipeline: ordered node list + step-loop execution engine
-│   ├── schema.py                ← Pipeline event type constants (ROUTER)
-│   ├── nodes/                   ← One module per pipeline stage
-│   │   ├── handoff.py           ← ContextHandoff: context reset state transfer
-│   │   ├── router.py            ← ToolRouter: two-phase tool selection
-│   │   ├── context_preflight.py ← ContextPreflightNode: context-window check + handoff trigger
+│   ├── schema.py                ← Pipeline typed contracts (ROUTER constant + ContextHandoff)
+│   ├── nodes/                   ← One module per pipeline stage (one node per file)
+│   │   ├── context_guard.py     ← ContextGuardNode: context-window budget check + handoff trigger
 │   │   ├── tool_routing.py      ← ToolRoutingNode: select relevant tool subset
 │   │   ├── llm_call.py          ← LLMCallNode: chat_completion + append assistant message
 │   │   ├── tool_dispatch.py     ← ToolDispatchNode: ToolExecutor.run() per step
-│   │   ├── token_tracking.py    ← TokenTrackingNode: record step usage
-│   │   └── finish_check.py      ← FinishCheckNode: detect stop/exit/quit finish reason
+│   │   └── finalize_step.py     ← FinalizeStepNode: record step usage, then detect stop/exit/quit
 │   └── examples/
 │       └── simple.py            ← CLI entry point (Click)
 │
@@ -82,7 +80,7 @@ The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, an
 - **`available_models` / `context_window`** — fetch the model list and resolve/cache the context window (128k fallback when unreachable).
 - **`_request_with_retry`** — retries transient connection/timeout failures with backoff.
 
-### `ToolRouter` (`pipeline/nodes/router.py`)
+### `ToolRouter` (`engine/routing.py`)
 
 Holds the LLM client and selects the relevant tool subset for a message via **`route_tools(message, all_tools)`** — two-phase selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included.
 
@@ -102,16 +100,15 @@ The node-based DAG execution engine. `pipeline/` only knows how to build and exe
 
 **`Pipeline` (`dag.py`)** — takes an ordered list of `Node` objects. `run_step` executes every node in order for one step, short-circuiting when any node sets a non-`CONTINUE` signal. `execute` wraps `run_step` in the outer step loop.
 
-**The six default nodes** (instantiated by `build_default_pipeline()`):
+**The five default nodes** (instantiated by `build_default_pipeline()`):
 
 | Node | Stage | What it does |
 |---|---|---|
-| `ContextPreflightNode` | 1 | Checks `last_prompt_tokens / context_window`; sets STOP (limit), RESET (handoff), or CONTINUE |
+| `ContextGuardNode` | 1 | Checks `last_prompt_tokens / context_window`; sets STOP (limit), RESET (handoff), or CONTINUE |
 | `ToolRoutingNode` | 2 | Creates `ToolRouter(ctx.llm)`, calls `route_tools`, writes `ctx.routed_tools` |
 | `LLMCallNode` | 3 | Increments `step_num`, calls `chat_completion`, appends assistant message |
 | `ToolDispatchNode` | 4 | Builds `ToolExecutor(last_message, ctx.llm)`, runs it, merges records and artifacts into `ctx` |
-| `TokenTrackingNode` | 5 | Reads `ctx.last_response`, updates `ctx.last_prompt_tokens`, logs usage |
-| `FinishCheckNode` | 6 | Reads finish_reason from `ctx.last_response`; sets STOP on stop/exit/quit |
+| `FinalizeStepNode` | 5 | Reads `ctx.last_response`: records token usage + updates `ctx.last_prompt_tokens`, then sets STOP on a stop/exit/quit finish_reason (emits both `token_tracking` and `finish_check` records) |
 
 ### `AgentNode` (`engine/agent.py`)
 
@@ -120,17 +117,17 @@ The top-level entry point. Holds an `LLM` client via composition (`self.llm`) �
 - **`execute(max_steps)`** — stand-alone entry: constructs a `RunContext`, builds the pipeline via `build_default_pipeline(spawn_fn=...)`, delegates to `pipeline.execute(ctx)`, saves session data, and prints the summary. `max_steps` defaults to the shared `DEFAULT_MAX_STEPS` (50) — the single source of truth used by the CLI, the `execute` default, and delegated subagents so all three share one step ceiling.
 - **`run(ctx)`** — embedded entry: runs `execute()` and writes results back to the provided `RunContext`; used when `AgentNode` is a step in a larger outer pipeline.
 
-`AgentNode` owns session bookkeeping: banner printing, session log attachment/detachment, `session_data.json` + `tool_artifacts.json` persistence, run summary, and observability recorder start/finish. It also owns `_generate_handoff`, `_spawn_continuation`, and `_handle_context_reset` — the context-reset machinery called by `ContextPreflightNode` via the `spawn_fn` closure. A shared `_summarize_conversation(prompt, kind)` helper backs both `_generate_handoff` and `generate_report` — a single tool-free LLM call over the whole conversation; when the model returns empty `content` (reasoning models such as Qwen3-thinking often end the summary turn with a tool call, leaving `content` null and the substance in `reasoning_content`), it falls back to `reasoning_content` so the summary is never lost. `generate_report()` produces a subagent's end-of-turn final report (a distinct `report` node) and is invoked by the `delegate` tool after `execute()`, so it fires for delegated subagents only, never spontaneously for the main agent.
+`AgentNode` owns session bookkeeping: banner printing, session log attachment/detachment, `session_data.json` + `tool_artifacts.json` persistence, run summary, and observability recorder start/finish. It also owns `_generate_handoff`, `_spawn_continuation`, and `_handle_context_reset` — the context-reset machinery called by `ContextGuardNode` via the `spawn_fn` closure. A shared `_summarize_conversation(prompt, kind)` helper backs both `_generate_handoff` and `generate_report` — a single tool-free LLM call over the whole conversation; when the model returns empty `content` (reasoning models such as Qwen3-thinking often end the summary turn with a tool call, leaving `content` null and the substance in `reasoning_content`), it falls back to `reasoning_content` so the summary is never lost. `generate_report()` produces a subagent's end-of-turn final report (a distinct `report` node) and is invoked by the `delegate` tool after `execute()`, so it fires for delegated subagents only, never spontaneously for the main agent.
 
-### Context Handoff (`pipeline/nodes/handoff.py` + `pipeline/nodes/context_preflight.py`)
+### Context Handoff (`pipeline/schema.py` + `pipeline/nodes/context_guard.py`)
 
-When `ContextPreflightNode` detects that `prompt_tokens / context_window >= context_reset_threshold`, it calls `spawn_fn()` — a closure set by `AgentNode.execute` that calls `AgentNode._handle_context_reset`. That method:
+When `ContextGuardNode` detects that `prompt_tokens / context_window >= context_reset_threshold`, it calls `spawn_fn()` — a closure set by `AgentNode.execute` that calls `AgentNode._handle_context_reset`. That method:
 1. Sends a structured handoff prompt asking the LLM to summarize progress, files changed, decisions made, and remaining work.
 2. Saves the result as a markdown file under `.my_coding_agent/handoffs/`.
 3. Saves session data and prints a summary for the current run.
 4. Spawns a fresh `AgentNode` instance carrying only the system messages and the handoff as a user message.
 
-`ContextPreflightNode` stores the result in `ctx.continuation_messages` and sets `ctx.signal = "RESET"`, which causes `Pipeline.execute` to return those messages immediately.
+`ContextGuardNode` stores the result in `ctx.continuation_messages` and sets `ctx.signal = "RESET"`, which causes `Pipeline.execute` to return those messages immediately.
 
 ### `ToolRegistry` (`engine/tool_registry/` package)
 
@@ -159,7 +156,7 @@ The read-side of the observability system. Separated from `observability/` becau
 
 - **`schema.py`** — `TraceNode` and `TraceSession` dataclasses: the typed contracts produced by `reader.py` and consumed by `server.py`. `TraceNode.ctx_state` holds the per-node context-window snapshot — cumulative `composition` by `system`/`user`/`assistant`/`tool` role, the per-role `added` this node appended (with `added_total`/`removed` and an `estimated` flag), plus `tokens`/`window`/`pct`. Each node also carries `agent` (owning session id) and `depth` (call-tree nesting level), so sub-agent traces nest under the main agent. `TraceSession.order` is the execution-order node spine the UI walks for keyboard navigation.
 - **`pricing.py`** — model price table (USD per 1M tokens) and `compute_cost()` helper.
-- **`reader.py`** — parses `events.jsonl` into a **flat** `TraceSession`: every pipeline `BaseNode` subclass (`ToolRoutingNode`, `LLMCallNode`, `ToolDispatchNode`, `ContextPreflightNode`, `TokenTrackingNode`, `FinishCheckNode`) becomes one `TraceNode` in a single chain off the session root — there is no `step` wrapper node; the step number is carried as an attribute. A subagent's `REPORT` event becomes a distinct `report` node (`Subagent Report`), separate from the context-reset `handoff` node. Reconstructs the context window as four role buckets in execution order (`_assign_ctx_state`): each node contributes the message(s) it appends — the session seeds system + opening user, an LLM call adds its `assistant` output (exact `completion`), a tool dispatch adds its result (character-estimated via a session tokens/char ratio, since tool tokens are never recorded); composition re-anchors to each LLM call's real input snapshot (`_role_split` splits the provider's flat `prompt_tokens` across the four roles by character share). Each agent gets its **own** context window: `_assign_ctx_state` processes only its session's nodes, so delegate sub-agents (loaded recursively at an incremented `depth` and grafted inline) keep the independent windows computed by their own load. Also does loop detection and aggregate analytics; falls back to `session_data.json` for sessions without `events.jsonl`.
+- **`reader.py`** — parses `events.jsonl` into a **flat** `TraceSession`: every pipeline `BaseNode` subclass (`ContextGuardNode`, `ToolRoutingNode`, `LLMCallNode`, `ToolDispatchNode`, `FinalizeStepNode`) becomes one `TraceNode` in a single chain off the session root — there is no `step` wrapper node; the step number is carried as an attribute. A subagent's `REPORT` event becomes a distinct `report` node (`Subagent Report`), separate from the context-reset `handoff` node. Reconstructs the context window as four role buckets in execution order (`_assign_ctx_state`): each node contributes the message(s) it appends — the session seeds system + opening user, an LLM call adds its `assistant` output (exact `completion`), a tool dispatch adds its result (character-estimated via a session tokens/char ratio, since tool tokens are never recorded); composition re-anchors to each LLM call's real input snapshot (`_role_split` splits the provider's flat `prompt_tokens` across the four roles by character share). Each agent gets its **own** context window: `_assign_ctx_state` processes only its session's nodes, so delegate sub-agents (loaded recursively at an incremented `depth` and grafted inline) keep the independent windows computed by their own load. Also does loop detection and aggregate analytics; falls back to `session_data.json` for sessions without `events.jsonl`.
 - **`server.py`** — minimal stdlib `http.server` with three routes (`/`, `/api/sessions`, `/api/session/{id}`) and an embedded single-page Trace Explorer UI built with **Preact + htm** (vendored offline under `_vendor/`, injected inline — no CDN, no build step). The UI is a nested call-**Tree** (Main Agent at the root; each `delegate` spawns a collapsible **Subagent** group, with a coloured rail, nested where it was called — derived from each node's `agent`/`depth`) with keyboard navigation (auto-select), a type filter, and a single per-node **Context window** box (a system/user/assistant/tool composition bar + legend and the running total/%, badged with the owning agent for sub-agents since each tracks its own window); Tree labels summarise each node's contribution (e.g. *+196 assistant*). Node detail is type-aware: tool dispatches render a success/error status badge over the command and the full result envelope (`{schema_version, tool, ok, output, error, metadata}`) in one CodeBox — so an empty `output` whose real signal lives in `error` (the bash stderr stream) is never hidden — LLM calls render response/reasoning/tool-calls boxes, and a `report` node renders the subagent's final report content. An LLM call's **Inputs** surface both the `messages` snapshot and the `tools` definitions the model was given that turn. Every content box — JSON and raw text — renders through one read-only `CodeBox` component wrapping a **CodeMirror 6** editor (vendored offline): syntax highlighting, line numbers, folding, a JSON schema breadcrumb derived from the caret's syntax-tree path (clickable to jump), collapse-all/expand-all, copy-all, and `@codemirror/search` find (open + Enter/Shift+Enter next/prev). Editors are created only for the selected node's visible boxes, so many-node sessions stay fast. CLI entry point: `my-coding-agent-traces [--port 7474] [--dir .my_coding_agent]`.
 - **`_vendor/`** — third-party UI libraries (Preact, Preact Hooks, htm as UMD bundles; CodeMirror 6 as a prebuilt IIFE bundle exposing `window.CM6`) vendored offline so the localhost viewer needs no internet. JS only; excluded from coverage.
 
