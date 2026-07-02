@@ -549,8 +549,13 @@ function cmdText(args){
 }
 
 function ToolResult({node}){
-  const r = parseToolResult(node.outputs && node.outputs.result) || {};
+  const raw = node.outputs && node.outputs.result;
+  const r = parseToolResult(raw) || {};
   const cmd = cmdText(node.inputs && node.inputs.args);
+  const hasResult = raw!=null && raw!=='';
+  // Render the WHOLE result envelope ({schema_version,tool,ok,output,error,
+  // metadata}) so nothing is hidden — an empty `output` with the real signal in
+  // `metadata.stderr`/`error` would otherwise look like "no output".
   return html`<div class="toolres">
     <div class="tr-head">
       ${r.tool ? html`<span class="tr-tool">${r.tool}</span>` : null}
@@ -559,11 +564,9 @@ function ToolResult({node}){
     </div>
     ${cmd ? html`<div class="tr-block"><div class="tr-label">command</div>
       <${CodeBox} value=${cmd}/></div>` : null}
-    ${r.output ? html`<div class="tr-block"><div class="tr-label">output</div>
-      <${CodeBox} value=${r.output}/></div>` : null}
-    ${r.error ? html`<div class="tr-block"><div class="tr-label err">error</div>
-      <${CodeBox} value=${r.error}/></div>` : null}
-    ${(!cmd && !r.output && !r.error) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
+    ${hasResult ? html`<div class="tr-block"><div class="tr-label">envelope</div>
+      <${CodeBox} value=${r}/></div>`
+      : html`<div class="tr-block muted">No result recorded.</div>`}
   </div>`;
 }
 
