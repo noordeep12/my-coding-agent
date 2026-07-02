@@ -65,12 +65,18 @@ def _maybe_json(text: Any) -> Any:
 def _structured_envelope(
     tool: str, data: dict[str, Any], output: str, metadata: dict[str, Any]
 ) -> dict[str, Any]:
-    """Build an envelope from a bash-style ``{ok, exit_code, stderr}`` result."""
+    """Build an envelope from a bash-style ``{ok, exit_code, stderr}`` result.
+
+    One field per datum, nothing duplicated: ``output`` is stdout, ``error`` is
+    stderr whenever non-empty (regardless of ``ok`` — so a masked pipeline
+    failure surfaces as ``ok:true`` with a non-null ``error``, and stderr is
+    never dropped), ``exit_code`` lives only in ``metadata``, and ``ok`` is the
+    sole success verdict. stderr is never copied into ``metadata``.
+    """
     ok = bool(data.get("ok", True))
-    for key in ("exit_code", "stderr"):
-        if key in data:
-            metadata[key] = data[key]
-    error = None if ok else (data.get("stderr") or "command failed")
+    if "exit_code" in data:
+        metadata["exit_code"] = data["exit_code"]
+    error = data.get("stderr") or None
     return build_tool_result(tool, ok, output, error, metadata)
 
 

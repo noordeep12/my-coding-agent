@@ -1,10 +1,10 @@
 """Tests for tool-execution helpers (summary extraction + output schema).
 
-The block tagged "characterization" locks the CURRENT observable behavior of
-``ToolExecutor`` before the module is split into a package. These tests are the
-safety net for that refactor: they assert behavior as it is today (including the
-``error``/``metadata.stderr`` duplication), so any accidental change during the
-move is caught. They must stay green across the refactor unchanged.
+The block tagged "characterization" locks the observable behavior of
+``ToolExecutor`` — how raw tool returns become the canonical envelope. For a
+bash result each datum maps to one field: stdout→output, stderr→error (whenever
+non-empty, regardless of ok), exit_code→metadata, success→ok; stderr is never
+duplicated into metadata.
 """
 
 import json
@@ -100,15 +100,52 @@ def test_envelope_bash_success_folds_stdout_and_metadata():
     assert env["metadata"]["exit_code"] == 0
 
 
-def test_envelope_bash_failure_duplicates_stderr_into_error_and_metadata():
-    # CURRENT behavior (locked, not endorsed): stderr appears in BOTH error and
-    # metadata.stderr. Issue #55 will dedup this; until then the net pins it.
+def test_envelope_bash_failure_puts_stderr_in_error_not_metadata():
+    # Deduped: stderr lives ONLY in `error`, never copied into metadata.
     raw = json.dumps({"stdout": "", "stderr": "boom", "exit_code": 1, "ok": False})
     env = result_envelope("bash", raw, False, False, "c1")
     assert env["ok"] is False
     assert env["error"] == "boom"
-    assert env["metadata"]["stderr"] == "boom"
+    assert "stderr" not in env["metadata"]
     assert env["metadata"]["exit_code"] == 1
+
+
+def test_envelope_bash_masked_failure_surfaces_stderr_with_ok_true():
+    # exit 0 + empty stdout + stderr → ok:true with a non-null error (masked failure).
+    raw = json.dumps(
+        {"stdout": "", "stderr": "grep: bad -P", "exit_code": 0, "ok": True}
+    )
+    env = result_envelope("bash", raw, False, False, "c1")
+    assert env["ok"] is True
+    assert env["output"] == ""
+    assert env["error"] == "grep: bad -P"
+    assert "stderr" not in env["metadata"]
+
+
+def test_envelope_bash_success_with_stderr_keeps_ok_true():
+    # A successful command that prints to stderr (git/curl-style) stays ok:true.
+    raw = json.dumps(
+        {
+            "stdout": "data",
+            "stderr": "Switched to branch main",
+            "exit_code": 0,
+            "ok": True,
+        }
+    )
+    env = result_envelope("bash", raw, False, False, "c1")
+    assert env["ok"] is True
+    assert env["output"] == "data"
+    assert env["error"] == "Switched to branch main"
+
+
+def test_envelope_bash_failure_empty_stderr_yields_null_error():
+    # grep no-match style: non-zero exit, empty stderr → error null (no placeholder).
+    raw = json.dumps({"stdout": "", "stderr": "", "exit_code": 1, "ok": False})
+    env = result_envelope("bash", raw, False, False, "c1")
+    assert env["ok"] is False
+    assert env["error"] is None
+    assert env["metadata"]["exit_code"] == 1
+    assert "stderr" not in env["metadata"]
 
 
 def test_envelope_error_string_convention_marks_failure():
@@ -343,11 +380,10 @@ def test_executor_defaults_to_empty_toolset(bare_llm):
 # ── artifact preview: bounded excerpt + skim guidance in `output` ─────────────
 
 
-def test_artifact_text_prefers_stdout_and_appends_stderr():
+def test_artifact_text_is_stdout_only():
     assert artifact_text({"stdout": "out", "stderr": "", "ok": True}) == "out"
-    assert (
-        artifact_text({"stdout": "out", "stderr": "err"}) == "out\n--- stderr ---\nerr"
-    )
+    # stderr is surfaced in the envelope `error`, not mixed into the artifact body:
+    assert artifact_text({"stdout": "out", "stderr": "err"}) == "out"
 
 
 def test_build_artifact_preview_bounds_output_and_reports_true_totals():

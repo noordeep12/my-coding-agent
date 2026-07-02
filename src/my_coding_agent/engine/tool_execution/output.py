@@ -81,18 +81,15 @@ def validate_tool_output(
 
 
 def artifact_text(artifact: Any) -> str:
-    """Return the skimmable plain-text body of a command artifact.
+    """Return the skimmable stdout body of a command artifact.
 
-    Returns stdout, with any stderr appended under a label so nothing is lost.
     This is what gets written to the per-artifact file and what the preview
     excerpt is taken from. Only ``bash`` offloads an artifact today, and its
-    shape is ``{stdout, stderr, exit_code, ok}``.
+    shape is ``{stdout, stderr, exit_code, ok}``; stderr is surfaced in the
+    envelope ``error`` field, so the artifact body is stdout alone (never
+    re-mixed, to keep one field per datum).
     """
-    out = artifact.get("stdout") or ""
-    err = artifact.get("stderr") or ""
-    if err:
-        return f"{out}\n--- stderr ---\n{err}" if out else err
-    return out
+    return artifact.get("stdout") or ""
 
 
 def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str:
