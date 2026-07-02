@@ -348,7 +348,6 @@ def test_artifact_text_prefers_stdout_and_appends_stderr():
     assert (
         artifact_text({"stdout": "out", "stderr": "err"}) == "out\n--- stderr ---\nerr"
     )
-    assert artifact_text({"k": "v"}) == json.dumps({"k": "v"}, indent=2)
 
 
 def test_build_artifact_preview_bounds_output_and_reports_true_totals():

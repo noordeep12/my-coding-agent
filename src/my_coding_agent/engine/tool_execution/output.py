@@ -81,23 +81,18 @@ def validate_tool_output(
 
 
 def artifact_text(artifact: Any) -> str:
-    """Return the skimmable plain-text body of an artifact.
+    """Return the skimmable plain-text body of a command artifact.
 
-    For command output this is stdout (with any stderr appended under a label so
-    nothing is lost); for a file read it is the content; otherwise the artifact is
-    rendered as indented JSON. This is what gets written to the per-artifact file
-    and what the preview excerpt is taken from.
+    Returns stdout, with any stderr appended under a label so nothing is lost.
+    This is what gets written to the per-artifact file and what the preview
+    excerpt is taken from. Only ``bash`` offloads an artifact today, and its
+    shape is ``{stdout, stderr, exit_code, ok}``.
     """
-    if isinstance(artifact, dict):
-        if "content" in artifact:
-            return str(artifact.get("content") or "")
-        if "stdout" in artifact or "stderr" in artifact:
-            out = artifact.get("stdout") or ""
-            err = artifact.get("stderr") or ""
-            if err:
-                return f"{out}\n--- stderr ---\n{err}" if out else err
-            return out
-    return json.dumps(artifact, indent=2)
+    out = artifact.get("stdout") or ""
+    err = artifact.get("stderr") or ""
+    if err:
+        return f"{out}\n--- stderr ---\n{err}" if out else err
+    return out
 
 
 def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str:
