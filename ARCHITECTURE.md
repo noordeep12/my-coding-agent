@@ -16,7 +16,8 @@ src/my_coding_agent/
 │   │   └── schema.py            ← LLM request/response shape constants
 │   ├── tool_execution/          ← ToolExecutor + pure helpers
 │   │   ├── __init__.py          ← ToolExecutor: per-message run() (before/call/after)
-│   │   ├── schema.py            ← Canonical envelope: build/validate/normalize
+│   │   ├── schema.py            ← Canonical envelope shapes (version, keys, preview descriptor)
+│   │   ├── envelope.py          ← Envelope builders: build/validate/normalize
 │   │   ├── args.py              ← Tool-call parse + alias remap + kwarg strip
 │   │   ├── output.py            ← Truncation + artifact preview (bounded excerpt + skim guidance)
 │   │   └── records.py           ← Call-record builders (error_record, call_record)
@@ -177,7 +178,7 @@ Every module and sub-module owns a `schema.py` for its typed contracts and shape
 |---|---|
 | `engine/schema.py` | Session/LLM/tool/handoff/report event type constants |
 | `engine/llm/schema.py` | LLM call kind constants, usage field names |
-| `engine/tool_execution/schema.py` | Canonical tool-result envelope |
+| `engine/tool_execution/schema.py` | Canonical tool-result envelope shapes (builders live in `envelope.py`) |
 | `engine/tool_registry/schema.py` | OpenAI tool definition JSON key names |
 | `pipeline/schema.py` | ROUTER event type constant |
 | `observability/schema.py` | JSONL row top-level key names |

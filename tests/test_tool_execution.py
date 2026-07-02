@@ -21,12 +21,12 @@ from my_coding_agent.engine.tool_execution import (
     output,
     validate_tool_result,
 )
+from my_coding_agent.engine.tool_execution.envelope import result_envelope
 from my_coding_agent.engine.tool_execution.output import (
     PREVIEW_MAX_CHARS,
     artifact_text,
     build_artifact_preview,
 )
-from my_coding_agent.engine.tool_execution.schema import result_envelope
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 from my_coding_agent.observability import current_session_id
 

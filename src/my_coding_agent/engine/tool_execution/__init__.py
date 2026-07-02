@@ -16,6 +16,11 @@ from ...observability import current_session_id
 from ...utils import get_logger
 from ..tool_registry import ToolRegistry, artifact_file_path
 from . import args as arg_prep
+from .envelope import (
+    build_tool_result,
+    result_envelope,
+    validate_tool_result,
+)
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
     _extract_summary,
@@ -24,12 +29,7 @@ from .output import (
     validate_tool_output,
 )
 from .records import call_record, error_record
-from .schema import (
-    TOOL_SCHEMA_VERSION,
-    build_tool_result,
-    result_envelope,
-    validate_tool_result,
-)
+from .schema import TOOL_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from ..llm import LLM
@@ -54,10 +54,11 @@ _RECOVERABLE_EXCEPTIONS = (
     subprocess.TimeoutExpired,  # belt-and-suspenders (bash catches this itself)
 )
 
-# Data contract, output post-processing, and argument prep live in the sibling
-# modules schema / output / args; the executor below composes them. The
-# canonical schema (build/validate/envelope), the truncation limit
-# (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported above.
+# Data contract, envelope builders, output post-processing, and argument prep
+# live in the sibling modules schema / envelope / output / args; the executor
+# below composes them. The envelope builders (build/validate/normalize), the
+# truncation limit (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported
+# above.
 
 
 class ToolExecutor:
