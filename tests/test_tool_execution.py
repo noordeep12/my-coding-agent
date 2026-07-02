@@ -443,3 +443,53 @@ def test_write_artifact_file_returns_none_on_oserror(
     assert status == "success"  # offload continued despite the write failure
     assert env["metadata"]["artifact"] is True
     assert env["metadata"]["preview"]["full_output_path"] is None
+
+
+def test_executor_writes_artifacts_under_each_session_dir(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """Each subagent writes to its own session directory (spec scenario).
+
+    Subagent isolation rests on the ``current_session_id`` contextvar being set
+    per (sub)agent run. Offloading under two different session ids must land each
+    artifact under its own ``.my_coding_agent/<session>/artifacts/<id>.txt`` with
+    its own contents, never leaking into the other's dir; and ``read_tool_artifact``
+    under one session must not see the other's file. Covers the subagent-isolation
+    edge case (§18/§30), not just the single-session happy path.
+    """
+    monkeypatch.chdir(tmp_path)
+    filler = "x" * (PREVIEW_MAX_CHARS + 500)
+
+    def fake_bash(self, command, timeout=60):
+        body = f"BODY-{command}\n{filler}\n"
+        return None, {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""}
+
+    mocker.patch.object(ToolsRegistry, "bash", fake_bash)
+
+    def offload(session_id, call_id, command):
+        token = current_session_id.set(session_id)
+        try:
+            _invoke(
+                bare_executor, call_id, "bash", {"command": command}, ToolsRegistry()
+            )
+        finally:
+            current_session_id.reset(token)
+
+    offload("sessA", "callA", "A")
+    offload("sessB", "callB", "B")
+
+    artifacts = tmp_path / ".my_coding_agent"
+    art_a = artifacts / "sessA" / "artifacts" / "callA.txt"
+    art_b = artifacts / "sessB" / "artifacts" / "callB.txt"
+    # Each run's full output landed under its own session dir with its own body.
+    assert art_a.read_text() == f"BODY-A\n{filler}\n"
+    assert art_b.read_text() == f"BODY-B\n{filler}\n"
+    # Neither run leaked into the other session's artifacts dir.
+    assert not (artifacts / "sessA" / "artifacts" / "callB.txt").exists()
+    assert not (artifacts / "sessB" / "artifacts" / "callA.txt").exists()
+    # read_tool_artifact scoped to sessA cannot retrieve sessB's file.
+    token = current_session_id.set("sessA")
+    try:
+        assert "no artifact found" in ToolsRegistry().read_tool_artifact("callB")
+    finally:
+        current_session_id.reset(token)
