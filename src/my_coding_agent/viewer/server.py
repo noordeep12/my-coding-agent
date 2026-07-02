@@ -116,8 +116,9 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tleaf{display:flex;align-items:center;gap:9px;padding:7px 12px;border-radius:8px;cursor:pointer}
 .tleaf:hover{background:var(--bg2)}
 .tleaf.sel{background:var(--accent-soft)}
-.tleaf-name{font-weight:500;font-size:12px}
-.tleaf-sub{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.tleaf-name{font-weight:500;font-size:12px;flex:none}
+.tleaf-badges{display:flex;gap:5px;align-items:center;flex:none;overflow:hidden}
+.tleaf-sub{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:40px}
 .tleaf-sub.neg{color:var(--neg)}
 .twist{display:inline-block;transition:transform .12s;color:var(--muted);font-size:10px}
 .twist.open{transform:rotate(90deg)}
@@ -125,9 +126,22 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 /* ── detail ── */
 .dwrap{display:flex;flex-direction:column}
 .dhead{padding:20px 22px 16px;border-bottom:1px solid var(--line)}
-.dbadge{display:inline-block;color:#fff;font-size:11px;font-weight:700;border-radius:7px;padding:3px 9px;margin-right:8px;vertical-align:middle}
-.dhead h2{font-size:18px;font-weight:600;margin-top:12px;word-break:break-word}
-.dmeta{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+.dhead-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dbadge{display:inline-block;color:#fff;font-size:14px;font-weight:700;border-radius:8px;padding:5px 12px;vertical-align:middle}
+.badge-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+/* uniform node badges (detail header + tree rows) */
+.nbadge{font-size:11px;font-weight:600;border-radius:6px;padding:2px 9px;white-space:nowrap}
+.nbadge.sm{font-size:10px;padding:1px 6px;border-radius:5px}
+.nbadge.name{font-family:var(--mono);background:var(--bg2);border:1px solid var(--line);color:var(--text)}
+.nbadge.ok{color:var(--pos);background:var(--pos-bg)}
+.nbadge.err{color:var(--neg);background:var(--neg-bg)}
+.nbadge.lat{color:var(--muted);background:var(--bg2)}
+.nbadge.ts{color:var(--muted);background:var(--bg2)}
+.nbadge.step{color:var(--muted);background:var(--bg2)}
+.nbadge.art{color:var(--sub);background:var(--sub-soft)}
+.nbadge.phase{color:var(--muted);background:var(--bg2)}
+.nbadge.count{color:var(--muted);background:var(--bg2)}
+.nbadge.stop{color:var(--muted);background:var(--bg2)}
 
 /* ── context window card ── */
 .ctxcard{margin:16px 22px;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
@@ -164,13 +178,6 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 
 /* ── tool result / llm body (rendered inside .sbody) ── */
 .toolres{display:flex;flex-direction:column}
-.tr-head{display:flex;align-items:center;gap:9px;padding:0 0 2px}
-.tr-tool{font-family:var(--mono);font-size:12px;font-weight:600;background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:2px 9px}
-.tr-badge{font-size:11px;font-weight:600;border-radius:6px;padding:2px 9px}
-.tr-badge.ok{color:var(--pos);background:var(--pos-bg)}
-.tr-badge.err{color:var(--neg);background:var(--neg-bg)}
-.tr-badge.lat{color:var(--amber);background:var(--bg2)}
-.tr-badge.art{color:var(--sub);background:var(--sub-soft)}
 .tr-block{padding:12px 0 0}
 .tr-block:first-child{padding-top:0}
 .tr-block.muted{font-size:12px}
@@ -420,6 +427,57 @@ function addedText(cs){
   return roles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  ');
 }
 
+// ISO timestamp → HH:MM:SS (best-effort; falls back to the raw value).
+const fmtTime = s => s ? (String(s).slice(11,19) || String(s)) : null;
+
+// The main-badge title for a node: its class label with any "(detail)" suffix
+// stripped — the detail (tool name / llm kind) is surfaced as its own badge, so
+// it is not duplicated in the title.
+const nodeTitle = node => (node.label||'').replace(/\\s*\\(.*\\)\\s*$/, '');
+
+// Uniform badge descriptors for a node, ordered by importance left→right: the
+// most meaningful and colored badges (identity, status, colored type signals)
+// lead; housekeeping (latency, timestamp, step) trails. Each is {t: label,
+// c: css-class}; only badges whose data exists are emitted.
+function nodeBadges(node){
+  const a = node.attributes||{}, b = [];
+  const r = node.type==='tool_call' ? (parseToolResult(node.outputs && node.outputs.result)||{}) : null;
+  // 1. identity — what this node is
+  if(r && (a.name||r.tool)) b.push({t:a.name||r.tool, c:'name'});
+  else if(node.type==='llm_call' && a.kind && a.kind!=='main') b.push({t:a.kind, c:'name'});
+  else if(node.type==='session' && a.model) b.push({t:a.model, c:'name'});
+  else if(node.type==='session_end' && a.stop_reason) b.push({t:'stop: '+a.stop_reason, c:'stop'});
+  // 2. status — colored success/error
+  if(r && r.ok===true) b.push({t:'✓ success', c:'ok'});
+  else if(r && r.ok===false) b.push({t:'✗ error', c:'err'});
+  // 3. colored type signals
+  if(r && r.metadata && r.metadata.artifact===true) b.push({t:'📦 artifact', c:'art'});
+  if(node.type==='router' && a.phase) b.push({t:'🧭 '+phaseLabel(a.phase), c:'phase'});
+  // 4. counts (neutral type signals)
+  if(node.type==='router'){
+    const sel = node.outputs && node.outputs.selected;
+    if(Array.isArray(sel)) b.push({t:sel.length+' tool'+(sel.length===1?'':'s'), c:'count'});
+  }
+  if(node.type==='llm_call'){
+    const tc = node.outputs && node.outputs.tool_calls;
+    if(Array.isArray(tc) && tc.length) b.push({t:tc.length+' call'+(tc.length===1?'':'s'), c:'count'});
+  }
+  if(node.type==='session_end' && a.steps!=null) b.push({t:a.steps+' steps', c:'count'});
+  // 5. latency — de-emphasized (neutral)
+  const lat = a.latency_s!=null ? a.latency_s : (node.type==='session_end' ? a.elapsed_s : null);
+  if(lat!=null) b.push({t:'⚡ '+lat+'s', c:'lat'});
+  // 6. timestamp (neutral)
+  const ts = fmtTime(a.started_at); if(ts) b.push({t:'🕘 '+ts, c:'ts'});
+  // 7. step — least important
+  if(a.step) b.push({t:'Step '+a.step, c:'step'});
+  return b;
+}
+
+// Compact subset for the tree row: the glanceable badges only (timestamp/step
+// are redundant in the ordered tree, so they are dropped to save width).
+const TREE_BADGE = new Set(['name','ok','err','lat','art','phase','count']);
+const treeBadges = node => nodeBadges(node).filter(x=>TREE_BADGE.has(x.c));
+
 function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
   // Keep the selected node reachable: expand its owning agent if collapsed.
   useEffect(()=>{
@@ -480,9 +538,13 @@ function TreeLeaf({node,sel,onSel}){
   const ref = useRef(), selected = node.id===sel, m = meta(node.type);
   useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
   const summary = addedText(node.ctx_state);
+  const badges = treeBadges(node);
   return html`<div ref=${ref} class=${'tleaf'+(selected?' sel':'')} onClick=${()=>onSel(node.id)}>
     <span class="row-dot sm" style=${{background:m.dot}}></span>
     <span class="tleaf-name">${m.name}</span>
+    ${badges.length ? html`<span class="tleaf-badges">
+      ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge sm '+x.c}>${x.t}</span>`)}
+    </span>` : null}
     <span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary || '—'}</span>
   </div>`;
 }
@@ -495,22 +557,21 @@ function displayAttrs(node){
 }
 
 function Detail({node,mainAgent}){
-  const m = meta(node.type), a = node.attributes||{};
+  const m = meta(node.type);
   const subAgent = node.agent && node.agent!==mainAgent ? node.agent : null;
   const attrs = displayAttrs(node);
   const attrsBody = Object.keys(attrs).length ? html`<${CodeBox} value=${attrs}/>` : null;
+  const badges = nodeBadges(node);
   return html`<div class="dwrap">
     <div class="dhead">
-      <span class="dbadge" style=${{background:m.dot}}>${m.name}</span>
-      ${subAgent ? html`<span class="sub-tag">subagent ${subAgent.slice(0,8)}</span>` : null}
-      ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
-      <h2>${node.label}</h2>
-      <div class="dmeta">
-        ${a.started_at ? html`<span>🕘 ${String(a.started_at).slice(11,19) || a.started_at}</span>` : null}
-        ${a.latency_s!=null ? html`<span>⚡ ${a.latency_s}s</span>` : null}
-        ${a.step ? html`<span>Step ${a.step}</span>` : null}
-        ${node.type==='router' && a.phase ? html`<span>🧭 ${phaseLabel(a.phase)}</span>` : null}
+      <div class="dhead-top">
+        <span class="dbadge" style=${{background:m.dot}}>${nodeTitle(node)}</span>
+        ${subAgent ? html`<span class="sub-tag">subagent ${subAgent.slice(0,8)}</span>` : null}
+        ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
       </div>
+      ${badges.length ? html`<div class="badge-row">
+        ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge '+x.c}>${x.t}</span>`)}
+      </div>` : null}
     </div>
     <${CtxCard} cs=${node.ctx_state} agent=${subAgent}/>
     <${Section} title="Outputs" data=${node.outputs} body=${outputsBody(node)} open=${true}/>
@@ -558,22 +619,14 @@ function ToolResult({node}){
   const raw = node.outputs && node.outputs.result;
   const r = parseToolResult(raw) || {};
   const cmd = cmdText(node.inputs && node.inputs.args);
-  const meta = r.metadata || {};
-  const lang = meta.lang || {};
-  const latency = node.attributes && node.attributes.latency_s;
+  const lang = (r.metadata || {}).lang || {};
   const hasResult = raw!=null && raw!=='';
   // Split the envelope into labelled, language-highlighted boxes (command /
   // output / error) and always keep raw_envelope so nothing is hidden — an empty
   // `output` with the real signal in `error` would otherwise look like "no
   // output". Each box's language comes from the backend `metadata.lang` hint.
+  // The tool/status/latency/artifact badges live in the node header (nodeBadges).
   return html`<div class="toolres">
-    <div class="tr-head">
-      ${r.tool ? html`<span class="tr-tool">${r.tool}</span>` : null}
-      ${r.ok===true ? html`<span class="tr-badge ok">✓ success</span>`
-        : r.ok===false ? html`<span class="tr-badge err">✗ error</span>` : null}
-      ${latency!=null ? html`<span class="tr-badge lat">⚡ ${latency}s</span>` : null}
-      ${meta.artifact===true ? html`<span class="tr-badge art">📦 artifact</span>` : null}
-    </div>
     ${cmd ? html`<div class="tr-block"><div class="tr-label">command</div>
       <${CodeBox} value=${cmd} lang=${lang.command}/></div>` : null}
     ${r.output ? html`<div class="tr-block"><div class="tr-label">output</div>
