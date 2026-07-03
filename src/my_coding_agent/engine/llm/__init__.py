@@ -23,7 +23,7 @@ from ...utils.exceptions import APIResponseError
 load_dotenv()
 OMLX_API_URL = os.environ.get("OMLX_API_URL", "http://127.0.0.1:8321/v1")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "changeme")
-OMLX_MODEL = os.environ.get("OMLX_MODEL", "Qwen3.6-35B-A3B-4bit")
+OMLX_MODEL = os.environ.get("OMLX_MODEL", "Qwen3.6-35B-A3B-6bit")
 
 
 # Default per-request HTTP timeout (seconds) for the LLM API session.

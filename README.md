@@ -18,7 +18,7 @@ Key ideas:
 
 ```bash
 # Start a local LLM server
-mlx-llm server --model Qwen3.6-35B-A3B-4bit
+mlx-llm server --model Qwen3.6-35B-A3B-6bit
 # or
 ollama serve
 
@@ -82,7 +82,7 @@ uv run my-coding-agent --help
 |---|---|---|
 | `OMLX_API_URL` | `http://127.0.0.1:8321/v1` | Local LLM API base URL |
 | `OMLX_API_KEY` | `changeme` | API key (usually ignored by local servers) |
-| `OMLX_MODEL` | `Qwen3.6-35B-A3B-4bit` | Model ID to use |
+| `OMLX_MODEL` | `Qwen3.6-35B-A3B-6bit` | Model ID to use |
 
 
 ## Observability

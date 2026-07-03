@@ -20,7 +20,7 @@ PRICING: dict[str, dict[str, float]] = {
     "o3": {"prompt": 10.0, "completion": 40.0},
     "o4-mini": {"prompt": 1.1, "completion": 4.4},
     # Local / open-source (zero API cost)
-    "Qwen3.6-35B-A3B-4bit": {"prompt": 0.0, "completion": 0.0},
+    "Qwen3.6-35B-A3B-6bit": {"prompt": 0.0, "completion": 0.0},
     "llama-3.3-70b": {"prompt": 0.0, "completion": 0.0},
     "mistral-small": {"prompt": 0.0, "completion": 0.0},
     "deepseek-r1": {"prompt": 0.0, "completion": 0.0},

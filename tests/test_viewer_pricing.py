@@ -15,7 +15,7 @@ class TestGetPrice:
         assert p["completion"] == 0.0
 
     def test_local_model_returns_zero(self):
-        p = get_price("Qwen3.6-35B-A3B-4bit")
+        p = get_price("Qwen3.6-35B-A3B-6bit")
         assert p["prompt"] == 0.0
         assert p["completion"] == 0.0
 
@@ -33,7 +33,7 @@ class TestComputeCost:
         assert compute_cost("nonexistent-model", 100_000, 50_000) == 0.0
 
     def test_local_model_is_zero(self):
-        assert compute_cost("Qwen3.6-35B-A3B-4bit", 500_000, 200_000) == 0.0
+        assert compute_cost("Qwen3.6-35B-A3B-6bit", 500_000, 200_000) == 0.0
 
     def test_partial_million(self):
         # claude-sonnet-4-6: $3/1M prompt → 500k tokens = $1.50

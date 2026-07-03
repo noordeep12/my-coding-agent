@@ -230,7 +230,7 @@ Handoffs are saved under `.my_coding_agent/handoffs/`.
 |---|---|---|
 | `OMLX_API_URL` | `http://127.0.0.1:8321/v1` | OpenAI-compatible API base URL |
 | `OMLX_API_KEY` | `changeme` | API key |
-| `OMLX_MODEL` | `Qwen3.6-35B-A3B-4bit` | Model ID |
+| `OMLX_MODEL` | `Qwen3.6-35B-A3B-6bit` | Model ID |
 
 The context window size is discovered lazily on first access to `LLM.context_window`.
 
