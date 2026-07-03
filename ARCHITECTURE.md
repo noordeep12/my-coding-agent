@@ -226,3 +226,4 @@ Handoffs are saved under `.my_coding_agent/handoffs/`.
 | `OMLX_MODEL` | `Qwen3.6-35B-A3B-4bit` | Model ID |
 
 The context window size is discovered lazily on first access to `LLM.context_window`.
+

@@ -390,7 +390,7 @@ class ToolRegistry:
             return report
         return agent.generate_report()
 
-    def read_file(self, file_path: str) -> "str | tuple[None, dict]":
+    def read_file(self, file_path: str) -> str | tuple[None, dict]:
         """Read and return the full contents of a file at the given file_path.
         Use to inspect source code, configs, or any text file before editing.
         Large files are offloaded to the artifact store with a bounded preview
@@ -434,7 +434,7 @@ class ToolRegistry:
             return f"Error writing {file_path}: {e}"
 
     @staticmethod
-    def read_article(url: str, timeout: float = 15.0) -> "str | tuple[None, dict]":
+    def read_article(url: str, timeout: float = 15.0) -> str | tuple[None, dict]:
         """Fetch a web page and return its content as clean markdown.
         Large pages are offloaded to the artifact store with a bounded preview
         instead of flooding the context. Use when the user provides a URL or
