@@ -103,8 +103,8 @@ def result_envelope(
         is_artifact: Whether ``result`` is the preview of an offloaded artifact.
         is_truncated: Whether ``result`` was truncated to the output limit.
         tool_call_id: The call id, echoed into artifact metadata.
-        artifact: The stored full artifact for this call, if any (injected by the
-            executor so this function stays pure).
+        artifact: The stored full artifact dict for this call (injected by the
+            executor so this function stays pure). Required when ``is_artifact``.
         preview: Per-stream ``preview`` descriptor for an offloaded artifact
             (``{"stdout": {...}, "stderr": {...}}``, a key per previewed stream).
             When non-empty it is attached to ``metadata.preview``.
@@ -129,14 +129,10 @@ def result_envelope(
         metadata.update({"artifact": True, "tool_call_id": tool_call_id})
         if preview:
             metadata["preview"] = preview
-        else:
-            metadata["summarized"] = True  # legacy path: no preview supplied
-        if isinstance(artifact, dict):
-            ok = bool(artifact.get("ok", True))
-            if "exit_code" in artifact:
-                metadata["exit_code"] = artifact["exit_code"]
-            return build_tool_result(tool, ok, result, error, metadata)
-        return build_tool_result(tool, True, result, None, metadata)
+        ok = bool(artifact.get("ok", True))
+        if "exit_code" in artifact:
+            metadata["exit_code"] = artifact["exit_code"]
+        return build_tool_result(tool, ok, result, error, metadata)
 
     # error-string convention used by the file/web/artifact tools.
     if isinstance(result, str) and _ERROR_PREFIX_RE.match(result):
