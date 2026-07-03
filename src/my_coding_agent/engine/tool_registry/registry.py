@@ -182,7 +182,7 @@ class ToolRegistry:
             "ok": result.returncode == 0,
         }
         if len(stdout) + len(stderr) > ARTIFACT_THRESHOLD:
-            return None, full  # dispatcher will generate an LLM summary
+            return None, full  # dispatcher offloads it
         return json.dumps(full)
 
     def read_tool_artifact(self, tool_call_id: str, query: str) -> str:

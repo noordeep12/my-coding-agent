@@ -227,3 +227,5 @@ Handoffs are saved under `.my_coding_agent/handoffs/`.
 
 The context window size is discovered lazily on first access to `LLM.context_window`.
 
+When the `bash` tool's combined stdout/stderr exceeds the artifact threshold, the dispatcher offloads it to a per-stream file and substitutes a deterministic bounded preview — it does not generate an LLM summary.
+
