@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ..engine.routing import ToolRouter
 from .context import RunContext
 from .dag import Pipeline
 from .node import BaseNode, Node
@@ -23,7 +22,6 @@ __all__ = [
     "Node",
     "BaseNode",
     "ContextHandoff",
-    "ToolRouter",
     "ContextGuardNode",
     "FinalizeStepNode",
     "LLMCallNode",

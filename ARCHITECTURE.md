@@ -84,7 +84,7 @@ The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, an
 
 ### `ToolRouter` (`engine/routing.py`)
 
-Holds the LLM client and selects the relevant tool subset for a message via **`route_tools(message, all_tools)`** — two-phase selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included.
+Holds the LLM client and selects the relevant tool subset for a message via **`route_tools(message, all_tools)`** — two-phase selection before each step: (1) keyword match on each tool's `tags`, (2) LLM fallback if phase 1 returns nothing outside the baseline. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included. Consumed only via `engine.routing` (e.g. `pipeline/nodes/tool_routing.py`); `pipeline/__init__.py` does not re-export it, keeping the `engine` → `pipeline` dependency one-way per the layered-dependency rule.
 
 ### `ToolExecutor` (`engine/tool_execution/` package)
 
