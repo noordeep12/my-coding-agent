@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..utils import get_logger
 from ..utils.parsing import extract_message
+from .llm.schema import CALL_KIND_TOOL_ROUTER
 
 if TYPE_CHECKING:
     from .llm import LLM
@@ -91,7 +92,7 @@ class ToolRouter:
             resp = self.client.chat_completion(
                 [{"role": "user", "content": routing_prompt}],
                 tools=[],
-                kind="tool_router",
+                kind=CALL_KIND_TOOL_ROUTER,
             )
             content = extract_message(resp).get("content", "") or ""
             routed_names = None

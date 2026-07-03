@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+from ...engine.llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
 from ...utils import get_logger
 from ..context import RunContext
 from ..node import BaseNode
@@ -42,10 +43,10 @@ class ContextGuardNode(BaseNode):
         self._spawn_fn = spawn_fn
         self._t_start = t_start
         self._handoff_summarizer = ContextSummarizerNode(
-            kind="handoff", triggered_by=self.name
+            kind=CALL_KIND_HANDOFF, triggered_by=self.name
         )
         self._report_summarizer = ContextSummarizerNode(
-            kind="report", triggered_by=self.name
+            kind=CALL_KIND_REPORT, triggered_by=self.name
         )
 
     def run(self, ctx: RunContext) -> None:

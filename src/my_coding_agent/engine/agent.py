@@ -28,6 +28,7 @@ from ..utils import (
     print_run_summary,
 )
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
+from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
 
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
 # and delegated subagents, so all three run with the same ceiling.
@@ -212,7 +213,7 @@ class AgentNode(BaseNode):
         """
         self.logger.info("Generating subagent report summary...")
         content = summarize_conversation(
-            self.llm, self.messages, REPORT_PROMPT, "report"
+            self.llm, self.messages, REPORT_PROMPT, CALL_KIND_REPORT
         )
         if not content.strip():
             content = "(subagent produced no report)"
@@ -231,7 +232,7 @@ class AgentNode(BaseNode):
         if not content.strip():
             self.logger.info("Generating context handoff summary...")
             content = summarize_conversation(
-                self.llm, self.messages, HANDOFF_PROMPT, "handoff"
+                self.llm, self.messages, HANDOFF_PROMPT, CALL_KIND_HANDOFF
             )
         handoff = ContextHandoff(
             agent_label=self.label,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from ...engine.llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
 from ...utils import get_logger
 from ...utils.parsing import extract_message
 from ..context import RunContext
@@ -41,9 +42,13 @@ HANDOFF_PROMPT = (
     "Be exhaustive. This will be the ONLY context the continuation agent starts with."
 )
 
-# Summarization kind → prompt. "report" synthesizes a hand-back for the
-# delegating parent; "handoff" seeds a continuation agent after a context reset.
-_PROMPTS: dict[str, str] = {"report": REPORT_PROMPT, "handoff": HANDOFF_PROMPT}
+# Summarization kind → prompt. CALL_KIND_REPORT synthesizes a hand-back for the
+# delegating parent; CALL_KIND_HANDOFF seeds a continuation agent after a
+# context reset.
+_PROMPTS: dict[str, str] = {
+    CALL_KIND_REPORT: REPORT_PROMPT,
+    CALL_KIND_HANDOFF: HANDOFF_PROMPT,
+}
 
 
 def summarize_conversation(
@@ -109,7 +114,7 @@ class ContextSummarizerNode(BaseNode):
             ctx.llm, ctx.messages, _PROMPTS[self._kind], self._kind
         )
         latency = time.monotonic() - t0
-        if self._kind == "report":
+        if self._kind == CALL_KIND_REPORT:
             ctx.handback_report = content
         else:
             ctx.handoff_content = content

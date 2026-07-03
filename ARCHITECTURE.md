@@ -178,7 +178,7 @@ Every module and sub-module owns a `schema.py` for its typed contracts and shape
 | Module | `schema.py` contents |
 |---|---|
 | `engine/schema.py` | Session/LLM/tool/handoff/report event type constants |
-| `engine/llm/schema.py` | LLM call kind constants, usage field names |
+| `engine/llm/schema.py` | LLM call kind constants (`CALL_KIND_*`, sole source of truth — consumed by `agent.py`, `routing.py`, and every `pipeline/nodes/*.py` call site instead of raw string literals), usage field names |
 | `engine/tool_execution/schema.py` | Canonical tool-result envelope shapes (builders live in `envelope.py`) |
 | `engine/tool_registry/schema.py` | OpenAI tool definition JSON key names |
 | `pipeline/schema.py` | ROUTER event type constant, `ContextHandoff` dataclass (builders live in `handoff.py`) |

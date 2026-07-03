@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...engine.llm.schema import CALL_KIND_REPORT
 from ...utils import get_logger
 from ...utils.parsing import extract_finish_reason, extract_usage
 from ..context import RunContext
@@ -31,7 +32,9 @@ class FinalizeStepNode(BaseNode):
     name = "finalize_step"
 
     def __init__(self) -> None:
-        self._summarizer = ContextSummarizerNode(kind="report", triggered_by=self.name)
+        self._summarizer = ContextSummarizerNode(
+            kind=CALL_KIND_REPORT, triggered_by=self.name
+        )
 
     def run(self, ctx: RunContext) -> None:
         # --- token tracking ---
