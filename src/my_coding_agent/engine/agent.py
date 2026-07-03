@@ -12,6 +12,7 @@ from typing import Any
 from ..observability import Recorder, current_session_id
 from ..observability.recorder import current_recorder
 from ..pipeline.context import RunContext
+from ..pipeline.handoff import handoff_to_user_message, save_handoff
 from ..pipeline.node import BaseNode
 from ..pipeline.nodes.context_summarizer import (
     HANDOFF_PROMPT,
@@ -239,7 +240,7 @@ class AgentNode(BaseNode):
             context_window=self.llm.context_window,
             content=content,
         )
-        path = handoff.save()
+        path = save_handoff(handoff)
         self.logger.info("Handoff saved → %s", path)
         return handoff
 
@@ -251,7 +252,7 @@ class AgentNode(BaseNode):
             api_url=self.llm.api_url,
             api_key=self.llm.api_key,
             model=self.llm.model,
-            messages=system_messages + [handoff.to_user_message()],
+            messages=system_messages + [handoff_to_user_message(handoff)],
             tools=self.tools,
             label=f"{self.label} (cont.)",
             context_reset_threshold=self.context_reset_threshold,

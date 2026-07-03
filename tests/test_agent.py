@@ -541,7 +541,7 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
         return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
     )
     saved = mocker.patch(
-        "my_coding_agent.engine.agent.ContextHandoff.save",
+        "my_coding_agent.engine.agent.save_handoff",
         return_value="/tmp/h.json",
     )
     handoff = agent._generate_handoff(step_num=2, prompt_tokens=8000)
@@ -761,7 +761,10 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     agent.llm.api_url = "http://x"
     agent.llm.api_key = "k"
     handoff = mocker.Mock()
-    handoff.to_user_message.return_value = {"role": "user", "content": "HANDOFF"}
+    mocker.patch(
+        "my_coding_agent.engine.agent.handoff_to_user_message",
+        return_value={"role": "user", "content": "HANDOFF"},
+    )
     fake_cont = mocker.Mock()
     fake_cont.execute.return_value = [{"role": "assistant", "content": "cont done"}]
     cont_cls = mocker.patch(

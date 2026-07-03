@@ -6,6 +6,7 @@ from typing import Callable
 
 from .context import RunContext
 from .dag import Pipeline
+from .handoff import handoff_to_user_message, save_handoff
 from .node import BaseNode, Node
 from .nodes import (
     ContextGuardNode,
@@ -22,6 +23,8 @@ __all__ = [
     "Node",
     "BaseNode",
     "ContextHandoff",
+    "handoff_to_user_message",
+    "save_handoff",
     "ContextGuardNode",
     "FinalizeStepNode",
     "LLMCallNode",
