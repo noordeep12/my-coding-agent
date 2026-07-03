@@ -588,6 +588,11 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
     ? (isSubagentRoot ? 'Subagent '+node.agent.slice(0,8) : node.label)
     : meta(node.type).name;
   const badges = node.type==='session' ? [] : treeBadges(node);
+  // A `delegate` tool_call (and any other node whose dispatch nests children,
+  // e.g. read_tool_artifact's artifact_query) still contributes to the
+  // context window itself — show the same "+N role" summary TreeLeaf shows,
+  // so grouped nodes don't silently drop their own ctx-window contribution.
+  const summary = node.type!=='session' ? addedText(node.ctx_state) : '';
   const onRowClick = ()=>{ onSel(node.id); toggle(node.id); };
   return html`<div class=${'agroup'+(isSubagentRoot?' sub':'')}>
     <div class=${'agent-head'+(node.id===sel?' sel':'')} onClick=${onRowClick}>
@@ -597,6 +602,7 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
         ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge sm '+x.c}>${x.t}</span>`)}
       </span>` : null}
       ${isSubagentRoot ? html`<span class="sub-tag">subagent</span>` : null}
+      ${summary ? html`<span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary}</span>` : null}
     </div>
     ${open ? html`<div class="agroup-body">
       <${TreeNodes} entries=${kids} data=${data} sel=${sel} onSel=${onSel}

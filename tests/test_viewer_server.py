@@ -88,6 +88,21 @@ class TestRoutes:
         status, body = _get(port, "/")
         assert EMBEDDED_HTML[:50].encode() in body
 
+    def test_tree_group_renders_its_own_ctx_state_summary(self, server):
+        """Regression: a node with nested children (e.g. a `delegate` tool_call,
+        which always nests its subagent session root under it) must still show
+        its own ctx-window contribution ("+N tool") — TreeGroup previously
+        dropped it entirely, unlike TreeLeaf which renders leaf (childless)
+        tool_call nodes such as bash."""
+        port, _ = server
+        status, body = _get(port, "/")
+        html = body.decode()
+        tree_group_src = html[
+            html.index("function TreeGroup") : html.index("function TreeLeaf")
+        ]
+        assert "addedText(node.ctx_state)" in tree_group_src
+        assert "tleaf-sub" in tree_group_src
+
     def test_sessions_empty_dir(self, server):
         port, _ = server
         status, body = _get(port, "/api/sessions")
