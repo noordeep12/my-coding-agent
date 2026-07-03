@@ -181,3 +181,55 @@ class TestRecordLlmCallTools:
         )
         ev = _read_events(path)[-1]
         assert ev["tools"] == []
+
+
+class TestChildLlmCallLinking:
+    """An LLM call made *during* a tool's dispatch (e.g. read_tool_artifact's
+    artifact_query extraction) is stashed and attached to that tool's own
+    tool_call event, so the viewer can nest it under the exact tool node —
+    the same 'stash now, attach at after_tool' pattern as the delegate
+    child-session link (note_delegate_child)."""
+
+    def _record_llm_call(self, rec, call):
+        rec.record_llm_call(
+            kind="artifact_query",
+            call=call,
+            latency_s=0.05,
+            usage=_USAGE,
+            messages=[{"role": "user", "content": "extract"}],
+            context_window=8192,
+            response_data=_RESPONSE,
+        )
+
+    def test_llm_call_during_tool_dispatch_is_attached_to_its_tool_event(
+        self, tmp_path
+    ):
+        rec, path = _make_recorder(tmp_path)
+        rec.before_tool("read_tool_artifact", {"tool_call_id": "c1", "query": "q"})
+        self._record_llm_call(rec, call=1)
+        rec.after_tool(
+            "read_tool_artifact", {"tool_call_id": "c1", "query": "q"}, "result"
+        )
+        events = _read_events(path)
+        tool_ev = next(e for e in events if e["type"] == "tool_call")
+        assert tool_ev["child_llm_calls"] == [1]
+
+    def test_llm_call_outside_tool_dispatch_is_not_attached(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        self._record_llm_call(rec, call=1)  # no tool pending
+        rec.before_tool("bash", {"command": "ls"})
+        rec.after_tool("bash", {"command": "ls"}, "result")
+        events = _read_events(path)
+        tool_ev = next(e for e in events if e["type"] == "tool_call")
+        assert "child_llm_calls" not in tool_ev
+
+    def test_pending_child_calls_reset_between_tool_calls(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.before_tool("read_tool_artifact", {})
+        self._record_llm_call(rec, call=1)
+        rec.after_tool("read_tool_artifact", {}, "result 1")
+        rec.before_tool("bash", {"command": "ls"})  # no LLM call inside this one
+        rec.after_tool("bash", {"command": "ls"}, "result 2")
+        events = [e for e in _read_events(path) if e["type"] == "tool_call"]
+        assert events[0]["child_llm_calls"] == [1]
+        assert "child_llm_calls" not in events[1]

@@ -26,7 +26,6 @@ from .lang import resolve_lang
 from .output import (
     MAX_TOOL_OUTPUT_CHARS,
     PREVIEW_MAX_CHARS,
-    _extract_summary,
     build_stream_preview,
     validate_tool_output,
 )
@@ -43,7 +42,6 @@ __all__ = [
     "TOOL_SCHEMA_VERSION",
     "build_tool_result",
     "validate_tool_result",
-    "_extract_summary",
 ]
 
 # Exceptions a tool may raise that are surfaced as an ``ok:false`` result rather
@@ -58,9 +56,8 @@ _RECOVERABLE_EXCEPTIONS = (
 
 # Data contract, envelope builders, output post-processing, and argument prep
 # live in the sibling modules schema / envelope / output / args; the executor
-# below composes them. The envelope builders (build/validate/normalize), the
-# truncation limit (MAX_TOOL_OUTPUT_CHARS) and _extract_summary are imported
-# above.
+# below composes them. The envelope builders (build/validate/normalize) and the
+# truncation limit (MAX_TOOL_OUTPUT_CHARS) are imported above.
 
 
 class ToolExecutor:
@@ -74,7 +71,8 @@ class ToolExecutor:
     The agent's available ``tools`` are forwarded to the ``ToolRegistry`` so
     toolset-aware tools (notably ``delegate``, which spawns a subagent with the
     parent toolset minus ``delegate``) can read them. Omitting ``tools`` leaves
-    the registry with an empty toolset.
+    the registry with an empty toolset. The ``llm`` client is forwarded the same
+    way so ``read_tool_artifact`` can make its bounded extraction call.
     """
 
     def __init__(
@@ -89,7 +87,9 @@ class ToolExecutor:
         self.tool_artifacts: dict = {}
         self.llm = llm
         self.logger = get_logger(self.__class__.__name__)
-        self.registry = ToolRegistry(artifacts=self.tool_artifacts, tools=tools or [])
+        self.registry = ToolRegistry(
+            artifacts=self.tool_artifacts, tools=tools or [], llm=llm
+        )
 
     def run(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Dispatch every tool call, filling ``tool_messages`` / ``tool_records``.

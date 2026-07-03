@@ -1,20 +1,13 @@
-"""Tool-output post-processing: summary extraction, truncation, artifact summary.
+"""Tool-output post-processing: truncation and artifact preview building.
 
-Helpers the executor composes after dispatch. ``_extract_summary`` and
-``validate_tool_output`` are pure; ``summarize_artifact`` takes the LLM client
-explicitly (an injected dependency) so this module owns no execution state.
+Pure helpers the executor composes after dispatch — no LLM client, no
+execution state.
 """
 
 import json
-import re
-from typing import TYPE_CHECKING
 
 from ...utils import get_logger
-from ...utils.parsing import extract_message
 from ..tool_registry import ARTIFACT_THRESHOLD
-
-if TYPE_CHECKING:
-    from ..llm import LLM
 
 logger = get_logger(__name__)
 
@@ -28,21 +21,6 @@ MAX_TOOL_OUTPUT_CHARS = ARTIFACT_THRESHOLD
 PREVIEW_TOKEN_BUDGET = 500  # approx. tokens shown in the preview excerpt
 _CHARS_PER_TOKEN = 4  # rough chars/token estimate used only for budgeting
 PREVIEW_MAX_CHARS = PREVIEW_TOKEN_BUDGET * _CHARS_PER_TOKEN
-
-_SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL | re.IGNORECASE)
-_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
-
-
-def _extract_summary(content: str) -> str:
-    """Return only the summary, dropping any model thinking/preamble.
-
-    Prefers the explicit ``<summary>...</summary>`` block the prompt asks for;
-    otherwise strips ``<think>...</think>`` reasoning blocks and returns the rest.
-    """
-    match = _SUMMARY_RE.search(content)
-    if match:
-        return match.group(1).strip()
-    return _THINK_RE.sub("", content).strip()
 
 
 def validate_tool_output(
@@ -81,22 +59,32 @@ def validate_tool_output(
 
 
 def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str:
-    """Build the inline guidance that steers the model to skim, not load whole."""
+    """Build the inline guidance that steers the model to query-scoped access.
+
+    Primary path: ``read_tool_artifact(tool_call_id=..., query=...)``, which
+    returns a bounded extract relevant to the query — never the whole output.
+    Bash text tools over the on-disk file remain a secondary path for callers
+    who already know the shape of what they need (a line number, an exact
+    pattern).
+    """
     counts = (
         f"showing {preview['shown_lines']}/{preview['total_lines']} lines, "
         f"{preview['shown_bytes']}/{preview['total_bytes']} bytes"
     )
+    primary = (
+        "Do NOT assume the excerpt is everything — to pull out a specific "
+        'detail, call read_tool_artifact(tool_call_id=..., query="what you '
+        'need") — it returns a bounded extract, never the full output.'
+    )
     if full_output_path:
         p = full_output_path
         return (
-            f"[Preview: {counts}. Full output on disk at {p}. Do NOT read the whole "
-            f"file — skim it with bash text tools: grep/rg '<pattern>' {p}; "
-            f"sed -n '<start>,<end>p' {p}; awk; jq (JSON); head/tail; wc -l {p}.]"
+            f"[Preview: {counts}. {primary} Full output also on disk at {p} — "
+            f"skim it with bash text tools (grep/rg '<pattern>' {p}; "
+            f"sed -n '<start>,<end>p' {p}; awk; jq; head/tail; wc -l {p}) if you "
+            "already know what you're looking for.]"
         )
-    return (
-        f"[Preview: {counts}. Do NOT load the whole output — inspect only what you "
-        "need via read_tool_artifact(tool_call_id=...).]"
-    )
+    return f"[Preview: {counts}. {primary}]"
 
 
 def build_stream_preview(
@@ -134,61 +122,3 @@ def build_stream_preview(
         "full_output_path": full_output_path,
     }
     return output, preview
-
-
-def summarize_artifact(
-    client: "LLM",
-    artifact: dict,
-    func_name: str,
-    tool_call_id: str,
-) -> str:
-    """Summarize an offloaded artifact for the model, pointing at the full copy."""
-    logger.tool(
-        "%s → %s: artifact %s chars (summarizing for model)",
-        tool_call_id,
-        func_name,
-        len(json.dumps(artifact)),
-    )
-    prompt = (
-        "/no_think\n"
-        f"Summarize the following `{func_name}` tool output concisely "
-        "for an AI coding agent. "
-        "Include: exit status, key findings, any errors, and what the "
-        "agent needs to know to continue its task. "
-        "Be factual and brief — 3 to 8 sentences max.\n"
-        "Output ONLY the summary itself — no reasoning, analysis, planning, "
-        "or preamble. Wrap the summary in <summary>...</summary> tags.\n\n"
-        f"Output:\n{json.dumps(artifact, indent=2)[:12_000]}"
-    )
-    try:
-        resp = client.chat_completion(
-            [{"role": "user", "content": prompt}],
-            tools=[],
-            kind="tool_output_summarizer",
-            max_tokens=512,
-        )
-        summary = _extract_summary(extract_message(resp).get("content") or "")
-    except Exception as exc:
-        logger.warning("artifact summarization failed: %s", exc)
-        if "content" in artifact:
-            summary = json.dumps(
-                {
-                    "file_path": artifact.get("file_path"),
-                    "size": artifact.get("size"),
-                }
-            )
-        else:
-            summary = json.dumps(
-                {
-                    "exit_code": artifact.get("exit_code"),
-                    "ok": artifact.get("ok"),
-                    "stdout_chars": len(artifact.get("stdout", "")),
-                    "stderr_chars": len(artifact.get("stderr", "")),
-                }
-            )
-    return summary.strip() + (
-        f"\n\n[Full output stored as artifact — use "
-        f'read_tool_artifact(tool_call_id="{tool_call_id}") ONLY if the '
-        "summary above is insufficient to proceed. "
-        "Avoid calling it unless strictly necessary.]"
-    )

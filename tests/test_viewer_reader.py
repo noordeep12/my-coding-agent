@@ -654,6 +654,14 @@ class TestSubagentNesting:
         assert session.nodes[f"{child}::step1::llm::1"].agent == child
         assert session.nodes[f"{child}::step1::llm::1"].depth == 2
 
+    def test_subagent_root_nests_under_the_delegate_tool_call(self, tmp_path):
+        """The child session's root must be re-parented to the exact `delegate`
+        tool_call node — real parent/child linkage, not just depth/order."""
+        parent, child, session = self._setup(tmp_path)
+        delegate_node_id = f"{parent}::step1::tool::1"
+        assert session.nodes[delegate_node_id].attributes["name"] == "delegate"
+        assert session.nodes[f"{child}::session"].parent_id == delegate_node_id
+
     def test_context_windows_are_per_agent(self, tmp_path):
         parent, child, session = self._setup(tmp_path)
         # Parent window: system 80 + user 20 = 100, then +50 assistant = 150.
@@ -663,6 +671,84 @@ class TestSubagentNesting:
         child_llm = session.nodes[f"{child}::step1::llm::1"]
         assert child_llm.ctx_state["tokens"] == 90
         assert child_llm.ctx_state["composition"]["system"] == 40
+
+
+class TestArtifactQueryNesting:
+    """A read_tool_artifact call's internal artifact_query extraction call must
+    nest under that exact tool_call node (recorder's `child_llm_calls` link),
+    the same mechanism TestSubagentNesting exercises for delegate."""
+
+    def _events(self, sid: str) -> list:
+        return [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="Test",
+                model="m",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _ev("router", signal="go", selected=["read_tool_artifact"], phase="p1"),
+            _ev(
+                "llm_call",
+                call=1,
+                kind="main",
+                prompt=100,
+                completion=50,
+                total=150,
+                context_window=8192,
+                messages=[{"role": "user", "content": "u"}],
+                response={"content": "", "reasoning": "", "tool_calls": [], "raw": {}},
+            ),
+            # The extraction call happens inside read_tool_artifact's dispatch —
+            # its llm_call event is emitted before the tool_call event, exactly
+            # like the real ToolExecutor/registry flow.
+            _ev(
+                "llm_call",
+                call=2,
+                kind="artifact_query",
+                prompt=20,
+                completion=10,
+                total=30,
+                context_window=8192,
+                messages=[{"role": "user", "content": "extract"}],
+                response={
+                    "content": "the detail",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+            ),
+            _ev(
+                "tool_call",
+                name="read_tool_artifact",
+                args={"tool_call_id": "call_1", "query": "the detail"},
+                result="the detail",
+                child_llm_calls=[2],
+            ),
+            _ev("session_end", stop_reason="stop", steps=1, elapsed_s=1.0),
+        ]
+
+    def test_artifact_query_llm_call_nests_under_its_tool_call(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        _write_events(sdir / "events.jsonl", self._events(sid))
+        session = load_session(sdir / "events.jsonl")
+
+        tool_node_id = f"{sid}::step1::tool::1"
+        extraction_node_id = f"{sid}::step1::llm::2"
+        tool_node = session.nodes[tool_node_id]
+        extraction_node = session.nodes[extraction_node_id]
+
+        assert tool_node.attributes["name"] == "read_tool_artifact"
+        assert extraction_node.attributes["kind"] == "artifact_query"
+        # Real parent/child link — not just sequential order.
+        assert extraction_node.parent_id == tool_node_id
+        assert extraction_node.depth == tool_node.depth + 1
+        # The main llm_call stays flat under the session root, unaffected.
+        assert session.nodes[f"{sid}::step1::llm::1"].parent_id == f"{sid}::session"
 
 
 class TestRoleSplit:

@@ -301,48 +301,32 @@ def test_validate_tool_output_summary_not_truncated():
     assert output.validate_tool_output(big, "bash", None, is_summary=True) == big
 
 
-# --- summarize_artifact ------------------------------------------------------
+# --- read_tool_artifact extraction (via the executor's injected LLM) --------
 
 
-def test_summarize_artifact_uses_llm_summary(bare_executor, mocker):
+def test_read_tool_artifact_extraction_uses_llm(bare_executor, mocker):
     mocker.patch.object(
         bare_executor.llm,
         "chat_completion",
-        return_value=_Resp({"choices": [{"message": {"content": "all good"}}]}),
+        return_value=_Resp(
+            {"choices": [{"message": {"content": "the relevant line"}}]}
+        ),
     )
-    out = output.summarize_artifact(
-        bare_executor.llm, {"exit_code": 0, "ok": True}, "bash", "call_1"
-    )
-    assert out.startswith("all good")
-    assert 'read_tool_artifact(tool_call_id="call_1")' in out
+    reg = ToolsRegistry(artifacts={"call_1": "full stored text"}, llm=bare_executor.llm)
+    out = reg.read_tool_artifact("call_1", "find the relevant line")
+    assert out == "the relevant line"
 
 
-def test_summarize_artifact_falls_back_on_llm_failure_bash(bare_executor, mocker):
+def test_read_tool_artifact_extraction_falls_back_on_llm_failure(bare_executor, mocker):
     mocker.patch.object(
         bare_executor.llm, "chat_completion", side_effect=RuntimeError("boom")
     )
-    out = output.summarize_artifact(
-        bare_executor.llm,
-        {"exit_code": 2, "ok": False, "stdout": "abc", "stderr": ""},
-        "bash",
-        "c1",
+    reg = ToolsRegistry(
+        artifacts={"call_1": {"stdout": "abc", "stderr": ""}}, llm=bare_executor.llm
     )
-    head = json.loads(out.split("\n[Full output")[0])
-    assert head == {"exit_code": 2, "ok": False, "stdout_chars": 3, "stderr_chars": 0}
-
-
-def test_summarize_artifact_falls_back_on_llm_failure_file(bare_executor, mocker):
-    mocker.patch.object(
-        bare_executor.llm, "chat_completion", side_effect=RuntimeError("boom")
-    )
-    out = output.summarize_artifact(
-        bare_executor.llm,
-        {"content": "...", "file_path": "/a.txt", "size": 99},
-        "read_file",
-        "c2",
-    )
-    head = json.loads(out.split("\n[Full output")[0])
-    assert head == {"file_path": "/a.txt", "size": 99}
+    out = reg.read_tool_artifact("call_1", "anything")
+    assert "abc" in out
+    assert "Extraction unavailable" in out
 
 
 def _invoke(executor, tool_call_id, func_name, call_args, registry):
