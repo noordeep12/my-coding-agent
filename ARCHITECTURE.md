@@ -78,7 +78,7 @@ The engine package owns all execution concerns: the LLM HTTP client, tool dispat
 
 The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, and tracks every call in `self.llm_calls`. Construction performs no network I/O — the model's context window is probed lazily on first access to `context_window`. Key responsibilities:
 
-- **`chat_completion(messages, tools, kind)`** — single POST to the LLM server; records token usage per call tagged by `kind` (`main`, `handoff`, `report`, `tool_router`, `tool_output_summarizer`, `tool_arg_correction`, `artifact_query`).
+- **`chat_completion(messages, tools, kind)`** — single POST to the LLM server; records token usage per call tagged by `kind` (`main`, `handoff`, `report`, `tool_router`, `tool_arg_correction`, `artifact_query`).
 - **`available_models` / `context_window`** — fetch the model list and resolve/cache the context window (128k fallback when unreachable).
 - **`_request_with_retry`** — retries transient connection/timeout failures with backoff.
 

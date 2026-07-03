@@ -47,7 +47,7 @@ current_recorder: contextvars.ContextVar["Recorder | None"] = contextvars.Contex
 
 # Which LLM call kinds store the full input payload — the ``messages`` snapshot
 # and the ``tools`` definitions given to the model. Every chat-completion kind —
-# including the ancillary ones (tool_router, summarizer, arg_correction) — keeps
+# including the ancillary ones (tool_router, arg_correction) — keeps
 # its input so the viewer can show each call's input/output like the main call.
 # Trim this set to bound the event-stream size if needed.
 FULL_PAYLOAD_KINDS: set[str] = {
@@ -55,7 +55,6 @@ FULL_PAYLOAD_KINDS: set[str] = {
     "handoff",
     "report",
     "tool_router",
-    "tool_output_summarizer",
     "tool_arg_correction",
     "artifact_query",
 }

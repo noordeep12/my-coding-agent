@@ -213,8 +213,7 @@ class LLM:
             messages: Conversation so far, as OpenAI-style role/content dicts.
             tools: Tool schemas to expose this turn; None sends an empty list.
             kind: Usage tag for accounting (``main``, ``handoff``,
-                ``tool_router``, ``tool_output_summarizer``,
-                ``tool_arg_correction``).
+                ``tool_router``, ``tool_arg_correction``).
             max_tokens: Optional cap on generated tokens; omitted when None.
 
         Returns:
