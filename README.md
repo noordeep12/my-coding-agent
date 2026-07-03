@@ -8,7 +8,7 @@ A self-contained agentic loop — no external agent frameworks. The agent calls 
 
 Key ideas:
 - **Local-first**: targets OpenAI-compatible endpoints (MLX Server, Ollama) running on your machine
-- **Node-based pipeline**: the agentic loop is a DAG of named nodes (`ContextPreflight → ToolRouting → LLMCall → ToolDispatch → TokenTracking → FinishCheck`) with an explicit data contract (`RunContext`) flowing between them
+- **Node-based pipeline**: the agentic loop is a DAG of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them
 - **Decorator-based tools**: plain Python functions become LLM-callable tools
 - **Context handoff**: when the context window fills up, the agent writes a structured summary of progress and spawns a fresh continuation — so long-running tasks don't get silently truncated
 - **Session persistence**: each run saves token usage, tool calls, and a final summary to `.my_coding_agent/<session_id>/`
