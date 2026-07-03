@@ -237,25 +237,92 @@ def test_read_article_truncates_long_content(mocker):
 # --- delegate ----------------------------------------------------------------
 
 
-def _make_fake_agent(mocker, report="report text"):
-    """Return a mock AgentNode whose generate_report() returns *report*."""
+def _make_fake_agent(
+    mocker,
+    stop_reason="stop",
+    final_text="final turn text",
+    handback_report=None,
+    report="report text",
+):
+    """Return a mock AgentNode in a given finish state."""
     fake = mocker.Mock()
     fake.session_id = "abc123"
+    fake.stop_reason = stop_reason
+    fake.final_assistant_text.return_value = final_text
+    fake.handback_report = handback_report
     fake.generate_report.return_value = report
     return fake
 
 
-def test_delegate_returns_generated_report(mocker):
-    """delegate returns the subagent's generated report, not a message scrape."""
-    fake_agent = _make_fake_agent(mocker, report="final report")
+def test_delegate_clean_finish_returns_final_turn_verbatim(mocker):
+    """A clean stop hands back the final assistant turn with no synthesis."""
+    fake_agent = _make_fake_agent(mocker, stop_reason="stop", final_text="final turn")
     mocker.patch(
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
     out = ToolsRegistry().delegate(task="do X", context="ctx")
-    assert out == "final report"
+    assert out == "final turn"
     fake_agent.execute.assert_called_once_with(max_steps=DEFAULT_MAX_STEPS)
+    fake_agent.generate_report.assert_not_called()
+    fake_agent.recorder.record_report.assert_called_once_with("final turn")
+
+
+def test_delegate_cutoff_returns_pipeline_report(mocker):
+    """A cutoff hands back the pipeline-synthesized report, never the last turn."""
+    fake_agent = _make_fake_agent(
+        mocker, stop_reason="max_steps", handback_report="synthesized report"
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    assert out == "synthesized report"
+    fake_agent.final_assistant_text.assert_not_called()
+    fake_agent.generate_report.assert_not_called()
+    fake_agent.recorder.record_report.assert_called_once_with("synthesized report")
+
+
+def test_delegate_empty_final_turn_falls_back_to_generate_report(mocker):
+    """A clean stop with no usable final text falls back to synthesis."""
+    fake_agent = _make_fake_agent(
+        mocker, stop_reason="stop", final_text="", report="fallback report"
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    assert out == "fallback report"
     fake_agent.generate_report.assert_called_once_with()
+    # generate_report records its own report node; delegate must not add one.
+    fake_agent.recorder.record_report.assert_not_called()
+
+
+def test_delegate_no_pipeline_report_falls_back_to_generate_report(mocker):
+    """A cutoff with no pipeline report (e.g. aborted run) falls back to synthesis."""
+    fake_agent = _make_fake_agent(
+        mocker, stop_reason="aborted", report="fallback report"
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    assert out == "fallback report"
+    fake_agent.generate_report.assert_called_once_with()
+
+
+def test_delegate_marks_subagent_needs_handback(mocker):
+    """The delegate subagent is constructed owing a hand-back report."""
+    fake_agent = _make_fake_agent(mocker)
+    spy = mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    ToolsRegistry().delegate(task="do X", context="ctx")
+    assert spy.call_args.kwargs["needs_handback"] is True
 
 
 def test_delegate_excludes_delegate_tool_from_subagent(mocker):

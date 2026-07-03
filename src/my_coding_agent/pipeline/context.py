@@ -31,6 +31,9 @@ class RunContext:
 
     # --- mutable conversation state ---
     messages: list[dict[str, Any]]
+    # True when this run owes a hand-back report to a delegating parent; only
+    # then does a cutoff trigger report synthesis (standalone runs never pay it).
+    needs_handback: bool = False
     step_num: int = 0
     last_prompt_tokens: int = 0
     tool_records: list[dict[str, Any]] = field(default_factory=list)
@@ -45,3 +48,7 @@ class RunContext:
     signal: str = "CONTINUE"  # CONTINUE | STOP | RESET
     stop_reason: str = "max_steps"
     continuation_messages: list[dict[str, Any]] = field(default_factory=list)
+
+    # --- summarizer outputs (ContextSummarizerNode writes, consumers read) ---
+    handback_report: str | None = None  # kind "report" → delegate() hand-back
+    handoff_content: str | None = None  # kind "handoff" → continuation seed

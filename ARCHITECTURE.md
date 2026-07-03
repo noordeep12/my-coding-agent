@@ -37,10 +37,11 @@ src/my_coding_agent/
 │   ├── schema.py                ← Pipeline typed contracts (ROUTER constant + ContextHandoff)
 │   ├── nodes/                   ← One module per pipeline stage (one node per file)
 │   │   ├── context_guard.py     ← ContextGuardNode: context-window budget check + handoff trigger
+│   │   ├── context_summarizer.py ← ContextSummarizerNode: triggered full-conversation summarization (report/handoff)
 │   │   ├── tool_routing.py      ← ToolRoutingNode: select relevant tool subset
 │   │   ├── llm_call.py          ← LLMCallNode: chat_completion + append assistant message
 │   │   ├── tool_dispatch.py     ← ToolDispatchNode: ToolExecutor.run() per step
-│   │   └── finalize_step.py     ← FinalizeStepNode: record step usage, then detect stop/exit/quit
+│   │   └── finalize_step.py     ← FinalizeStepNode: record step usage, detect stop/exit/quit + step-ceiling cutoff
 │   └── examples/
 │       └── simple.py            ← CLI entry point (Click)
 │

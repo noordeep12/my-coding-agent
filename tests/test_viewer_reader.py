@@ -807,3 +807,175 @@ class TestLlmToolDefinitions:
         nodes = self._llm_nodes(session)
         assert nodes
         assert all(n.inputs["tools"] == [] for n in nodes)
+
+
+# ── Summarizer nesting ────────────────────────────────────────────────────────
+
+
+def _summarizer_session_events(sid: str, kind: str, triggered_by: str) -> list:
+    """One-step session whose step ends in a summarizer invocation."""
+    events = [
+        _ev(
+            "session_start",
+            session_id=sid,
+            label="Test",
+            model="m",
+            context_window=8192,
+            started_at="2026-01-01T10:00:00",
+            parent_session_id=None,
+        ),
+        _ev(
+            "router",
+            signal="s",
+            selected=["bash"],
+            phase="phase1_keyword",
+            used_llm=False,
+            started_at="2026-01-01T10:00:01",
+        ),
+        _ev(
+            "llm_call",
+            call=1,
+            kind="main",
+            latency_s=1.0,
+            prompt=100,
+            completion=50,
+            total=150,
+            context_window=8192,
+            messages=None,
+            response={"content": "ok", "reasoning": "", "tool_calls": [], "raw": {}},
+            started_at="2026-01-01T10:00:02",
+        ),
+        _ev(
+            "token_tracking",
+            step=1,
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=150,
+            ctx_pct=1.2,
+            context_window=8192,
+            started_at="2026-01-01T10:00:03",
+        ),
+        _ev(
+            "finish_check",
+            step=1,
+            finish_reason="tool_calls",
+            signal="STOP",
+            started_at="2026-01-01T10:00:03.5",
+        ),
+        _ev(
+            "llm_call",
+            call=2,
+            kind=kind,
+            latency_s=50.0,
+            prompt=500,
+            completion=80,
+            total=580,
+            context_window=8192,
+            messages=None,
+            response={
+                "content": "summary",
+                "reasoning": "",
+                "tool_calls": [],
+                "raw": {},
+            },
+            started_at="2026-01-01T10:00:04",
+        ),
+        _ev(
+            "summarizer",
+            kind=kind,
+            step=1,
+            triggered_by=triggered_by,
+            latency_s=50.0,
+            prompt_tokens=500,
+            completion_tokens=80,
+            total_tokens=580,
+            started_at="2026-01-01T10:00:54",
+        ),
+    ]
+    if triggered_by == "context_guard":
+        events.append(
+            _ev(
+                "handoff",
+                step=1,
+                ctx_tokens=6000,
+                ctx_pct=75.0,
+                content="handoff text",
+                path="/tmp/h.md",
+            )
+        )
+    events.append(
+        _ev(
+            "session_end",
+            stop_reason="max_steps",
+            steps=1,
+            elapsed_s=60.0,
+            ended_at="2026-01-01T10:01:00",
+        )
+    )
+    return events
+
+
+class TestSummarizerNesting:
+    def _load(self, tmp_path, sid, events):
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        _write_events(sdir / "events.jsonl", events)
+        return load_session(sdir / "events.jsonl")
+
+    def test_cutoff_summarizer_nests_under_finalize_step(self, tmp_path):
+        sid = "aabbccdd1234"
+        events = _summarizer_session_events(sid, "report", "finalize_step")
+        session = self._load(tmp_path, sid, events)
+        summ = session.nodes[f"{sid}::step1::summarizer"]
+        finalize = session.nodes[f"{sid}::step1::finalize_step"]
+        assert summ.label == "ContextSummarizerNode"
+        assert summ.parent_id == finalize.id
+        assert summ.depth == finalize.depth + 1
+        # The report-kind LLM call nests beneath the summarizer.
+        llm = session.nodes[f"{sid}::step1::llm::2"]
+        assert llm.parent_id == summ.id
+        assert llm.depth == summ.depth + 1
+        # Execution order places the nested pair right after the trigger.
+        idx = session.order.index(finalize.id)
+        assert session.order[idx + 1] == summ.id
+        assert session.order[idx + 2] == llm.id
+
+    def test_handoff_summarizer_nests_under_context_guard(self, tmp_path):
+        sid = "aabbccdd1234"
+        events = _summarizer_session_events(sid, "handoff", "context_guard")
+        session = self._load(tmp_path, sid, events)
+        summ = session.nodes[f"{sid}::step1::summarizer"]
+        guard = session.nodes[f"{sid}::step1::handoff"]
+        assert guard.label == "ContextGuardNode"
+        assert summ.parent_id == guard.id
+        assert summ.depth == guard.depth + 1
+        llm = session.nodes[f"{sid}::step1::llm::2"]
+        assert llm.parent_id == summ.id
+
+    def test_summarizer_without_trigger_node_stays_flat(self, tmp_path):
+        # A context-limit stop records no handoff event, so the guard has no
+        # node in the tree; the summarizer must fall back to the flat chain.
+        sid = "aabbccdd1234"
+        events = [
+            e
+            for e in _summarizer_session_events(sid, "report", "context_guard")
+            if e["type"] != "handoff"
+        ]
+        session = self._load(tmp_path, sid, events)
+        summ = session.nodes[f"{sid}::step1::summarizer"]
+        root = session.order[0]
+        assert summ.parent_id == root
+
+    def test_legacy_trace_without_summarizer_renders_flat(self, tmp_path):
+        # Pre-summarizer traces: a report-kind llm_call with no summarizer
+        # event stays a flat child of the session root, exactly as before.
+        sid = "aabbccdd1234"
+        events = [
+            e
+            for e in _summarizer_session_events(sid, "report", "finalize_step")
+            if e["type"] != "summarizer"
+        ]
+        session = self._load(tmp_path, sid, events)
+        assert f"{sid}::step1::summarizer" not in session.nodes
+        llm = session.nodes[f"{sid}::step1::llm::2"]
+        assert llm.parent_id == session.order[0]

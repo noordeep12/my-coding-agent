@@ -321,6 +321,54 @@ def _build_step_nodes(
             if child_sid and child_sid not in seen:
                 _embed_child_session(child_sid, graph, seen, session_dir)
 
+    _nest_summarizer_nodes(graph, session_id, step)
+
+
+def _nest_summarizer_nodes(graph: _Graph, session_id: str, step: int) -> None:
+    """Nest a step's summarizer under its trigger, and its LLM call under it.
+
+    When a ``summarizer`` event was recorded in this step, re-parent the
+    ContextSummarizerNode under the node that triggered it (``finalize_step``
+    for a step-ceiling cutoff, the ``handoff`` node — labelled ContextGuardNode
+    — for a context reset), move it right after that trigger in execution
+    order, and tuck the summarization's own ``report``/``handoff``-kind LLM
+    call beneath it. Flat is the default: sessions without summarizer events
+    (all legacy traces) are untouched, as is a summarizer whose trigger has no
+    node in the tree (e.g. a context-limit stop, which records no handoff).
+    """
+    summarizer_id = f"{session_id}::step{step}::summarizer"
+    summarizer = graph.nodes.get(summarizer_id)
+    if summarizer is None:
+        return
+    triggered_by = summarizer.attributes.get("triggered_by", "")
+    trigger_suffix = "finalize_step" if triggered_by == "finalize_step" else "handoff"
+    trigger_id = f"{session_id}::step{step}::{trigger_suffix}"
+    trigger = graph.nodes.get(trigger_id)
+    if trigger is None:
+        return
+    summarizer.parent_id = trigger_id
+    summarizer.depth = trigger.depth + 1
+    moved = [summarizer_id]
+    kind = summarizer.attributes.get("kind")
+    llm_prefix = f"{session_id}::step{step}::llm::"
+    llm_id = next(
+        (
+            nid
+            for nid in graph.order
+            if nid.startswith(llm_prefix)
+            and graph.nodes[nid].attributes.get("kind") == kind
+        ),
+        None,
+    )
+    if llm_id is not None:
+        graph.nodes[llm_id].parent_id = summarizer_id
+        graph.nodes[llm_id].depth = summarizer.depth + 1
+        moved.append(llm_id)
+    for nid in moved:
+        graph.order.remove(nid)
+    insert_at = graph.order.index(trigger_id) + 1
+    graph.order[insert_at:insert_at] = moved
+
 
 # ── Per-event-type node builders (dispatched via _EVENT_BUILDERS) ─────────────
 
@@ -436,6 +484,32 @@ def _build_report_node(
     )
 
 
+def _build_summarizer_node(
+    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+) -> tuple[str, TraceNode]:
+    """Build the ContextSummarizerNode node for a ``summarizer`` event."""
+    node_id = f"{session_id}::step{step}::summarizer"
+    return node_id, _make_node(
+        id=node_id,
+        type="summarizer",
+        label="ContextSummarizerNode",
+        inputs={
+            "kind": ev.get("kind", ""),
+            "triggered_by": ev.get("triggered_by", ""),
+        },
+        outputs={},
+        attributes={
+            "kind": ev.get("kind", ""),
+            "triggered_by": ev.get("triggered_by", ""),
+            "latency_s": ev.get("latency_s"),
+            "prompt_tokens": ev.get("prompt_tokens"),
+            "completion_tokens": ev.get("completion_tokens"),
+            "total_tokens": ev.get("total_tokens"),
+            "started_at": ev.get("started_at", ""),
+        },
+    )
+
+
 def _build_finalize_step_node(
     ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
 ) -> tuple[str, TraceNode]:
@@ -473,6 +547,7 @@ _EVENT_BUILDERS: dict[str, EventBuilder] = {
     "tool_call": _build_tool_node,
     "handoff": _build_handoff_node,
     "report": _build_report_node,
+    "summarizer": _build_summarizer_node,
     "finalize_step": _build_finalize_step_node,
 }
 

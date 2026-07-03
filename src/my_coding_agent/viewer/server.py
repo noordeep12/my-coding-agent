@@ -277,6 +277,7 @@ const TYPE_META = {
   tool_call:      { name:'Tool Dispatch',     dot:'#a05cf0' },
   handoff:        { name:'Context Guard',     dot:'#ff453a' },
   report:         { name:'Subagent Report',   dot:'#5e5ce6' },
+  summarizer:     { name:'Context Summarizer',dot:'#d9a800' },
   finalize_step:  { name:'Finalize Step',     dot:'#1aa3c4' },
   session_end:    { name:'Session End',       dot:'#8e8e93' },
 };
@@ -489,6 +490,8 @@ function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
 
   // Build a nested forest from each node's depth: a `session` node opens an
   // agent group whose members are the following deeper nodes (recursive).
+  // Any other node followed by deeper nodes (e.g. a trigger with a nested
+  // ContextSummarizerNode) opens an inline leaf group the same way.
   const visible = data.order.map(id=>data.nodes[id])
     .filter(n=>n && (n.type==='session' || !hidden.has(n.type)));
   let i = 0;
@@ -497,8 +500,11 @@ function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
     while(i<visible.length){
       const n = visible[i];
       if(n.depth < minDepth) break;
-      if(n.type==='session'){ i++; out.push({node:n, children:build(n.depth+1)}); }
-      else { i++; out.push({node:n, children:null}); }
+      i++;
+      const hasKids = i<visible.length && visible[i].depth > n.depth;
+      if(n.type==='session'){ out.push({node:n, children:build(n.depth+1)}); }
+      else if(hasKids){ out.push({node:n, children:build(n.depth+1), inline:true}); }
+      else { out.push({node:n, children:null}); }
     }
     return out;
   };
@@ -512,10 +518,27 @@ function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
 }
 
 function TreeNodes({entries,data,sel,onSel,collapsed,toggle}){
-  return html`${entries.map(e=> e.children!=null
-    ? html`<${AgentGroup} key=${e.node.id} node=${e.node} kids=${e.children} data=${data}
-              sel=${sel} onSel=${onSel} collapsed=${collapsed} toggle=${toggle}/>`
-    : html`<${TreeLeaf} key=${e.node.id} node=${e.node} sel=${sel} onSel=${onSel}/>`)}`;
+  return html`${entries.map(e=>{
+    if(e.children==null)
+      return html`<${TreeLeaf} key=${e.node.id} node=${e.node} sel=${sel} onSel=${onSel}/>`;
+    if(e.inline)
+      return html`<${InlineGroup} key=${e.node.id} node=${e.node} kids=${e.children} data=${data}
+                sel=${sel} onSel=${onSel} collapsed=${collapsed} toggle=${toggle}/>`;
+    return html`<${AgentGroup} key=${e.node.id} node=${e.node} kids=${e.children} data=${data}
+              sel=${sel} onSel=${onSel} collapsed=${collapsed} toggle=${toggle}/>`;
+  })}`;
+}
+
+// A non-session node with nested children (e.g. FinalizeStepNode → Context
+// Summarizer → its LLM call): render the leaf row, then its children indented.
+function InlineGroup({node,kids,data,sel,onSel,collapsed,toggle}){
+  return html`<div>
+    <${TreeLeaf} node=${node} sel=${sel} onSel=${onSel}/>
+    <div class="agroup-body">
+      <${TreeNodes} entries=${kids} data=${data} sel=${sel} onSel=${onSel}
+                    collapsed=${collapsed} toggle=${toggle}/>
+    </div>
+  </div>`;
 }
 
 function AgentGroup({node,kids,data,sel,onSel,collapsed,toggle}){

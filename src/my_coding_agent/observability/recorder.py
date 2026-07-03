@@ -31,6 +31,7 @@ REPORT = "report"
 SESSION_END = "session_end"
 TOKEN_TRACKING = "token_tracking"
 FINISH_CHECK = "finish_check"
+SUMMARIZER = "summarizer"
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -237,6 +238,36 @@ class Recorder:
             {
                 "type": REPORT,
                 "content": content,
+                "started_at": _now(),
+            }
+        )
+
+    def record_summarizer(
+        self,
+        kind: str,
+        step: int,
+        triggered_by: str,
+        latency_s: float,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+    ) -> None:
+        """Record one ContextSummarizerNode invocation, linked to its trigger.
+
+        ``triggered_by`` names the pipeline node that fired the summarizer
+        (``finalize_step`` or ``context_guard``) so the viewer can nest the
+        summarizer node under it in the trace tree.
+        """
+        self._emit(
+            {
+                "type": SUMMARIZER,
+                "kind": kind,
+                "step": step,
+                "triggered_by": triggered_by,
+                "latency_s": round(latency_s, 4),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
                 "started_at": _now(),
             }
         )

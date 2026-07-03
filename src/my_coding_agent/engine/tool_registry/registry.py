@@ -206,6 +206,7 @@ class ToolRegistry:
         # Lazy import — avoids a circular dependency (agent → tools → registry).
         from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS, AgentNode
         from my_coding_agent.engine.llm import OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
+        from my_coding_agent.pipeline.schema import CLEAN_FINISH_REASONS
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
         system_prompt = (
@@ -227,16 +228,27 @@ class ToolRegistry:
             ],
             tools=subagent_tools,
             label="SubAgent",
+            needs_handback=True,
         )
         agent.execute(max_steps=DEFAULT_MAX_STEPS)
         # Link this subagent to the delegate tool call in the parent's trace tree.
         parent_recorder = current_recorder.get()
         if parent_recorder is not None:
             parent_recorder.note_delegate_child(agent.session_id)
-        # Return an LLM-summarized final report of the whole subagent conversation
-        # (recorded as a distinct report node) instead of a reverse-scan of the
-        # last assistant message, which drops the final tool results whenever the
-        # subagent is cut off mid-progress at its step ceiling.
+        # On a clean finish the final assistant turn is already the report — hand
+        # it back verbatim (zero extra LLM calls). On a cutoff the last message
+        # drops the final tool results, so ContextSummarizerNode synthesized a
+        # report from the full conversation in-pipeline (handback_report);
+        # generate_report() remains the out-of-pipeline fallback (aborted runs,
+        # or a clean finish whose final turn carries no usable text).
+        report = None
+        if agent.stop_reason in CLEAN_FINISH_REASONS:
+            report = agent.final_assistant_text()
+        if not (report and report.strip()):
+            report = agent.handback_report
+        if report and report.strip():
+            agent.recorder.record_report(report)
+            return report
         return agent.generate_report()
 
     def read_file(self, file_path: str) -> str:
