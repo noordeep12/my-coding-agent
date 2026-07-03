@@ -914,19 +914,48 @@ def _compute_analytics(
     Returns:
         Dict with ``total_tokens``, ``total_prompt_tokens``,
         ``total_completion_tokens``, ``cost_usd``, ``elapsed_s``,
-        ``llm_call_count``, ``tool_call_count``, ``loop_count``.
+        ``llm_call_count``, ``tool_call_count``, ``loop_count``, ``by_kind``
+        (tokens per call kind) and ``by_agent`` (per session id: tokens, wall
+        time, call count).
+
+    Token totals cover every call kind (``main``, ``report``, ``handoff``,
+    ``tool_router``, ``tool_arg_correction``, ``artifact_query``) across the
+    grafted parent+children node graph (D5); ``llm_call_count`` keeps counting
+    ``main`` calls only, for step semantics.
     """
     prompt_total = completion_total = 0
     llm_count = tool_count = loop_count = 0
+    by_kind: dict[str, dict[str, int]] = {}
+    by_agent: dict[str, dict[str, Any]] = {}
     for node in nodes.values():
-        if node.type == "llm_call" and node.attributes.get("kind") == "main":
-            prompt_total += node.attributes.get("prompt_tokens") or 0
-            completion_total += node.attributes.get("completion_tokens") or 0
-            llm_count += 1
+        if node.type == "llm_call":
+            kind = node.attributes.get("kind") or "main"
+            prompt = node.attributes.get("prompt_tokens") or 0
+            completion = node.attributes.get("completion_tokens") or 0
+            prompt_total += prompt
+            completion_total += completion
+            if kind == "main":
+                llm_count += 1
+            kind_agg = by_kind.setdefault(
+                kind, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
+            kind_agg["prompt_tokens"] += prompt
+            kind_agg["completion_tokens"] += completion
+            kind_agg["total_tokens"] += prompt + completion
+            agent_agg = by_agent.setdefault(
+                node.agent, {"tokens": 0, "call_count": 0, "elapsed_s": None}
+            )
+            agent_agg["tokens"] += prompt + completion
+            agent_agg["call_count"] += 1
         elif node.type == "tool_call":
             tool_count += 1
             if node.loop_flag:
                 loop_count += 1
+        elif node.type == "session_end":
+            agent_agg = by_agent.setdefault(
+                node.agent, {"tokens": 0, "call_count": 0, "elapsed_s": None}
+            )
+            agent_agg["elapsed_s"] = node.attributes.get("elapsed_s")
     return {
         "total_prompt_tokens": prompt_total,
         "total_completion_tokens": completion_total,
@@ -936,6 +965,8 @@ def _compute_analytics(
         "llm_call_count": llm_count,
         "tool_call_count": tool_count,
         "loop_count": loop_count,
+        "by_kind": by_kind,
+        "by_agent": by_agent,
     }
 
 

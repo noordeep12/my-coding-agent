@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..observability import Recorder, current_session_id
-from ..observability.recorder import current_recorder
+from ..observability.recorder import current_agent_node, current_recorder
 from ..pipeline.context import RunContext
 from ..pipeline.handoff import handoff_to_user_message, save_handoff
 from ..pipeline.node import BaseNode
@@ -86,6 +86,11 @@ class AgentNode(BaseNode):
         self.last_prompt_tokens: int = 0
         self.needs_handback = needs_handback
         self.handback_report: str | None = None
+        # Usage summaries of delegated subagents spawned by this agent, handed
+        # up via ``current_agent_node`` as each ``delegate`` call returns (D3).
+        # Each entry already carries its own nested descendants, so a child's
+        # rollup folds transitively into this agent's.
+        self.child_rollups: list[dict[str, Any]] = []
         self.logger.info(
             "%s initialized with %d messages and %d tools",
             label,
@@ -121,6 +126,7 @@ class AgentNode(BaseNode):
         self.recorder.start(self.label, self.llm.model, self.llm.context_window)
         _ctx_token = current_session_id.set(self.session_id)
         _rec_token = current_recorder.set(self.recorder)
+        _node_token = current_agent_node.set(self)
 
         print_banner(
             label=self.label,
@@ -169,6 +175,7 @@ class AgentNode(BaseNode):
             )
             current_session_id.reset(_ctx_token)
             current_recorder.reset(_rec_token)
+            current_agent_node.reset(_node_token)
 
         return result if result else ctx.messages
 
@@ -261,6 +268,65 @@ class AgentNode(BaseNode):
         remaining_steps = max_steps - self.step_num
         return continuation.execute(max_steps=max(remaining_steps, 1))
 
+    def add_child_usage(self, summary: dict[str, Any]) -> None:
+        """Record a delegated subagent's usage summary (see ``_usage_summary``).
+
+        Called by ``delegate()`` as each subagent finishes, via
+        ``current_agent_node``. The summary already carries its own nested
+        descendants, so this agent's rollup transitively includes the whole
+        delegated subtree (D3).
+        """
+        self.child_rollups.append(summary)
+
+    def _own_usage_by_kind(self) -> dict[str, dict[str, int]]:
+        """Return this agent's own token totals, decomposed per call kind."""
+        by_kind: dict[str, dict[str, int]] = {}
+        for c in self.llm.llm_calls:
+            agg = by_kind.setdefault(
+                c.get("kind", "main"),
+                {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            )
+            agg["prompt_tokens"] += c["prompt"]
+            agg["completion_tokens"] += c["completion"]
+            agg["total_tokens"] += c["total"]
+        return by_kind
+
+    @staticmethod
+    def _sum_totals(by_kind: dict[str, dict[str, int]]) -> dict[str, int]:
+        total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        for agg in by_kind.values():
+            for key in total:
+                total[key] += agg[key]
+        return total
+
+    def _grand_total(
+        self, own_total: dict[str, int], descendants: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Own totals plus every descendant's own grand total (D3)."""
+        total = dict(own_total)
+        for child in descendants:
+            child_total = child["grand_total"]
+            for key in total:
+                total[key] += child_total[key]
+        return total
+
+    def _usage_summary(self) -> dict[str, Any]:
+        """This agent's usage summary: own per-kind totals plus its rollup.
+
+        Returned up through ``delegate()`` (via ``add_child_usage``) so the
+        parent accumulates usage without re-reading the child's files (D3).
+        """
+        by_kind = self._own_usage_by_kind()
+        own_total = self._sum_totals(by_kind)
+        return {
+            "session_id": self.session_id,
+            "elapsed_s": round(self.elapsed_seconds, 3),
+            "steps": self.step_num,
+            "by_kind": by_kind,
+            "descendants": self.child_rollups,
+            "grand_total": self._grand_total(own_total, self.child_rollups),
+        }
+
     def _print_summary(self, max_steps: int) -> None:
         last_message = ""
         for msg in reversed(self.messages):
@@ -287,6 +353,7 @@ class AgentNode(BaseNode):
             session_id=self.session_id,
             started_at=self.started_at,
             tools=self.tools,
+            rollup=self._usage_summary(),
         )
 
     def _save_session_data(self, max_steps: int) -> None:
@@ -309,6 +376,7 @@ class AgentNode(BaseNode):
                 "completion_tokens": sum(c["completion"] for c in self.llm.llm_calls),
                 "total_tokens": sum(c["total"] for c in self.llm.llm_calls),
             },
+            "rollup": self._usage_summary(),
             "context_window": self.llm.context_window,
             "context_reset_threshold": self.context_reset_threshold,
             "tool_records": self.tool_records,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any
 
 from ...engine.llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
@@ -109,6 +110,7 @@ class ContextSummarizerNode(BaseNode):
             self._kind,
             self._triggered_by,
         )
+        started_at = datetime.now().astimezone().isoformat(timespec="milliseconds")
         t0 = time.monotonic()
         content = summarize_conversation(
             ctx.llm, ctx.messages, _PROMPTS[self._kind], self._kind
@@ -127,4 +129,5 @@ class ContextSummarizerNode(BaseNode):
             prompt_tokens=last_call.get("prompt", 0),
             completion_tokens=last_call.get("completion", 0),
             total_tokens=last_call.get("total", 0),
+            started_at=started_at,
         )

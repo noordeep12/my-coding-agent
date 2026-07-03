@@ -45,6 +45,13 @@ current_recorder: contextvars.ContextVar["Recorder | None"] = contextvars.Contex
     "current_recorder", default=None
 )
 
+# The active run's AgentNode, so ``delegate`` can hand the completed child's
+# usage summary straight up to the parent for the persisted rollup (D3) —
+# untyped (``Any``) here to avoid a circular import with ``engine.agent``.
+current_agent_node: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "current_agent_node", default=None
+)
+
 # Which LLM call kinds store the full input payload — the ``messages`` snapshot
 # and the ``tools`` definitions given to the model. Every chat-completion kind —
 # including the ancillary ones (tool_router, arg_correction) — keeps
@@ -61,8 +68,13 @@ FULL_PAYLOAD_KINDS: set[str] = {
 
 
 def _now() -> str:
-    """Return the current local time as an ISO-8601 string (second precision)."""
-    return datetime.now().isoformat(timespec="seconds")
+    """Return the current local time as an ISO-8601 string.
+
+    Millisecond precision with an explicit UTC offset: milliseconds keep
+    adjacent fast events from colliding on one identical stamp, and the
+    offset keeps rows comparable across machine/timezone changes.
+    """
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 class Recorder:
@@ -87,8 +99,10 @@ class Recorder:
         self.parent_session_id = parent_session_id
         self.path = Path(session_dir) / "events.jsonl"
         # Single pending slot: tools dispatch sequentially (before → after), so
-        # one in-flight start time is sufficient to compute latency.
-        self._pending: tuple[float, str] | None = None
+        # one in-flight start time is sufficient to compute latency. Carries
+        # both the monotonic start (duration) and the wall-clock start
+        # (``started_at``) captured at the same moment.
+        self._pending: tuple[float, str, str] | None = None
         # Child session id stashed by ``delegate`` and attached to the next
         # ``delegate`` tool-call event for an exact parent→child link.
         self._pending_delegate_child: str | None = None
@@ -148,6 +162,7 @@ class Recorder:
         context_window: int,
         response_data: dict[str, Any],
         tools: list[dict[str, Any]] | None = None,
+        started_at: str | None = None,
     ) -> None:
         """Record one chat-completion call (full snapshot for payload kinds).
 
@@ -155,6 +170,10 @@ class Recorder:
         ``tools`` definitions given to the model this turn are both kept, so the
         viewer can show the exact input (conversation + available tools) the
         model saw. Other kinds keep neither, to bound the event-stream size.
+
+        ``started_at`` is the wall-clock moment the call began (captured by the
+        caller alongside its monotonic latency timer); falls back to emit time
+        when the caller does not supply one.
         """
         if self._pending is not None:
             # A tool is currently dispatching (before_tool ran, after_tool has
@@ -168,7 +187,7 @@ class Recorder:
                 "type": LLM_CALL,
                 "call": call,
                 "kind": kind,
-                "started_at": _now(),
+                "started_at": started_at or _now(),
                 "latency_s": round(latency_s, 4),
                 "prompt": usage.get("prompt_tokens", 0),
                 "completion": usage.get("completion_tokens", 0),
@@ -183,7 +202,7 @@ class Recorder:
     # ── tool capture (called directly by the ToolExecutor) ─────────────────────
     def before_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Pre-dispatch hook: stamp the start time. Returns args unchanged."""
-        self._pending = (time.monotonic(), name)
+        self._pending = (time.monotonic(), name, _now())
         self._pending_child_llm_calls = []
         return args
 
@@ -191,8 +210,10 @@ class Recorder:
         """Post-dispatch hook: emit the tool event with full I/O. Result unchanged."""
         if self._pending is not None and self._pending[1] == name:
             latency = time.monotonic() - self._pending[0]
+            started_at = self._pending[2]
         else:
             latency = 0.0
+            started_at = _now()
         self._pending = None
         event: dict[str, Any] = {
             "type": TOOL_CALL,
@@ -200,7 +221,7 @@ class Recorder:
             "args": args,
             "result": result,
             "latency_s": round(latency, 4),
-            "started_at": _now(),
+            "started_at": started_at,
         }
         # Attach the spawned subagent's session id to a delegate call so the tree
         # nests the child under this exact tool call.
@@ -269,12 +290,15 @@ class Recorder:
         prompt_tokens: int,
         completion_tokens: int,
         total_tokens: int,
+        started_at: str | None = None,
     ) -> None:
         """Record one ContextSummarizerNode invocation, linked to its trigger.
 
         ``triggered_by`` names the pipeline node that fired the summarizer
         (``finalize_step`` or ``context_guard``) so the viewer can nest the
-        summarizer node under it in the trace tree.
+        summarizer node under it in the trace tree. ``started_at`` is the
+        wall-clock moment the summarization began, captured by the caller
+        alongside its monotonic latency timer.
         """
         self._emit(
             {
@@ -286,7 +310,7 @@ class Recorder:
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
-                "started_at": _now(),
+                "started_at": started_at or _now(),
             }
         )
 

@@ -10,6 +10,7 @@ tool execution live in their own collaborators (``routing.ToolRouter`` and
 import json
 import os
 import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -242,6 +243,7 @@ class LLM:
         body: dict = {"model": self.model, "messages": messages, "tools": tools or []}
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        _started_at = datetime.now().astimezone().isoformat(timespec="milliseconds")
         _t0 = time.monotonic()
         resp = self._request_with_retry(
             "POST",
@@ -291,6 +293,7 @@ class LLM:
                 context_window=self.context_window,
                 response_data=data,
                 tools=tools,
+                started_at=_started_at,
             )
         self.logger.api(
             "call #%d [%s] usage — prompt: %s, completion: %s, total: %s",

@@ -507,6 +507,53 @@ def _context_resets_section(
     return lines
 
 
+def _subagent_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]:
+    """Box rows for task-level cost when delegations occurred: own vs rolled-up
+    totals plus one line per direct subagent (session id, tokens, elapsed).
+
+    Returns no rows when *rollup* is absent or carries no descendants, so
+    delegation-free runs render exactly as before.
+    """
+    r = rollup or {}
+    descendants = r.get("descendants") or []
+    if not descendants:
+        return []
+    own_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for agg in (r.get("by_kind") or {}).values():
+        for key in own_total:
+            own_total[key] += agg.get(key, 0)
+    grand_total = r.get("grand_total") or {}
+    lines = [
+        s.empty_row(),
+        s.mid,
+        s.empty_row(),
+        s.metric_row1("TASK TOTAL (own)", f"{own_total.get('total_tokens', 0):,} tok"),
+        s.metric_row1(
+            "TASK TOTAL (rolled up)", f"{grand_total.get('total_tokens', 0):,} tok"
+        ),
+        s.metric_row1("SUBAGENTS", str(len(descendants))),
+        s.empty_row(),
+    ]
+    for i, child in enumerate(descendants, start=1):
+        child_total = child.get("grand_total") or {}
+        line_vis = (
+            f"  {i}. {child.get('session_id', '?')} — "
+            f"{child_total.get('total_tokens', 0):,} tok, "
+            f"{child.get('elapsed_s', 0.0):.1f}s"
+        )
+        pad = s.W - len(line_vis)
+        lines.append(
+            s.BORDER + "║" + f"  {i}. {s.VALUE}{child.get('session_id', '?')}{s.R} — "
+            f"{s.VALUE}{child_total.get('total_tokens', 0):,}{s.R} tok, "
+            f"{s.VALUE}{child.get('elapsed_s', 0.0):.1f}{s.R}s"
+            + " " * max(pad, 0)
+            + s.BORDER
+            + "║"
+            + s.R
+        )
+    return lines
+
+
 def _tool_count_label(records: list) -> str:
     """Summarize tool outcomes as e.g. ``3 (2 ok, 1 failed)`` or ``0``."""
     if not records:
@@ -541,6 +588,7 @@ def print_run_summary(
     session_id: str = "",
     started_at: str = "",
     tools: list | None = None,
+    rollup: dict | None = None,
 ) -> None:
     """Render the end-of-run summary box to stderr.
 
@@ -556,6 +604,9 @@ def print_run_summary(
         tool_records: Per-tool-call records summarized in the tool section.
         handoff_records: Context-reset/handoff records, if any.
         llm_calls: Per-call usage entries plotted in the token chart.
+        rollup: This agent's usage summary (``AgentNode._usage_summary()``);
+            when it carries delegated subagents, a task-level cost section is
+            appended (own vs rolled-up totals, one line per subagent).
     """
     s = _SummaryStyle()
     metric_row1 = s.metric_row1
@@ -619,6 +670,7 @@ def print_run_summary(
 
     lines += _tool_calls_section(s, records)
     lines += _context_resets_section(s, handoffs, context_window)
+    lines += _subagent_rollup_section(s, rollup)
 
     if last_message:
         lines += [s.empty_row(), s.mid, s.empty_row()]

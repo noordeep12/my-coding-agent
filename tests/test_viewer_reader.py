@@ -405,6 +405,43 @@ class TestListSessions:
         assert rows[0]["session_id"] == sid
 
 
+# ── Pre-change timestamp compatibility ──────────────────────────────────────────
+
+
+class TestPreChangeTimestampCompatibility:
+    """The reader must load traces recorded with the pre-change timestamp
+    format (second precision, no timezone offset, emit-time stamp) without
+    error — it treats ``started_at``/``ended_at`` as opaque strings, so no
+    special-casing is required, but this is a regression guard on that
+    invariant."""
+
+    def test_old_format_naive_second_precision_trace_loads(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))  # uses naive, second-precision stamps
+        session = load_session(ep)
+        assert session.session_id == sid
+        assert session.started_at == "2026-01-01T10:00:00"
+        assert len(session.nodes) > 0
+
+    def test_new_format_ms_offset_trace_loads(self, tmp_path):
+        sid = "aabbccdd5678"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        events = _minimal_events(sid)
+        for ev in events:
+            for key in ("started_at", "ended_at"):
+                if key in ev:
+                    ev[key] = "2026-07-02T19:35:33.482+02:00"
+        _write_events(ep, events)
+        session = load_session(ep)
+        assert session.session_id == sid
+        assert len(session.nodes) > 0
+
+
 # ── load_session ──────────────────────────────────────────────────────────────
 
 
@@ -671,6 +708,97 @@ class TestSubagentNesting:
         child_llm = session.nodes[f"{child}::step1::llm::1"]
         assert child_llm.ctx_state["tokens"] == 90
         assert child_llm.ctx_state["composition"]["system"] == 40
+
+
+class TestAnalyticsAllKindsAcrossTree:
+    """Analytics totals cover every call kind across parent + embedded children
+    (session-cost-attribution D5) — including a subagent's report call, which
+    the pre-change reader counted nowhere."""
+
+    def _setup(self, tmp_path):
+        parent, child = "parent000001", "child0000002"
+        (tmp_path / parent).mkdir()
+        (tmp_path / child).mkdir()
+        _write_events(
+            tmp_path / parent / "events.jsonl", _delegate_parent_events(parent, child)
+        )
+        child_events = _subagent_events(child, parent)
+        # Insert the child's end-of-turn report call before its session_end,
+        # mirroring the evidence session's shape.
+        child_events.insert(
+            -1,
+            _ev(
+                "llm_call",
+                call=2,
+                kind="report",
+                prompt=40,
+                completion=10,
+                total=50,
+                context_window=8192,
+                messages=None,
+                response={"content": "", "reasoning": "", "tool_calls": [], "raw": {}},
+            ),
+        )
+        _write_events(tmp_path / child / "events.jsonl", child_events)
+        return load_session(tmp_path / parent / "events.jsonl")
+
+    def test_analytics_total_includes_report_tokens_from_embedded_child(self, tmp_path):
+        session = self._setup(tmp_path)
+        # parent main (150) + child main (90) + child report (50) = 290
+        assert session.analytics["total_tokens"] == 290
+
+    def test_by_kind_decomposes_across_the_tree(self, tmp_path):
+        session = self._setup(tmp_path)
+        by_kind = session.analytics["by_kind"]
+        assert by_kind["main"]["total_tokens"] == 240  # 150 + 90
+        assert by_kind["report"]["total_tokens"] == 50
+
+    def test_by_agent_attributes_tokens_per_session(self, tmp_path):
+        session = self._setup(tmp_path)
+        by_agent = session.analytics["by_agent"]
+        assert by_agent["parent000001"]["tokens"] == 150
+        assert by_agent["child0000002"]["tokens"] == 140  # 90 + 50
+        assert by_agent["child0000002"]["call_count"] == 2
+        assert by_agent["child0000002"]["elapsed_s"] == 1.0
+
+
+class TestAnalyticsBackwardCompat:
+    """Pre-change traces (no rollup fields) and crash-truncated traces (no
+    session_end / no session_data) still load, with analytics computed purely
+    from event rows (D6)."""
+
+    def test_pre_change_trace_loads_with_analytics(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))  # no by_kind/by_agent in the file
+        session = load_session(ep)
+        assert session.analytics["total_tokens"] == 380
+        assert "by_kind" in session.analytics
+        assert "by_agent" in session.analytics
+
+    def test_crash_truncated_trace_no_session_end(self, tmp_path):
+        sid = "crash000001"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        events = [e for e in _minimal_events(sid) if e.get("type") != "session_end"]
+        _write_events(ep, events)
+        session = load_session(ep)
+        assert session.analytics["total_tokens"] == 380
+        assert session.analytics["elapsed_s"] == 0.0
+
+    def test_crash_truncated_trace_no_session_data_file(self, tmp_path):
+        sid = "crash000002"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        assert not ep.exists()
+        assert not (sdir / "session_data.json").exists()
+        session = load_session(ep)
+        assert session.analytics == {"source": "session_data_fallback"}
+        assert session.session_id == sid
 
 
 class TestArtifactQueryNesting:

@@ -91,7 +91,7 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 | File | Contents |
 |---|---|
 | `stderr.log` | Plain-text log of the full run |
-| `session_data.json` | Metrics, tool records, LLM call log, stop reason |
+| `session_data.json` | Metrics, tool records, LLM call log, stop reason, usage rollup (own + delegated subagents, per call kind) |
 | `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs) |
 | `artifacts/<tool_call_id>.<stream>.txt` | Full content of each offloaded large output stream (`stdout`/`stderr`), written at creation so bash can skim it during the run |
 | `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
@@ -118,6 +118,7 @@ Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, serve
   - every content box (JSON and raw text) is a **mini VS Code-style editor** (powered by CodeMirror, vendored offline): syntax highlighting, line numbers, and code folding; a clickable **schema breadcrumb** for JSON (e.g. `root › [0] › function`); **collapse all / expand all**, **copy all**, and **find** with keyboard next/previous (Enter / Shift+Enter)
 - The current **session id** is shown in the header (click to copy); the picker dropdown lists all sessions
 - Loop-detected tool calls are flagged inline
+- A **Breakdown** toggle in the stats bar (shown whenever the session has token-usage data) reveals per-call-kind and per-agent token totals across the whole delegated tree
 
 ## Requirements
 

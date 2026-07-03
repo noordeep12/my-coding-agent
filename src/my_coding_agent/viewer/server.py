@@ -92,6 +92,8 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 /* ── stats strip ── */
 .stats{display:flex;gap:18px;align-items:center;padding:8px 20px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
 .stats b{color:var(--text);font-weight:600}
+.stats-breakdown{display:flex;flex-direction:column;gap:6px;padding:8px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+.bd-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px}
 
 /* ── main split ── */
 .main{flex:1;display:grid;grid-template-columns:minmax(280px,38%) 1fr;min-height:0}
@@ -407,15 +409,36 @@ function Toolbar({showFilters,setShowFilters,hidden,setHidden,data}){
 }
 
 function Stats({data}){
+  const [open,setOpen] = useState(false);
   const a = data.analytics || {};
   const cost = a.cost_usd!=null ? '$'+Number(a.cost_usd).toFixed(4) : '—';
-  return html`<div class="stats">
-    <span><b>${data.model||'?'}</b></span>
-    <span><b>${data.steps}</b> steps</span>
-    <span><b>${fmtNum(a.total_tokens||0)}</b> tokens</span>
-    <span><b>${cost}</b></span>
-    ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
-    ${data.stop_reason ? html`<span class="muted">stop: ${data.stop_reason}</span>` : null}
+  const byKind = a.by_kind || {};
+  const byAgent = a.by_agent || {};
+  const hasBreakdown = Object.keys(byKind).length>0 || Object.keys(byAgent).length>0;
+  return html`<div>
+    <div class="stats">
+      <span><b>${data.model||'?'}</b></span>
+      <span><b>${data.steps}</b> steps</span>
+      <span><b>${fmtNum(a.total_tokens||0)}</b> tokens</span>
+      <span><b>${cost}</b></span>
+      ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
+      ${data.stop_reason ? html`<span class="muted">stop: ${data.stop_reason}</span>` : null}
+      ${hasBreakdown ? html`<button class="filter-btn" onClick=${()=>setOpen(!open)}>
+        Breakdown</button>` : null}
+    </div>
+    ${open && hasBreakdown ? html`<div class="stats-breakdown">
+      ${Object.keys(byKind).length ? html`<div class="bd-row">
+        <span class="muted">by kind:</span>
+        ${Object.entries(byKind).map(([k,v])=>html`<span key=${k} class="chip">
+          ${k}: ${fmtNum(v.total_tokens)}</span>`)}
+      </div>` : null}
+      ${Object.keys(byAgent).length ? html`<div class="bd-row">
+        <span class="muted">by agent:</span>
+        ${Object.entries(byAgent).map(([sid,v])=>html`<span key=${sid} class="chip">
+          ${sid.slice(0,8)}: ${fmtNum(v.tokens)} tok · ${v.call_count} calls${
+            v.elapsed_s!=null ? ' · '+Number(v.elapsed_s).toFixed(1)+'s' : ''}</span>`)}
+      </div>` : null}
+    </div>` : null}
   </div>`;
 }
 

@@ -451,6 +451,54 @@ def test_delegate_no_pipeline_report_falls_back_to_generate_report(mocker):
     fake_agent.generate_report.assert_called_once_with()
 
 
+def test_delegate_resaves_session_data_after_generate_report(mocker):
+    """D4: when generate_report() runs (out-of-pipeline), the child's session
+    data is re-saved so its persisted total_usage includes the report call —
+    execute() already saved once before the report was generated."""
+    fake_agent = _make_fake_agent(
+        mocker, stop_reason="aborted", report="fallback report"
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    ToolsRegistry().delegate(task="do X", context="ctx")
+    fake_agent._save_session_data.assert_called_once_with(DEFAULT_MAX_STEPS)
+
+
+def test_delegate_skips_resave_on_clean_finish(mocker):
+    """No out-of-pipeline report call means no re-save is needed."""
+    fake_agent = _make_fake_agent(mocker, stop_reason="stop", final_text="final turn")
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    ToolsRegistry().delegate(task="do X", context="ctx")
+    fake_agent._save_session_data.assert_not_called()
+
+
+def test_delegate_hands_usage_summary_up_to_parent_agent_node(mocker):
+    """D3: the completed child's usage summary reaches the parent via
+    current_agent_node, without delegate() re-reading the child's files."""
+    from my_coding_agent.observability.recorder import current_agent_node
+
+    fake_agent = _make_fake_agent(mocker, stop_reason="stop", final_text="final turn")
+    fake_agent._usage_summary.return_value = {"session_id": "abc123", "fake": True}
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode",
+        return_value=fake_agent,
+    )
+    parent = mocker.Mock()
+    token = current_agent_node.set(parent)
+    try:
+        ToolsRegistry().delegate(task="do X", context="ctx")
+    finally:
+        current_agent_node.reset(token)
+    parent.add_child_usage.assert_called_once_with(
+        {"session_id": "abc123", "fake": True}
+    )
+
+
 def test_delegate_marks_subagent_needs_handback(mocker):
     """The delegate subagent is constructed owing a hand-back report."""
     fake_agent = _make_fake_agent(mocker)

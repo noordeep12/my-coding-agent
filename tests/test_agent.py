@@ -46,6 +46,7 @@ def _make_agent(silent_logger, **overrides):
     agent.elapsed_seconds = 0.0
     agent.needs_handback = False
     agent.handback_report = None
+    agent.child_rollups = []
     # Held LLM client (composition). LLM.__init__ is network-free; swap in the
     # silent logger and set the state the agent loop reads off the client.
     agent.llm = LLM()
@@ -742,6 +743,122 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
     assert data["session_id"] == "sess9"
     assert data["total_usage"]["total_tokens"] == 15
     assert data["last_message"] == "done"
+
+
+# --- rollup / usage summary ---------------------------------------------------
+
+
+def test_usage_summary_no_delegation_equals_own_totals(silent_logger):
+    """A run without delegates has rollup grand_total == its own totals."""
+    agent = _make_agent(
+        silent_logger,
+        llm_calls=[
+            {"kind": "main", "prompt": 100, "completion": 20, "total": 120},
+            {"kind": "main", "prompt": 50, "completion": 10, "total": 60},
+        ],
+        session_id="solo",
+    )
+    summary = agent._usage_summary()
+    assert summary["descendants"] == []
+    assert summary["grand_total"] == {
+        "prompt_tokens": 150,
+        "completion_tokens": 30,
+        "total_tokens": 180,
+    }
+    assert summary["by_kind"]["main"] == {
+        "prompt_tokens": 150,
+        "completion_tokens": 30,
+        "total_tokens": 180,
+    }
+
+
+def test_usage_summary_decomposes_by_kind(silent_logger):
+    agent = _make_agent(
+        silent_logger,
+        llm_calls=[
+            {"kind": "main", "prompt": 100, "completion": 20, "total": 120},
+            {"kind": "report", "prompt": 30, "completion": 5, "total": 35},
+        ],
+        session_id="s1",
+    )
+    by_kind = agent._usage_summary()["by_kind"]
+    assert by_kind["main"] == {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120,
+    }
+    assert by_kind["report"] == {
+        "prompt_tokens": 30,
+        "completion_tokens": 5,
+        "total_tokens": 35,
+    }
+
+
+def test_add_child_usage_folds_into_grand_total(silent_logger):
+    """Parent rollup grand total == sum of every LLM call of every kind across
+    the parent and its descendants, including transitively via a child's own
+    rollup (D3)."""
+    agent = _make_agent(
+        silent_logger,
+        llm_calls=[{"kind": "main", "prompt": 10, "completion": 5, "total": 15}],
+        session_id="parent",
+    )
+    grandchild_summary = {
+        "session_id": "grandchild",
+        "elapsed_s": 1.0,
+        "steps": 1,
+        "by_kind": {
+            "main": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+        },
+        "descendants": [],
+        "grand_total": {
+            "prompt_tokens": 5,
+            "completion_tokens": 1,
+            "total_tokens": 6,
+        },
+    }
+    child_summary = {
+        "session_id": "child",
+        "elapsed_s": 2.0,
+        "steps": 2,
+        "by_kind": {
+            "main": {"prompt_tokens": 20, "completion_tokens": 4, "total_tokens": 24}
+        },
+        "descendants": [grandchild_summary],
+        "grand_total": {
+            "prompt_tokens": 25,
+            "completion_tokens": 5,
+            "total_tokens": 30,
+        },
+    }
+    agent.add_child_usage(child_summary)
+    summary = agent._usage_summary()
+    assert summary["descendants"] == [child_summary]
+    # own (10/5/15) + child's grand_total (25/5/30) = 35/10/45
+    assert summary["grand_total"] == {
+        "prompt_tokens": 35,
+        "completion_tokens": 10,
+        "total_tokens": 45,
+    }
+
+
+def test_save_session_data_includes_rollup(silent_logger, mocker, tmp_path):
+    agent = _make_agent(
+        silent_logger,
+        messages=[{"role": "assistant", "content": "done"}],
+        llm_calls=[{"kind": "main", "prompt": 10, "completion": 5, "total": 15}],
+        session_id="sess10",
+        started_at="2026-06-12",
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.Path",
+        lambda *a: tmp_path.joinpath(*a),
+    )
+    agent._save_session_data(max_steps=5)
+    out = tmp_path / ".my_coding_agent" / "sess10" / "session_data.json"
+    data = json.loads(out.read_text())
+    assert data["rollup"]["grand_total"]["total_tokens"] == 15
+    assert data["rollup"]["descendants"] == []
 
 
 # --- _spawn_continuation -----------------------------------------------------

@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING
 import html2text
 import httpx
 
-from ...observability.recorder import current_recorder, current_session_id
+from ...observability.recorder import (
+    current_agent_node,
+    current_recorder,
+    current_session_id,
+)
 from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
 from ...utils.parsing import extract_message
@@ -387,8 +391,18 @@ class ToolRegistry:
             report = agent.handback_report
         if report and report.strip():
             agent.recorder.record_report(report)
-            return report
-        return agent.generate_report()
+        else:
+            report = agent.generate_report()
+            # execute() already saved session_data.json before this
+            # out-of-pipeline report call ran; re-save so the child's
+            # persisted totals include the report's tokens (D4).
+            agent._save_session_data(DEFAULT_MAX_STEPS)
+        # Hand the completed child's usage summary up to the parent so it can
+        # accumulate its rollup without re-reading the child's files (D3).
+        parent_node = current_agent_node.get()
+        if parent_node is not None:
+            parent_node.add_child_usage(agent._usage_summary())
+        return report
 
     def read_file(self, file_path: str) -> str | tuple[None, dict]:
         """Read and return the full contents of a file at the given file_path.
