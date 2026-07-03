@@ -25,7 +25,14 @@ class TraceNode:
         inputs: Structured inputs for this event (prompt messages, tool args, …).
         outputs: Structured outputs (LLM response, tool result, …).
         attributes: Scalar metadata (step, latency_s, tokens, phase, …).
-        parent_id: Parent (session root) node ID, or ``None`` for the root.
+        parent_id: Parent node ID, or ``None`` for the top-level session root.
+            Usually the owning session root, but a node can be re-parented to
+            a specific ``tool_call`` node instead — a delegate's subagent
+            session root nests under its ``delegate`` call, and an LLM call a
+            tool makes internally (e.g. ``read_tool_artifact``'s bounded
+            extraction call) nests under that tool's own node. Drives the
+            Tree view's real parent/child nesting (any node with children can
+            open a collapsible group, not only ``session`` nodes).
         agent: Session id of the agent that owns this node. Main-agent nodes
             share the top-level session id; sub-agent (delegate) nodes carry the
             spawned session's id, so the UI can group and badge by agent.

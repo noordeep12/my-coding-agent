@@ -9,17 +9,39 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import html2text
 import httpx
 
 from ...observability.recorder import current_recorder, current_session_id
+from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
+from ...utils.parsing import extract_message
+from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
+
+if TYPE_CHECKING:
+    from ..llm import LLM
+
+logger = get_logger(__name__)
 
 # Single source of truth for the large-tool-output boundary (chars). bash output
 # above this triggers artifact separation; tool_execution.MAX_TOOL_OUTPUT_CHARS
 # aliases this.
 ARTIFACT_THRESHOLD = 8_000
+
+# Sanity cap on a fetched article's converted markdown (chars): guards a
+# pathological page. Fidelity within the cap is preserved on disk via offload
+# (below ARTIFACT_THRESHOLD) rather than thrown away like the old 24k pre-cut.
+ARTICLE_FETCH_MAX_CHARS = 200_000
+
+# Extraction budgets for read_tool_artifact (chars, ~4 chars/token estimate).
+_CHARS_PER_TOKEN = 4
+EXTRACTION_OUTPUT_TOKEN_BUDGET = 800  # bounds a single read_tool_artifact return
+EXTRACTION_OUTPUT_MAX_CHARS = EXTRACTION_OUTPUT_TOKEN_BUDGET * _CHARS_PER_TOKEN
+EXTRACTION_CHUNK_MAX_CHARS = 16_000  # per-call input budget for one scan chunk
+
+_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 
 # A tool_call_id doubles as a per-artifact filename; restrict it to a safe set so
 # a crafted id can never traverse out of the session's artifacts directory.
@@ -65,9 +87,10 @@ class ToolRegistry:
     Each public method is a tool the LLM can invoke: ``bash`` runs a shell command,
     ``read_file``/``write_file`` access the workspace (confined to ``base_dir`` to
     block path traversal), ``read_article`` fetches a URL as markdown,
-    ``read_tool_artifact`` retrieves a previously stored large output, and
-    ``delegate`` spawns a read-only subagent. Large outputs are stored as artifacts
-    and summarized for the model rather than returned inline.
+    ``read_tool_artifact`` queries a previously stored large output for a
+    query-scoped, bounded extract, and ``delegate`` spawns a read-only subagent.
+    Large outputs (``bash`` streams, file reads, web fetches) are offloaded to
+    the per-run artifact store instead of being returned inline.
     """
 
     def __init__(
@@ -75,6 +98,7 @@ class ToolRegistry:
         artifacts: dict | None = None,
         tools: list | None = None,
         base_dir: str | None = None,
+        llm: "LLM | None" = None,
     ):
         self._artifacts = artifacts if artifacts is not None else {}
         self._tools = tools if tools is not None else []
@@ -84,6 +108,11 @@ class ToolRegistry:
         self._base_dir = (
             Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
         )
+        # Injected by ToolExecutor (same pattern as `tools` above) so
+        # read_tool_artifact can make its bounded extraction call. None outside
+        # an agent run (unit tests, standalone registry) — extraction then
+        # degrades to a bounded head excerpt.
+        self._llm = llm
 
     def _resolve_in_base(self, file_path: str) -> Path:
         """Resolve file_path against the workspace base, rejecting any escape.
@@ -156,34 +185,144 @@ class ToolRegistry:
             return None, full  # dispatcher will generate an LLM summary
         return json.dumps(full)
 
-    def read_tool_artifact(self, tool_call_id: str) -> str:
-        """Return the full stored output for a previous tool call by its id.
+    def read_tool_artifact(self, tool_call_id: str, query: str) -> str:
+        """Query a previously offloaded large tool output for a specific detail.
 
-        Prefer the preview and skim the on-disk artifact file with bash text tools
-        (grep/rg, sed, awk, jq, head/tail, wc) — that keeps only what you need in
-        context. Use this tool only when you deliberately need the whole output.
+        This is the primary way to pull detail out of an offloaded output: it
+        never returns the whole stored content, only a bounded extract relevant
+        to your query. Call it as many times as you need with different queries.
+        Bash text tools (grep/rg, sed, awk, jq, head/tail, wc) over the on-disk
+        artifact file remain available as a secondary path when you already know
+        the shape of what you're looking for (e.g. a specific line number).
 
         Tags:
-            artifact, output, result, retrieve
+            artifact, output, result, retrieve, query, search
 
         Args:
             tool_call_id: The tool_call_id from a previous call whose output was
                 offloaded. Example: 'call_abc123'
+            query: Natural-language description of what you need from the stored
+                output. Required. Example: 'the traceback line naming the failing
+                assertion'
         """
-        # The per-stream files persist for the whole run, so this works from any
-        # step after the one that created it (unlike the per-step in-memory store).
-        # Resolve stdout first, then stderr; for a specific stream, skim the exact
-        # file path named in the preview guidance instead.
+        if not query or not query.strip():
+            return (
+                "Error: 'query' is required and must be non-empty. Example: "
+                f'read_tool_artifact(tool_call_id="{tool_call_id}", '
+                'query="the error message near the end of the output")'
+            )
+        text = self._load_artifact_text(tool_call_id)
+        if text is None:
+            return f"Error: no artifact found for tool_call_id '{tool_call_id}'"
+        if self._llm is None:
+            return self._head_excerpt(tool_call_id, text)
+        return self._extract(tool_call_id, text, query)
+
+    def _load_artifact_text(self, tool_call_id: str) -> str | None:
+        """Return the full stored text for tool_call_id, or None if nothing is
+        stored. Prefers the on-disk per-stream files (persist for the whole run);
+        falls back to the in-memory store (same step, or no session dir). Bash
+        artifacts' stdout and stderr are concatenated so a query can match either.
+        """
+        session_id = current_session_id.get()
+        parts = []
+        found = False
+        for stream in ("stdout", "stderr"):
+            path = artifact_file_path(session_id, tool_call_id, stream)
+            if path is not None and path.exists():
+                found = True
+                text = path.read_text()
+                if text:
+                    parts.append(text)
+        if found:
+            return "\n".join(parts)
+        artifact = self._artifacts.get(tool_call_id)
+        if artifact is None:
+            return None
+        if isinstance(artifact, str):
+            return artifact
+        parts = [artifact.get("stdout") or "", artifact.get("stderr") or ""]
+        return "\n".join(p for p in parts if p)
+
+    def _artifact_path_hint(self, tool_call_id: str) -> str | None:
+        """Return the on-disk artifact path for tool_call_id, if one exists."""
         session_id = current_session_id.get()
         for stream in ("stdout", "stderr"):
             path = artifact_file_path(session_id, tool_call_id, stream)
             if path is not None and path.exists():
-                return path.read_text()
-        # Fallback: in-memory store (same step, or when no session dir exists).
-        artifact = self._artifacts.get(tool_call_id)
-        if artifact is None:
-            return f"Error: no artifact found for tool_call_id '{tool_call_id}'"
-        return json.dumps(artifact) if not isinstance(artifact, str) else artifact
+                return str(path)
+        return None
+
+    def _head_excerpt(self, tool_call_id: str, text: str) -> str:
+        """Bounded degradation when extraction cannot run: a head excerpt of the
+        stored text plus guidance pointing at the on-disk file — never the full
+        content, and the run continues rather than aborting."""
+        excerpt = text[:EXTRACTION_OUTPUT_MAX_CHARS]
+        path = self._artifact_path_hint(tool_call_id)
+        hint = (
+            f" Full output on disk at {path} — skim it with bash text tools "
+            "(grep/rg, sed, awk, jq, head/tail, wc)."
+            if path
+            else ""
+        )
+        return (
+            f"{excerpt}\n\n[Extraction unavailable — showing a bounded excerpt "
+            f"of the stored output instead of the full content.{hint}]"
+        )
+
+    def _extract(self, tool_call_id: str, text: str, query: str) -> str:
+        """Query-scoped extraction: single-call fast path for within-budget
+        artifacts, sequential chunked scan for larger ones. Accumulates relevant
+        extracts across chunks, stopping early once the output budget fills so
+        the whole artifact stays reachable without ever returning it whole.
+        """
+        chunks = [
+            text[i : i + EXTRACTION_CHUNK_MAX_CHARS]
+            for i in range(0, len(text), EXTRACTION_CHUNK_MAX_CHARS)
+        ] or [""]
+        collected: list[str] = []
+        remaining = EXTRACTION_OUTPUT_MAX_CHARS
+        for chunk in chunks:
+            if remaining <= 0:
+                break
+            extract = self._extract_chunk(chunk, query)
+            if extract is None:
+                return self._head_excerpt(tool_call_id, text)
+            if extract.strip().upper() != "NOT FOUND":
+                collected.append(extract)
+                remaining -= len(extract)
+        if not collected:
+            return f"No content relevant to '{query}' was found in the stored output."
+        result = "\n\n---\n\n".join(collected)
+        return result[:EXTRACTION_OUTPUT_MAX_CHARS]
+
+    def _extract_chunk(self, chunk: str, query: str) -> str | None:
+        """Make one bounded extraction call over a chunk. Returns the model's
+        (cleaned) response, or None when the call itself fails (degrades the
+        whole retrieval to the head-excerpt fallback)."""
+        prompt = (
+            "/no_think\n"
+            "You are extracting information from a stored tool output on behalf "
+            "of an AI coding agent that cannot see the whole output. Given the "
+            "query and a chunk of that output, quote the exact passages relevant "
+            "to the query, verbatim. If nothing in this chunk is relevant, "
+            "respond with exactly: NOT FOUND\n\n"
+            f"Query: {query}\n\n"
+            f"Chunk:\n{chunk}"
+        )
+        try:
+            assert self._llm is not None
+            resp = self._llm.chat_completion(
+                [{"role": "user", "content": prompt}],
+                tools=[],
+                kind=CALL_KIND_ARTIFACT_QUERY,
+                max_tokens=EXTRACTION_OUTPUT_TOKEN_BUDGET,
+            )
+            content = extract_message(resp).get("content") or ""
+        except Exception as exc:
+            logger.warning("artifact_query extraction failed: %s", exc)
+            return None
+        return _THINK_RE.sub("", content).strip()
 
     def delegate(self, task: str, context: str) -> str:
         """Delegate a focused exploration or research task to a subagent.
@@ -239,9 +378,11 @@ class ToolRegistry:
         # subagent is cut off mid-progress at its step ceiling.
         return agent.generate_report()
 
-    def read_file(self, file_path: str) -> str:
+    def read_file(self, file_path: str) -> "str | tuple[None, dict]":
         """Read and return the full contents of a file at the given file_path.
         Use to inspect source code, configs, or any text file before editing.
+        Large files are offloaded to the artifact store with a bounded preview
+        instead of flooding the context.
 
         Tags:
             file, filesystem, read, inspect, source, code, config
@@ -256,6 +397,8 @@ class ToolRegistry:
             return f"Error: file not found: {file_path}"
         except Exception as e:
             return f"Error reading {file_path}: {e}"
+        if len(content) > ARTIFACT_THRESHOLD:
+            return None, {"stdout": content, "ok": True}  # dispatcher offloads it
         return content
 
     def write_file(self, file_path: str, content: str) -> str:
@@ -279,10 +422,11 @@ class ToolRegistry:
             return f"Error writing {file_path}: {e}"
 
     @staticmethod
-    def read_article(url: str, timeout: float = 15.0) -> str:
+    def read_article(url: str, timeout: float = 15.0) -> "str | tuple[None, dict]":
         """Fetch a web page and return its content as clean markdown.
-        Returns at most ~6 000 tokens. Use when the user provides a URL or link
-        to an article, blog post, or documentation page.
+        Large pages are offloaded to the artifact store with a bounded preview
+        instead of flooding the context. Use when the user provides a URL or
+        link to an article, blog post, or documentation page.
 
         Tags:
             web, url, article, fetch, http, browse, documentation, link
@@ -291,7 +435,6 @@ class ToolRegistry:
             url: Full URL of the web page to fetch. Example: 'https://example.com/article'
             timeout: Seconds before the request is abandoned. Defaults to 15.0.
         """
-        MAX_CHARS = 24_000  # ~6 000 tokens; prevents context explosion from large pages
         try:
             resp = httpx.get(
                 url,
@@ -305,11 +448,16 @@ class ToolRegistry:
             h.ignore_images = True
             h.body_width = 0
             text = h.handle(resp.text)
-            if len(text) > MAX_CHARS:
+            if len(text) > ARTICLE_FETCH_MAX_CHARS:
+                # Sanity cap on a pathological page — guards fetch size, not fidelity
+                # within it (the kept portion still offloads losslessly below).
                 text = (
-                    text[:MAX_CHARS]
-                    + f"\n\n[...truncated — article exceeds {MAX_CHARS} chars]"
+                    text[:ARTICLE_FETCH_MAX_CHARS]
+                    + f"\n\n[...truncated — article exceeds {ARTICLE_FETCH_MAX_CHARS} "
+                    "chars]"
                 )
+            if len(text) > ARTIFACT_THRESHOLD:
+                return None, {"stdout": text, "ok": True}  # dispatcher offloads it
             return text
         except httpx.HTTPStatusError as e:
             return f"Error: HTTP {e.response.status_code} fetching {url}"

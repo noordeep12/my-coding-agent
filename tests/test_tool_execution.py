@@ -15,7 +15,6 @@ from my_coding_agent.engine.tool_execution import (
     MAX_TOOL_OUTPUT_CHARS,
     TOOL_SCHEMA_VERSION,
     ToolExecutor,
-    _extract_summary,
     args,
     build_tool_result,
     output,
@@ -28,26 +27,6 @@ from my_coding_agent.engine.tool_execution.output import (
 )
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 from my_coding_agent.observability import current_session_id
-
-
-def test_extract_summary_prefers_summary_tags():
-    content = (
-        "Here's a thinking process:\n1. analyze...\n2. write it\n"
-        "<summary>Command succeeded (exit 0); fetched the KEV catalog.</summary>"
-    )
-    assert _extract_summary(content) == (
-        "Command succeeded (exit 0); fetched the KEV catalog."
-    )
-
-
-def test_extract_summary_strips_think_blocks_when_no_summary_tag():
-    content = "<think>let me reason about this</think>The build passed cleanly."
-    assert _extract_summary(content) == "The build passed cleanly."
-
-
-def test_extract_summary_passes_through_clean_content():
-    assert _extract_summary("  Just the summary.  ") == "Just the summary."
-
 
 # --- canonical tool-output schema ---------------------------------------------
 
@@ -381,6 +360,13 @@ def test_executor_defaults_to_empty_toolset(bare_llm):
     assert executor.registry._tools == []
 
 
+def test_executor_forwards_llm_to_registry(bare_llm):
+    """The registry must receive the executor's LLM client (design D5) so
+    read_tool_artifact can make its bounded extraction call."""
+    executor = ToolExecutor({"tool_calls": []}, bare_llm)
+    assert executor.registry._llm is bare_llm
+
+
 # ── artifact preview: bounded excerpt + skim guidance in `output` ─────────────
 
 
@@ -623,6 +609,7 @@ def test_executor_writes_artifacts_under_each_session_dir(
     # read_tool_artifact scoped to sessA cannot retrieve sessB's file.
     token = current_session_id.set("sessA")
     try:
-        assert "no artifact found" in ToolsRegistry().read_tool_artifact("callB")
+        out = ToolsRegistry().read_tool_artifact("callB", "anything")
+        assert "no artifact found" in out
     finally:
         current_session_id.reset(token)

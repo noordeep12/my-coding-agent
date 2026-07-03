@@ -39,6 +39,10 @@ class _Graph:
         root_id: ID of the session root node; every added node parents to it.
         agent: Owning session id stamped onto every node.
         base_depth: Depth of this session's root; pipeline nodes sit one deeper.
+        call_index: LLM call ordinal → node id, so a tool_call event's
+            ``child_llm_calls`` (LLM calls made inside that tool's own
+            implementation, e.g. read_tool_artifact's extraction call) can be
+            re-parented under that exact tool node once both are known.
     """
 
     root_id: str
@@ -46,6 +50,7 @@ class _Graph:
     base_depth: int = 0
     nodes: dict[str, TraceNode] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
+    call_index: dict[int, str] = field(default_factory=dict)
 
     def add_root(self, node: TraceNode) -> None:
         """Register the root node and start the execution order.
@@ -316,10 +321,43 @@ def _build_step_nodes(
         node_id, node = built
         graph.add(node_id, node, step=step)
 
+        if node.type == "llm_call":
+            call_num = ev.get("call")
+            if call_num is not None:
+                graph.call_index[call_num] = node_id
+
         if node.type == "tool_call":
+            _reparent_child_llm_calls(node_id, node, ev.get("child_llm_calls"), graph)
+
             child_sid = node.attributes.get("child_session_id")
             if child_sid and child_sid not in seen:
-                _embed_child_session(child_sid, graph, seen, session_dir)
+                _embed_child_session(child_sid, graph, seen, session_dir, node_id)
+
+
+def _reparent_child_llm_calls(
+    tool_node_id: str,
+    tool_node: TraceNode,
+    call_numbers: list[int] | None,
+    graph: _Graph,
+) -> None:
+    """Nest LLM calls a tool made internally under that tool's own node.
+
+    ``call_numbers`` are the ordinals the recorder stashed while the tool was
+    dispatching (e.g. read_tool_artifact's bounded ``artifact_query``
+    extraction call). Each was already added as a flat, root-parented
+    ``llm_call`` node earlier in this same event stream (LLM calls happen
+    inside the tool's implementation, before its own ``tool_call`` event is
+    emitted) — this re-parents it under the tool node instead, one level
+    deeper, so the Tree view nests it the same way a delegate's subagent
+    session nests under its ``delegate`` tool call.
+    """
+    for call_num in call_numbers or []:
+        child_id = graph.call_index.get(call_num)
+        child_node = graph.nodes.get(child_id) if child_id else None
+        if child_node is None:
+            continue
+        child_node.parent_id = tool_node_id
+        child_node.depth = tool_node.depth + 1
 
 
 # ── Per-event-type node builders (dispatched via _EVENT_BUILDERS) ─────────────
@@ -506,25 +544,36 @@ def _embed_child_session(
     graph: _Graph,
     seen: set[str],
     session_dir: Path,
+    parent_tool_id: str,
 ) -> None:
     """Load a delegate child session and graft its nodes into *graph*.
 
     The child's nodes are appended to the parent's execution order right after
     the delegating ``tool_call`` node, so the sub-agent's trace appears inline.
-    They arrive one call-tree level deeper, carrying their own ``agent`` id and
-    their own per-agent ``ctx_state`` (computed by the recursive load).
+    The child's root is explicitly re-parented to that ``tool_call`` node
+    (``parent_tool_id``) so the Tree view nests the whole sub-agent under the
+    exact ``delegate`` call that spawned it — the same mechanism
+    ``_reparent_child_llm_calls`` uses to nest a tool's internal LLM calls
+    under its own node. They arrive one call-tree level deeper, carrying their
+    own ``agent`` id and their own per-agent ``ctx_state`` (computed by the
+    recursive load).
 
     Args:
         child_sid: Session ID of the spawned sub-agent.
         graph: Mutable graph accumulator to extend.
         seen: Recursion guard.
         session_dir: Parent session directory (child is a sibling directory).
+        parent_tool_id: Node id of the delegating ``tool_call`` (``delegate``).
     """
     child_dir = session_dir.parent / child_sid
     child_events = child_dir / "events.jsonl"
     child_session = load_session(child_events, _seen=seen, _depth=graph.base_depth + 1)
     graph.nodes.update(child_session.nodes)
     graph.order.extend(child_session.order)
+    if child_session.order:
+        child_root = graph.nodes.get(child_session.order[0])
+        if child_root is not None:
+            child_root.parent_id = parent_tool_id
 
 
 # ── Context-window composition ────────────────────────────────────────────────
