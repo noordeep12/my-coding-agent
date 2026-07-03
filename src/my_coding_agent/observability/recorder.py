@@ -31,6 +31,7 @@ REPORT = "report"
 SESSION_END = "session_end"
 TOKEN_TRACKING = "token_tracking"
 FINISH_CHECK = "finish_check"
+SUMMARIZER = "summarizer"
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -56,6 +57,7 @@ FULL_PAYLOAD_KINDS: set[str] = {
     "tool_router",
     "tool_output_summarizer",
     "tool_arg_correction",
+    "artifact_query",
 }
 
 
@@ -91,6 +93,12 @@ class Recorder:
         # Child session id stashed by ``delegate`` and attached to the next
         # ``delegate`` tool-call event for an exact parent→child link.
         self._pending_delegate_child: str | None = None
+        # LLM call numbers made *while* a tool is dispatching (e.g. the bounded
+        # extraction call inside ``read_tool_artifact``), attached to the tool's
+        # own event so the viewer can nest them under that exact tool call —
+        # the same "stash now, attach at after_tool" pattern as the delegate
+        # child link above.
+        self._pending_child_llm_calls: list[int] = []
 
     def _emit(self, event: dict[str, Any]) -> None:
         """Append one event row to ``events.jsonl``, serialized immediately.
@@ -149,6 +157,12 @@ class Recorder:
         viewer can show the exact input (conversation + available tools) the
         model saw. Other kinds keep neither, to bound the event-stream size.
         """
+        if self._pending is not None:
+            # A tool is currently dispatching (before_tool ran, after_tool has
+            # not) — this call happened inside that tool's own implementation
+            # (e.g. read_tool_artifact's extraction call), so it nests under
+            # the tool's event rather than the flat session chain.
+            self._pending_child_llm_calls.append(call)
         keep_payload = kind in FULL_PAYLOAD_KINDS
         self._emit(
             {
@@ -171,6 +185,7 @@ class Recorder:
     def before_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Pre-dispatch hook: stamp the start time. Returns args unchanged."""
         self._pending = (time.monotonic(), name)
+        self._pending_child_llm_calls = []
         return args
 
     def after_tool(self, name: str, args: dict[str, Any], result: str) -> str:
@@ -193,6 +208,11 @@ class Recorder:
         if name == "delegate" and self._pending_delegate_child is not None:
             event["child_session_id"] = self._pending_delegate_child
             self._pending_delegate_child = None
+        # Attach any LLM calls this tool made internally (e.g. read_tool_artifact's
+        # artifact_query extraction) so the tree nests them under this tool call.
+        if self._pending_child_llm_calls:
+            event["child_llm_calls"] = self._pending_child_llm_calls
+            self._pending_child_llm_calls = []
         self._emit(event)
         return result
 
@@ -237,6 +257,36 @@ class Recorder:
             {
                 "type": REPORT,
                 "content": content,
+                "started_at": _now(),
+            }
+        )
+
+    def record_summarizer(
+        self,
+        kind: str,
+        step: int,
+        triggered_by: str,
+        latency_s: float,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+    ) -> None:
+        """Record one ContextSummarizerNode invocation, linked to its trigger.
+
+        ``triggered_by`` names the pipeline node that fired the summarizer
+        (``finalize_step`` or ``context_guard``) so the viewer can nest the
+        summarizer node under it in the trace tree.
+        """
+        self._emit(
+            {
+                "type": SUMMARIZER,
+                "kind": kind,
+                "step": step,
+                "triggered_by": triggered_by,
+                "latency_s": round(latency_s, 4),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
                 "started_at": _now(),
             }
         )

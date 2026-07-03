@@ -44,6 +44,8 @@ def _make_agent(silent_logger, **overrides):
     agent.tool_records = []
     agent.handoff_records = []
     agent.elapsed_seconds = 0.0
+    agent.needs_handback = False
+    agent.handback_report = None
     # Held LLM client (composition). LLM.__init__ is network-free; swap in the
     # silent logger and set the state the agent loop reads off the client.
     agent.llm = LLM()
@@ -114,8 +116,12 @@ def _make_ctx(llm, messages=None, **kwargs):
     ctx.llm = llm
     ctx.messages = messages or []
     ctx.step_num = 1
+    ctx.max_steps = 10
     ctx.last_prompt_tokens = 0
     ctx.signal = "CONTINUE"
+    ctx.needs_handback = False
+    ctx.handback_report = None
+    ctx.handoff_content = None
     ctx.recorder = mock.Mock()
     for k, v in kwargs.items():
         setattr(ctx, k, v)
@@ -169,6 +175,9 @@ def _make_preflight_ctx(context_window, last_prompt_tokens=0, messages=None):
     ctx.signal = "CONTINUE"
     ctx.stop_reason = "max_steps"
     ctx.continuation_messages = []
+    ctx.needs_handback = False
+    ctx.handback_report = None
+    ctx.handoff_content = None
     ctx.recorder = mock.Mock()
     return ctx
 
@@ -199,13 +208,54 @@ def test_preflight_stop_when_context_exhausted():
     assert ctx.stop_reason == "context_limit"
 
 
-def test_preflight_reset_triggers_spawn():
+def test_preflight_reset_triggers_spawn(mocker):
     ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=800)
+    mocker.patch.object(
+        ctx.llm,
+        "chat_completion",
+        return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
+    )
     cont = [{"role": "assistant", "content": "done"}]
     node = ContextGuardNode(spawn_fn=lambda: cont)
     node.run(ctx)
     assert ctx.signal == "RESET"
     assert ctx.continuation_messages == cont
+    # The handoff summary is produced in-pipeline by ContextSummarizerNode
+    # (triggered by the guard) before the continuation is spawned.
+    assert ctx.handoff_content == "handoff summary"
+    ctx.recorder.record_summarizer.assert_called_once()
+    assert (
+        ctx.recorder.record_summarizer.call_args.kwargs["triggered_by"]
+        == "context_guard"
+    )
+
+
+def test_preflight_context_limit_synthesizes_handback(mocker):
+    """A context-limit stop on a delegated run synthesizes the hand-back report."""
+    ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=1000)
+    ctx.needs_handback = True
+    mocker.patch.object(
+        ctx.llm,
+        "chat_completion",
+        return_value=_Resp({"choices": [{"message": {"content": "synth report"}}]}),
+    )
+    ContextGuardNode().run(ctx)
+    assert ctx.signal == "STOP"
+    assert ctx.stop_reason == "context_limit"
+    assert ctx.handback_report == "synth report"
+    kwargs = ctx.recorder.record_summarizer.call_args.kwargs
+    assert kwargs["kind"] == "report"
+    assert kwargs["triggered_by"] == "context_guard"
+
+
+def test_preflight_context_limit_standalone_skips_synthesis(mocker):
+    """A standalone run pays no report synthesis on a context-limit stop."""
+    ctx = _make_preflight_ctx(context_window=1000, last_prompt_tokens=1000)
+    chat = mocker.patch.object(ctx.llm, "chat_completion")
+    ContextGuardNode().run(ctx)
+    assert ctx.signal == "STOP"
+    chat.assert_not_called()
+    ctx.recorder.record_summarizer.assert_not_called()
 
 
 def test_preflight_reset_without_spawn_fn_stops():
@@ -227,6 +277,67 @@ def test_preflight_estimates_tokens_when_no_last_prompt():
     # len(json.dumps(messages)) // 2 is well over 1000 → hard stop.
     ContextGuardNode().run(ctx)
     assert ctx.signal == "STOP"
+
+
+# --- step-ceiling cutoff (FinalizeStepNode → ContextSummarizerNode) -----------
+
+
+def _make_cutoff_resp(finish_reason="tool_calls"):
+    return _Resp({"choices": [{"finish_reason": finish_reason}], "usage": {}})
+
+
+def test_finalize_step_ceiling_sets_explicit_stop(mocker):
+    """The final permitted step with the model still going is an explicit cutoff."""
+    llm = LLM()
+    llm.context_window = 1000
+    chat = mocker.patch.object(llm, "chat_completion")
+    ctx = _make_ctx(llm)
+    ctx.step_num = ctx.max_steps
+    ctx.last_response = _make_cutoff_resp()
+    FinalizeStepNode().run(ctx)
+    assert ctx.signal == "STOP"
+    assert ctx.stop_reason == "max_steps"
+    # Standalone run: no hand-back owed, so no synthesis is paid.
+    chat.assert_not_called()
+    ctx.recorder.record_summarizer.assert_not_called()
+
+
+def test_finalize_step_ceiling_synthesizes_handback(mocker):
+    """A delegated run's cutoff triggers report synthesis from FinalizeStepNode."""
+    llm = LLM()
+    llm.context_window = 1000
+    mocker.patch.object(
+        llm,
+        "chat_completion",
+        return_value=_Resp({"choices": [{"message": {"content": "synth report"}}]}),
+    )
+    ctx = _make_ctx(llm)
+    ctx.step_num = ctx.max_steps
+    ctx.needs_handback = True
+    ctx.last_response = _make_cutoff_resp()
+    FinalizeStepNode().run(ctx)
+    assert ctx.signal == "STOP"
+    assert ctx.stop_reason == "max_steps"
+    assert ctx.handback_report == "synth report"
+    kwargs = ctx.recorder.record_summarizer.call_args.kwargs
+    assert kwargs["kind"] == "report"
+    assert kwargs["triggered_by"] == "finalize_step"
+
+
+def test_finalize_clean_stop_on_final_step_skips_synthesis(mocker):
+    """A clean finish on the last permitted step is not a cutoff."""
+    llm = LLM()
+    llm.context_window = 1000
+    chat = mocker.patch.object(llm, "chat_completion")
+    ctx = _make_ctx(llm)
+    ctx.step_num = ctx.max_steps
+    ctx.needs_handback = True
+    ctx.last_response = _make_cutoff_resp(finish_reason="stop")
+    FinalizeStepNode().run(ctx)
+    assert ctx.signal == "STOP"
+    assert ctx.stop_reason == "stop"
+    chat.assert_not_called()
+    ctx.recorder.record_summarizer.assert_not_called()
 
 
 # --- run loop ----------------------------------------------------------------
@@ -541,6 +652,48 @@ def test_generate_report_uses_reasoning_when_content_empty(silent_logger, mocker
     agent.recorder.record_report.assert_called_once_with(
         "I fetched the data: 1631 CVEs."
     )
+
+
+# --- final_assistant_text ------------------------------------------------------
+
+
+def test_final_assistant_text_returns_content(silent_logger):
+    agent = _make_agent(
+        silent_logger,
+        messages=[
+            {"role": "user", "content": "t"},
+            {"role": "assistant", "content": "the report"},
+            {"role": "tool", "content": "ignored"},
+        ],
+    )
+    assert agent.final_assistant_text() == "the report"
+
+
+def test_final_assistant_text_falls_back_to_reasoning(silent_logger):
+    agent = _make_agent(
+        silent_logger,
+        messages=[
+            {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "reasoned report",
+            }
+        ],
+    )
+    assert agent.final_assistant_text() == "reasoned report"
+
+
+def test_final_assistant_text_no_assistant_message(silent_logger):
+    agent = _make_agent(silent_logger, messages=[{"role": "user", "content": "t"}])
+    assert agent.final_assistant_text() == ""
+
+
+def test_final_assistant_text_both_fields_empty(silent_logger):
+    agent = _make_agent(
+        silent_logger,
+        messages=[{"role": "assistant", "content": None, "reasoning_content": ""}],
+    )
+    assert agent.final_assistant_text() == ""
 
 
 # --- _print_summary ----------------------------------------------------------

@@ -6,6 +6,11 @@ from pathlib import Path
 
 ROUTER = "router"
 
+# Finish reasons that mark a clean, model-terminated final turn (a non-tool
+# assistant message). Shared by FinalizeStepNode's finish check and delegate()'s
+# hand-back branch so the two can never drift.
+CLEAN_FINISH_REASONS = frozenset({"stop", "exit", "quit"})
+
 
 @dataclass
 class ContextHandoff:

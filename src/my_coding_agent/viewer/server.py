@@ -105,8 +105,21 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 
 /* ── tree ── */
 .tree{display:flex;flex-direction:column;gap:1px}
-.agroup-body{display:flex;flex-direction:column;gap:1px;padding-left:16px}
-.agroup.sub>.agroup-body{border-left:2px solid var(--sub);margin-left:9px;padding-left:7px}
+/* Every group draws a guide line down its left edge, connecting it to each of
+   its direct children (a parent→child link, not just indentation); a small
+   horizontal tick on each child row reaches back to that line. Subagent
+   groups keep the line in the sub accent color; everything else (a step's own
+   pipeline, or a tool's nested LLM call, e.g. read_tool_artifact→artifact_query)
+   uses a neutral one. */
+.agroup-body{display:flex;flex-direction:column;gap:1px;margin-left:9px;padding-left:16px;
+  border-left:1.5px solid var(--line);position:relative}
+.agroup.sub>.agroup-body{border-left-color:var(--sub)}
+.agent-head,.tleaf{position:relative}
+.agroup-body>.agroup>.agent-head::before,
+.agroup-body>.tleaf::before{
+  content:'';position:absolute;left:-16px;top:50%;width:13px;height:0;
+  border-top:1.5px solid var(--line);pointer-events:none}
+.agroup-body>.agroup.sub>.agent-head::before{border-top-color:var(--sub)}
 .agent-head{display:flex;align-items:center;gap:9px;padding:7px 12px;border-radius:8px;cursor:pointer}
 .agent-head:hover{background:var(--bg2)}
 .agent-head.sel{background:var(--accent-soft)}
@@ -120,6 +133,8 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tleaf-badges{display:flex;gap:5px;align-items:center;flex:none;overflow:hidden}
 .tleaf-sub{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:40px}
 .tleaf-sub.neg{color:var(--neg)}
+
+/* Detail-panel Section accordion (Outputs/Inputs/Attributes). */
 .twist{display:inline-block;transition:transform .12s;color:var(--muted);font-size:10px}
 .twist.open{transform:rotate(90deg)}
 
@@ -277,6 +292,7 @@ const TYPE_META = {
   tool_call:      { name:'Tool Dispatch',     dot:'#a05cf0' },
   handoff:        { name:'Context Guard',     dot:'#ff453a' },
   report:         { name:'Subagent Report',   dot:'#5e5ce6' },
+  summarizer:     { name:'Context Summarizer',dot:'#d9a800' },
   finalize_step:  { name:'Finalize Step',     dot:'#1aa3c4' },
   session_end:    { name:'Session End',       dot:'#8e8e93' },
 };
@@ -481,29 +497,48 @@ const TREE_BADGE = new Set(['name','ok','err','lat','art','trunc','phase','count
 const treeBadges = node => nodeBadges(node).filter(x=>TREE_BADGE.has(x.c));
 
 function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
-  // Keep the selected node reachable: expand its owning agent if collapsed.
+  // Keep the selected node reachable: expand every ancestor group (walking the
+  // real parent_id chain — a delegate's subagent session, or an LLM call
+  // nested under the tool that made it, e.g. read_tool_artifact's
+  // artifact_query extraction) that is currently collapsed.
   useEffect(()=>{
-    const n = data.nodes[sel];
-    if(n && collapsed.has(n.agent)){ const c=new Set(collapsed); c.delete(n.agent); setCollapsed(c); }
+    const toOpen = [];
+    let n = data.nodes[sel];
+    while(n && n.parent_id){
+      n = data.nodes[n.parent_id];
+      if(n) toOpen.push(n.id);
+    }
+    if(toOpen.some(id=>collapsed.has(id))){
+      const c = new Set(collapsed);
+      toOpen.forEach(id=>c.delete(id));
+      setCollapsed(c);
+    }
   },[sel]);
 
-  // Build a nested forest from each node's depth: a `session` node opens an
-  // agent group whose members are the following deeper nodes (recursive).
-  const visible = data.order.map(id=>data.nodes[id])
-    .filter(n=>n && (n.type==='session' || !hidden.has(n.type)));
-  let i = 0;
-  const build = minDepth=>{
-    const out=[];
-    while(i<visible.length){
-      const n = visible[i];
-      if(n.depth < minDepth) break;
-      if(n.type==='session'){ i++; out.push({node:n, children:build(n.depth+1)}); }
-      else { i++; out.push({node:n, children:null}); }
-    }
-    return out;
-  };
-  const forest = build(0);
-  const toggle = a=>{ const c=new Set(collapsed); c.has(a)?c.delete(a):c.add(a); setCollapsed(c); };
+  // Build a real forest from each node's `parent_id` (not just depth/order):
+  // any node can have children — a delegate's subagent session root nests
+  // under its `delegate` tool_call, an LLM call a tool makes internally
+  // (e.g. read_tool_artifact's artifact_query) nests under that tool's node,
+  // and a triggered ContextSummarizerNode nests under its triggering node
+  // (finalize_step / context_guard) with its own LLM call beneath it.
+  const visibleIds = data.order.filter(id=>{
+    const n = data.nodes[id];
+    return n && (n.type==='session' || !hidden.has(n.type));
+  });
+  const visible = new Set(visibleIds);
+  const childrenOf = new Map();
+  for(const id of visibleIds){
+    const pid = data.nodes[id].parent_id;
+    const key = visible.has(pid) ? pid : null;
+    if(!childrenOf.has(key)) childrenOf.set(key, []);
+    childrenOf.get(key).push(id);
+  }
+  const build = parentId => (childrenOf.get(parentId)||[]).map(id=>{
+    const kids = childrenOf.get(id);
+    return {node:data.nodes[id], children: kids && kids.length ? build(id) : null};
+  });
+  const forest = build(null);
+  const toggle = id=>{ const c=new Set(collapsed); c.has(id)?c.delete(id):c.add(id); setCollapsed(c); };
 
   return html`<div class="tree">
     <${TreeNodes} entries=${forest} data=${data} sel=${sel} onSel=${onSel}
@@ -513,21 +548,32 @@ function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){
 
 function TreeNodes({entries,data,sel,onSel,collapsed,toggle}){
   return html`${entries.map(e=> e.children!=null
-    ? html`<${AgentGroup} key=${e.node.id} node=${e.node} kids=${e.children} data=${data}
+    ? html`<${TreeGroup} key=${e.node.id} node=${e.node} kids=${e.children} data=${data}
               sel=${sel} onSel=${onSel} collapsed=${collapsed} toggle=${toggle}/>`
     : html`<${TreeLeaf} key=${e.node.id} node=${e.node} sel=${sel} onSel=${onSel}/>`)}`;
 }
 
-function AgentGroup({node,kids,data,sel,onSel,collapsed,toggle}){
-  const isMain = node.agent===data.session_id;
-  const open = !collapsed.has(node.agent);
-  const name = isMain ? node.label : 'Subagent '+node.agent.slice(0,8);
-  return html`<div class=${'agroup'+(isMain?'':' sub')}>
-    <div class=${'agent-head'+(node.id===sel?' sel':'')}>
-      <span class=${'twist'+(open?' open':'')} onClick=${()=>toggle(node.agent)}>▸</span>
+// Any node with children renders as a collapsible group — a `session` node
+// (delegate's subagent, badged "Subagent <id>") or any other node whose
+// dispatch nested LLM calls under it (e.g. a `tool_call` for
+// read_tool_artifact nesting its artifact_query extraction call). Collapse
+// state is keyed by the node's own id, so nested groups toggle independently.
+function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
+  const isSubagentRoot = node.type==='session' && node.agent!==data.session_id;
+  const open = !collapsed.has(node.id);
+  const name = node.type==='session'
+    ? (isSubagentRoot ? 'Subagent '+node.agent.slice(0,8) : node.label)
+    : meta(node.type).name;
+  const badges = node.type==='session' ? [] : treeBadges(node);
+  const onRowClick = ()=>{ onSel(node.id); toggle(node.id); };
+  return html`<div class=${'agroup'+(isSubagentRoot?' sub':'')}>
+    <div class=${'agent-head'+(node.id===sel?' sel':'')} onClick=${onRowClick}>
       <span class="row-dot sm" style=${{background:meta(node.type).dot}}></span>
-      <span class="agent-name" onClick=${()=>onSel(node.id)}>${name}</span>
-      ${isMain ? null : html`<span class="sub-tag">subagent</span>`}
+      <span class="agent-name">${name}</span>
+      ${badges.length ? html`<span class="tleaf-badges">
+        ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge sm '+x.c}>${x.t}</span>`)}
+      </span>` : null}
+      ${isSubagentRoot ? html`<span class="sub-tag">subagent</span>` : null}
     </div>
     ${open ? html`<div class="agroup-body">
       <${TreeNodes} entries=${kids} data=${data} sel=${sel} onSel=${onSel}

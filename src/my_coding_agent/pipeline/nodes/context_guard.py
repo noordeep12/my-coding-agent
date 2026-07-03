@@ -8,6 +8,7 @@ from typing import Any, Callable
 from ...utils import get_logger
 from ..context import RunContext
 from ..node import BaseNode
+from .context_summarizer import ContextSummarizerNode
 
 _logger = get_logger(__name__)
 
@@ -15,9 +16,12 @@ _logger = get_logger(__name__)
 class ContextGuardNode(BaseNode):
     """Check the context-window usage ratio and signal STOP or RESET as needed.
 
-    When the ratio hits 100 % the node sets signal=STOP (context exhausted).
-    When it crosses context_reset_threshold it calls spawn_fn to produce a
-    continuation agent, stores the result in ctx.continuation_messages, and
+    When the ratio hits 100 % the node sets signal=STOP (context exhausted),
+    first triggering ``ContextSummarizerNode`` for the hand-back report when
+    the run owes one to a delegating parent. When it crosses
+    context_reset_threshold it triggers ``ContextSummarizerNode`` for the
+    handoff summary (→ ``ctx.handoff_content``), then calls spawn_fn to produce
+    a continuation agent, stores the result in ctx.continuation_messages, and
     sets signal=RESET so the pipeline engine returns those messages.
 
     Args:
@@ -37,6 +41,12 @@ class ContextGuardNode(BaseNode):
     ) -> None:
         self._spawn_fn = spawn_fn
         self._t_start = t_start
+        self._handoff_summarizer = ContextSummarizerNode(
+            kind="handoff", triggered_by=self.name
+        )
+        self._report_summarizer = ContextSummarizerNode(
+            kind="report", triggered_by=self.name
+        )
 
     def run(self, ctx: RunContext) -> None:
         if not ctx.llm.context_window:
@@ -54,6 +64,8 @@ class ContextGuardNode(BaseNode):
                 ctx.llm.context_window,
                 ctx_pct * 100,
             )
+            if ctx.needs_handback:
+                self._report_summarizer.run(ctx)
             ctx.signal = "STOP"
             return
 
@@ -71,6 +83,7 @@ class ContextGuardNode(BaseNode):
                 ctx.signal = "STOP"
                 return
 
+            self._handoff_summarizer.run(ctx)
             ctx.continuation_messages = self._spawn_fn()
             ctx.signal = "RESET"
             return

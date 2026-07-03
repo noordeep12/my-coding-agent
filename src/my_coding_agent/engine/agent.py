@@ -13,6 +13,11 @@ from ..observability import Recorder, current_session_id
 from ..observability.recorder import current_recorder
 from ..pipeline.context import RunContext
 from ..pipeline.node import BaseNode
+from ..pipeline.nodes.context_summarizer import (
+    HANDOFF_PROMPT,
+    REPORT_PROMPT,
+    summarize_conversation,
+)
 from ..pipeline.schema import ContextHandoff
 from ..utils import (
     attach_session_log,
@@ -21,41 +26,11 @@ from ..utils import (
     print_banner,
     print_run_summary,
 )
-from ..utils.parsing import extract_message
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
 # and delegated subagents, so all three run with the same ceiling.
 DEFAULT_MAX_STEPS = 50
-
-_HANDOFF_PROMPT = (
-    "CONTEXT RESET REQUIRED: your context window is nearly full. "
-    "Before the reset, write a structured handoff so the continuation agent "
-    "can pick up exactly where you left off.\n\n"
-    "Include ALL of the following:\n"
-    "1. **Original task** — what was asked\n"
-    "2. **Progress** — what you have completed so far (be specific)\n"
-    "3. **Files created/modified** — list each file and what it contains\n"
-    "4. **Key decisions** — important choices made and why\n"
-    "5. **Remaining work** — exactly what still needs to be done, in order\n"
-    "6. **Critical context** — any state the next agent must know "
-    "to continue correctly\n\n"
-    "Be exhaustive. This will be the ONLY context the continuation agent starts with."
-)
-
-_REPORT_PROMPT = (
-    "Your task is complete. Write your final report now, as plain text, for the "
-    "agent that delegated this task to you. Do NOT call any tools and do NOT "
-    "continue working — respond with the report text only.\n\n"
-    "Include:\n"
-    "1. **Task** — what you were asked to do\n"
-    "2. **Findings** — the key results, answers, and evidence you gathered "
-    "(be specific: file paths, names, values, quotes)\n"
-    "3. **Conclusion** — a direct answer to the task\n\n"
-    "Be concise and self-contained: the delegating agent sees only this report, "
-    "not your conversation. Do not describe remaining work or a continuation — "
-    "this is your final output."
-)
 
 
 class AgentNode(BaseNode):
@@ -78,6 +53,7 @@ class AgentNode(BaseNode):
         tools: list[dict[str, Any]] | None = None,
         label: str = "Agent",
         context_reset_threshold: float = 0.75,
+        needs_handback: bool = False,
     ) -> None:
         """Initialize the agent, open a session log, and build the LLM client.
 
@@ -106,6 +82,8 @@ class AgentNode(BaseNode):
         self.handoff_records: list = []
         self.elapsed_seconds: float = 0.0
         self.last_prompt_tokens: int = 0
+        self.needs_handback = needs_handback
+        self.handback_report: str | None = None
         self.logger.info(
             "%s initialized with %d messages and %d tools",
             label,
@@ -135,6 +113,7 @@ class AgentNode(BaseNode):
         self.handoff_records = []
         self.llm.llm_calls = []
         self.last_prompt_tokens = 0
+        self.handback_report = None
 
         t_start = time.monotonic()
         self.recorder.start(self.label, self.llm.model, self.llm.context_window)
@@ -162,6 +141,7 @@ class AgentNode(BaseNode):
             recorder=self.recorder,
             messages=self.messages,
             last_prompt_tokens=self.last_prompt_tokens,
+            needs_handback=self.needs_handback,
         )
 
         def _spawn_fn() -> list[dict[str, Any]]:
@@ -197,59 +177,61 @@ class AgentNode(BaseNode):
         self.handoff_records = ctx.handoff_records
         self.tool_artifacts = ctx.tool_artifacts
         self.last_prompt_tokens = ctx.last_prompt_tokens
+        self.handback_report = ctx.handback_report
         self.elapsed_seconds = time.monotonic() - t_start
 
-    def _summarize_conversation(self, prompt: str, kind: str) -> str:
-        """Summarize the running conversation via one tool-free LLM call.
+    def final_assistant_text(self) -> str:
+        """Return the last assistant message's text, or empty string.
 
-        Appends *prompt* as a user turn to the current messages and issues a
-        single chat completion with no tools, tagged *kind*, returning the
-        assistant text. Shared by the context-reset handoff and the subagent
-        end-of-turn report so both go through one summarization path.
-
-        Args:
-            prompt: Instruction appended as the final user message.
-            kind: Call-kind tag for token accounting and the trace.
-
-        Returns:
-            The assistant's summary text (empty string if none was produced).
+        Applies the same fallback as summarization: use ``content``, else
+        ``reasoning_content`` when a reasoning model left ``content`` empty.
+        Used by ``delegate`` to hand back a cleanly finished subagent's final
+        turn verbatim instead of paying a full-conversation summarization.
         """
-        summary_messages = self.messages + [{"role": "user", "content": prompt}]
-        resp = self.llm.chat_completion(summary_messages, tools=[], kind=kind)
-        message = extract_message(resp)
-        # Reasoning models (e.g. Qwen3-thinking) often end the summary turn with a
-        # tool call or bare thinking, leaving ``content`` empty while the actual
-        # summary lives in ``reasoning_content``. Fall back to it so the summary is
-        # never lost to an empty ``content`` field.
-        content = message.get("content") or ""
-        if not content.strip():
-            content = message.get("reasoning_content") or ""
-        return content
+        for msg in reversed(self.messages):
+            if msg.get("role") == "assistant":
+                content = msg.get("content") or ""
+                if not content.strip():
+                    content = msg.get("reasoning_content") or ""
+                return content
+        return ""
 
     def generate_report(self) -> str:
         """Summarize the whole run as a final report and record it as a node.
 
         Issues one tool-free LLM call over the full conversation with a
         report-specific prompt, records the result as a distinct report node,
-        and returns it. Reused by ``delegate`` so the main agent receives a
-        complete synthesized report rather than a scraped last message. Falls
-        back to a placeholder when the model returns nothing, so the caller
-        never receives an empty report.
+        and returns it. Out-of-pipeline fallback for ``delegate`` when the
+        pipeline produced no hand-back (e.g. an aborted run). Falls back to a
+        placeholder when the model returns nothing, so the caller never
+        receives an empty report.
 
         Returns:
             The final report text (never empty).
         """
         self.logger.info("Generating subagent report summary...")
-        content = self._summarize_conversation(_REPORT_PROMPT, "report")
+        content = summarize_conversation(
+            self.llm, self.messages, REPORT_PROMPT, "report"
+        )
         if not content.strip():
             content = "(subagent produced no report)"
         self.recorder.record_report(content)
         return content
 
-    def _generate_handoff(self, step_num: int, prompt_tokens: int) -> ContextHandoff:
-        """Ask the LLM to summarize current state, persist the handoff, return it."""
-        self.logger.info("Generating context handoff summary...")
-        content = self._summarize_conversation(_HANDOFF_PROMPT, "handoff")
+    def _generate_handoff(
+        self, step_num: int, prompt_tokens: int, content: str = ""
+    ) -> ContextHandoff:
+        """Persist the handoff summary (generating it only if not provided).
+
+        *content* normally arrives pre-produced by ``ContextSummarizerNode``
+        (triggered by ``ContextGuardNode``); the summarization here is a
+        fallback for callers that reach this path without the pipeline.
+        """
+        if not content.strip():
+            self.logger.info("Generating context handoff summary...")
+            content = summarize_conversation(
+                self.llm, self.messages, HANDOFF_PROMPT, "handoff"
+            )
         handoff = ContextHandoff(
             agent_label=self.label,
             step_num=step_num,
@@ -351,7 +333,9 @@ class AgentNode(BaseNode):
         ctx_tokens = ctx.last_prompt_tokens or len(json.dumps(ctx.messages)) // 2
         ctx_pct = ctx_tokens / ctx.llm.context_window if ctx.llm.context_window else 0.0
 
-        handoff = self._generate_handoff(ctx.step_num, ctx_tokens)
+        handoff = self._generate_handoff(
+            ctx.step_num, ctx_tokens, ctx.handoff_content or ""
+        )
         ctx.handoff_records.append(
             {
                 "step": ctx.step_num,
