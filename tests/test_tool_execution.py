@@ -150,7 +150,14 @@ def test_envelope_artifact_branch_uses_composed_error_and_exit_code():
     # branch attaches them verbatim (no stderr in metadata) and reads ok/exit_code.
     artifact = {"stdout": "x", "stderr": "err", "exit_code": 1, "ok": False}
     env = result_envelope(
-        "bash", "stdout preview", True, False, "c1", artifact, error="err"
+        "bash",
+        "stdout preview",
+        True,
+        False,
+        "c1",
+        artifact,
+        preview={"stdout": {"shown": 1, "total": 1}},
+        error="err",
     )
     assert env["ok"] is False
     assert env["output"] == "stdout preview"
@@ -158,6 +165,39 @@ def test_envelope_artifact_branch_uses_composed_error_and_exit_code():
     assert env["metadata"]["exit_code"] == 1
     assert "stderr" not in env["metadata"]
     assert env["metadata"]["artifact"] is True
+
+
+def test_envelope_structured_tuple_metadata_bag_merges_untouched():
+    # A structured-return tool (e.g. read_article) can carry its own metadata
+    # bag on the tuple's dict; it arrives in the envelope's metadata untouched,
+    # on both the offloaded and small-body (no preview) paths.
+    artifact = {
+        "stdout": "body",
+        "ok": True,
+        "metadata": {"content_type": "application/json", "transform": "none"},
+    }
+    env = result_envelope("read_article", "body", True, False, "c1", artifact)
+    assert env["metadata"]["content_type"] == "application/json"
+    assert env["metadata"]["transform"] == "none"
+    assert "artifact" not in env["metadata"]
+    assert "tool_call_id" not in env["metadata"]
+    assert "preview" not in env["metadata"]
+
+
+def test_envelope_structured_tuple_ok_false_not_sniffed_as_bash():
+    # A fetched JSON body containing an "ok" key must not be reinterpreted as
+    # the bash structured contract when the tool isn't bash.
+    env = result_envelope("read_article", '{"ok": false, "x": 1}', False, False, "c1")
+    assert env["ok"] is True
+    assert env["output"] == '{"ok": false, "x": 1}'
+
+
+def test_envelope_bash_ok_sniff_still_applies_to_bash():
+    raw = json.dumps({"ok": False, "stdout": "out", "stderr": "err", "exit_code": 1})
+    env = result_envelope("bash", raw, False, False, "c1")
+    assert env["ok"] is False
+    assert env["output"] == "out"
+    assert env["error"] == "err"
 
 
 # ── characterization: tool-call parsing (parse_tool_call) ─────────────────────
@@ -495,6 +535,83 @@ def test_executor_offloads_both_streams_separately(
     assert "ERRTAIL" not in env["error"] and "[Preview:" in env["error"]
     assert set(env["metadata"]["preview"]) == {"stdout", "stderr"}
     assert env["metadata"]["exit_code"] == 2
+
+
+def test_executor_offloads_large_json_fetch_with_disclosure(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """A large JSON read_article fetch offloads losslessly and the envelope
+    discloses content_type/transform without mislabeling small bodies."""
+    monkeypatch.chdir(tmp_path)
+    payload = {"note": "line1\\nline2", "big": "x" * (PREVIEW_MAX_CHARS + 500)}
+    body = json.dumps(payload)
+    mocker.patch.object(
+        ToolsRegistry,
+        "read_article",
+        staticmethod(
+            lambda url, timeout=15.0: (
+                None,
+                {
+                    "stdout": body,
+                    "ok": True,
+                    "metadata": {
+                        "content_type": "application/json",
+                        "transform": "none",
+                    },
+                },
+            )
+        ),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        env, _status, _record = _invoke(
+            bare_executor,
+            "call1",
+            "read_article",
+            {"url": "https://example.com/data.json"},
+            ToolsRegistry(),
+        )
+    finally:
+        current_session_id.reset(token)
+
+    art = tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.stdout.txt"
+    assert json.loads(art.read_text()) == payload
+    assert env["metadata"]["content_type"] == "application/json"
+    assert env["metadata"]["transform"] == "none"
+    assert env["metadata"]["artifact"] is True
+    assert env["ok"] is True
+
+
+def test_executor_small_verbatim_fetch_not_labeled_as_offloaded(bare_executor, mocker):
+    """A small structured-tuple return (no stream over the preview budget) must
+    not carry metadata.artifact — it was never actually offloaded."""
+    mocker.patch.object(
+        ToolsRegistry,
+        "read_article",
+        staticmethod(
+            lambda url, timeout=15.0: (
+                None,
+                {
+                    "stdout": '{"ok": false}',
+                    "ok": True,
+                    "metadata": {
+                        "content_type": "application/json",
+                        "transform": "none",
+                    },
+                },
+            )
+        ),
+    )
+    env, _status, _record = _invoke(
+        bare_executor,
+        "call1",
+        "read_article",
+        {"url": "https://example.com/data.json"},
+        ToolsRegistry(),
+    )
+    assert "artifact" not in env["metadata"]
+    assert env["ok"] is True
+    assert env["output"] == '{"ok": false}'
 
 
 def test_executor_inlines_small_stderr_when_stdout_offloaded(
