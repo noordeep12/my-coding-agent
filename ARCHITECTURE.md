@@ -195,7 +195,9 @@ Every module and sub-module owns a `schema.py` for its typed contracts and shape
 CLI (Click)
   │
   └── AgentNode (engine/agent.py)
-        System prompt: workspace state + tool list
+        System prompt: stable core (identity, tool-usage/safety rules, envelope
+          contract, environment facts) + trailing timestamp — no tool docs, no
+          repo state (tools reach the model only via the structured schema)
         User prompt: task from --prompt / --interactive / default
         Tools: all ToolRegistry methods
 ```

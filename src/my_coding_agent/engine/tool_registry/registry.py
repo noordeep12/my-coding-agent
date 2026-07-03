@@ -6,8 +6,10 @@ tools therefore stay simple and need not know about the schema.
 """
 
 import json
+import os
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -352,6 +354,7 @@ class ToolRegistry:
         from my_coding_agent.pipeline.schema import CLEAN_FINISH_REASONS
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
+        now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%Z)")
         system_prompt = (
             "You are a focused subagent working for a main coding assistant. "
             "You receive a task and context, and you have the same tools as the "
@@ -359,7 +362,13 @@ class ToolRegistry:
             "commands, fetch URLs for web/research, and gather context — then "
             "write a clear, structured report. The task may be code or file "
             "exploration, web research, or context gathering. Do NOT modify any "
-            "files. Be concise — the main agent only needs the key findings."
+            "files. Be concise — the main agent only needs the key findings.\n\n"
+            "Every tool returns JSON: "
+            '{"schema_version", "tool", "ok", "output", "error", "metadata"}. '
+            "When `ok` is true read `output`; when false read `error` (and "
+            "`metadata`) to recover.\n\n"
+            f"Working directory: {os.getcwd()}\n"
+            f"Current date and time: {now}"
         )
         agent = AgentNode(
             api_url=OMLX_API_URL,

@@ -9,7 +9,8 @@ Run::
 
 import inspect
 import os
-import subprocess
+import platform
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -26,6 +27,7 @@ from my_coding_agent import (
     __version__,
     tool,
 )
+from my_coding_agent.engine import OMLX_MODEL
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -33,36 +35,41 @@ _DEFAULT_PROMPT = (
 )
 
 
-def _git(*args: str) -> str:
-    """Run a git command (no shell) and return stripped stdout, or '' on failure."""
-    try:
-        result = subprocess.run(["git", *args], capture_output=True, text=True)
-    except (OSError, FileNotFoundError):
-        return ""
-    return result.stdout.strip()
-
-
-def _system_prompt(tools: list) -> str:
-    tool_docs = "\n".join(
-        f"  - {t['function']['name']}("
-        + ", ".join(t["function"]["parameters"]["properties"].keys())
-        + f") — {t['function']['description']}"
-        for t in tools
-    )
+def _system_prompt() -> str:
+    cwd = os.getcwd()
+    is_git_repo = os.path.isdir(os.path.join(cwd, ".git"))
+    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%Z)")
     return (
-        "You are a helpful coding assistant. Use tools when needed. "
-        "Use absolute paths when working with files. Running on macOS.\n\n"
-        f"Available tools:\n{tool_docs}\n\n"
-        "Every tool returns a JSON object: "
+        "You are a helpful coding assistant working in a terminal. Use tools to "
+        "get things done.\n\n"
+        "Tool usage:\n"
+        "- Use absolute paths when working with files.\n"
+        "- When several tool calls are independent, emit them together in one "
+        "assistant message.\n"
+        "- Every tool returns JSON: "
         '{"schema_version", "tool", "ok", "output", "error", "metadata"}. '
-        "Check `ok` to tell success from failure: when true, read `output`; when "
-        "false, read `error` (and `metadata`, e.g. `exit_code`) to recover.\n\n"
-        "Workspace:\n"
-        f"  path     : {os.getcwd()}\n"
-        f"  contents : {os.listdir(os.getcwd())}\n"
-        f"  git      : {_git('status', '--short') or 'clean'}\n"
-        f"  branch   : {_git('rev-parse', '--abbrev-ref', 'HEAD')}\n"
-        f"  commits  :\n{_git('log', '-5', '--oneline')}\n" + ""
+        "When `ok` is true read `output`; when false read `error` (and "
+        "`metadata`, e.g. `exit_code`) to recover.\n\n"
+        "Communication:\n"
+        "- Lead with the outcome: the first sentence of a final answer states "
+        "what happened or what you found. Be concise.\n\n"
+        "Safety:\n"
+        "- Ask the user before destructive operations (force-push, branch "
+        "deletion, rm -rf, history rewrites).\n"
+        "- Never stage or commit secrets: .env files, keys, tokens, "
+        "certificates, credentials.\n"
+        "- Commit messages use Conventional Commits: type(scope): description, "
+        "<=72 chars, present tense.\n"
+        "- Do only what the task asks; do not modify unrelated files.\n\n"
+        "If the context window nears its limit, the harness summarizes and "
+        "hands off automatically — work normally until then.\n\n"
+        "Environment:\n"
+        f"- Working directory: {cwd} (git repository: "
+        f"{'true' if is_git_repo else 'false'})\n"
+        f"- Platform: {platform.system()} {platform.release()}; "
+        f"shell: {os.environ.get('SHELL', 'unknown')}\n"
+        f"- Model: {OMLX_MODEL}\n\n"
+        f"Current date and time: {now}"
     )
 
 
@@ -159,7 +166,7 @@ def main(prompt: str | None, interactive: bool, max_steps: int) -> None:
     tools = _all_tools()
     agent = AgentNode(
         messages=[
-            {"role": "system", "content": _system_prompt(tools)},
+            {"role": "system", "content": _system_prompt()},
             {"role": "user", "content": user_prompt},
         ],
         tools=tools,
