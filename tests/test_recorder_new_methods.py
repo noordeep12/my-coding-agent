@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from my_coding_agent.observability.recorder import (
+    ANOMALY,
     FINISH_CHECK,
     HANDOFF,
     LLM_CALL,
@@ -233,3 +234,53 @@ class TestChildLlmCallLinking:
         events = [e for e in _read_events(path) if e["type"] == "tool_call"]
         assert events[0]["child_llm_calls"] == [1]
         assert "child_llm_calls" not in events[1]
+
+
+class TestRecordAnomaly:
+    def test_emits_correct_type_and_row_shape(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_anomaly(
+            kind="failure_streak",
+            streak_id="abc123-1",
+            signature="bash|json.decoder.JSONDecodeError",
+            tool_name="bash",
+            streak_len=3,
+            tokens_spent=41230,
+            step=7,
+        )
+        ev = _read_events(path)[-1]
+        assert ev["type"] == ANOMALY
+        assert ev["kind"] == "failure_streak"
+        assert ev["streak_id"] == "abc123-1"
+        assert ev["signature"] == "bash|json.decoder.JSONDecodeError"
+        assert ev["tool_name"] == "bash"
+        assert ev["streak_len"] == 3
+        assert ev["tokens_spent"] == 41230
+        assert ev["step"] == 7
+        assert "started_at" in ev
+
+    def test_rows_of_one_streak_share_streak_id(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_anomaly(
+            kind="failure_streak",
+            streak_id="abc123-1",
+            signature="bash|json.decoder.JSONDecodeError",
+            tool_name="bash",
+            streak_len=3,
+            tokens_spent=10000,
+            step=7,
+        )
+        rec.record_anomaly(
+            kind="failure_streak",
+            streak_id="abc123-1",
+            signature="bash|json.decoder.JSONDecodeError",
+            tool_name="bash",
+            streak_len=5,
+            tokens_spent=25000,
+            step=9,
+        )
+        events = [e for e in _read_events(path) if e["type"] == ANOMALY]
+        assert len(events) == 2
+        assert events[0]["streak_id"] == events[1]["streak_id"] == "abc123-1"
+        assert events[-1]["streak_len"] == 5
+        assert events[-1]["tokens_spent"] == 25000

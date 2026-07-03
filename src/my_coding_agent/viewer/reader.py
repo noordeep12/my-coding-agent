@@ -183,6 +183,9 @@ def load_session(
     for step_idx, group in enumerate(steps_groups):
         _build_step_nodes(group, graph, session_id, step_idx, seen, session_dir)
 
+    _add_anomaly_nodes(events, graph, session_id)
+    _flag_anomalies(graph.nodes, graph.order, events)
+
     if end_ev:
         end_id = f"{session_id}::session_end"
         graph.add(
@@ -896,6 +899,89 @@ def _detect_loops(nodes: dict[str, TraceNode]) -> None:
                 nodes[nid].loop_flag = True
 
 
+# ── Anomaly rendering ──────────────────────────────────────────────────────────
+
+
+def _latest_anomaly_by_streak(
+    events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Return the latest ``anomaly`` row per ``streak_id``, in first-seen order.
+
+    A streak emits one row per growth (D3); consumers keep only the last row
+    per ``streak_id`` since it carries the final, accumulated magnitude.
+    """
+    latest: dict[str, dict[str, Any]] = {}
+    for ev in events:
+        if ev.get("type") == "anomaly":
+            latest[ev.get("streak_id", "")] = ev
+    return latest
+
+
+def _add_anomaly_nodes(
+    events: list[dict[str, Any]], graph: _Graph, session_id: str
+) -> None:
+    """Add one trace node per detected streak, keeping only its latest row."""
+    for streak_id, ev in _latest_anomaly_by_streak(events).items():
+        node_id = f"{session_id}::anomaly::{streak_id}"
+        graph.add(
+            node_id,
+            _make_node(
+                id=node_id,
+                type="anomaly",
+                label="AnomalyDetectNode",
+                inputs={},
+                outputs={},
+                attributes={
+                    "kind": ev.get("kind", ""),
+                    "streak_id": streak_id,
+                    "signature": ev.get("signature", ""),
+                    "tool_name": ev.get("tool_name", ""),
+                    "streak_len": ev.get("streak_len", 0),
+                    "tokens_spent": ev.get("tokens_spent", 0),
+                    "started_at": ev.get("started_at", ""),
+                },
+            ),
+            step=ev.get("step"),
+        )
+
+
+def _is_failed_tool_result(result: str) -> bool:
+    """Return ``True`` when a tool_call event's raw JSON result reports failure."""
+    try:
+        parsed = json.loads(result)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(parsed, dict) and parsed.get("ok") is False
+
+
+def _flag_anomalies(
+    nodes: dict[str, TraceNode], order: list[str], events: list[dict[str, Any]]
+) -> None:
+    """Set ``anomaly_flag=True`` on each streak's failing ``tool_call`` nodes.
+
+    For each detected streak, walks the node order backwards from the end,
+    matching consecutive ``tool_call`` nodes by tool name and failed result
+    (D4's positional back-walk — ``tool_call`` events carry no ``tool_call_id``
+    to link exactly). Stops once ``streak_len`` nodes are flagged or a
+    non-matching ``tool_call`` node breaks the run.
+    """
+    for ev in _latest_anomaly_by_streak(events).values():
+        tool_name = ev.get("tool_name", "")
+        remaining = ev.get("streak_len", 0)
+        for node_id in reversed(order):
+            if remaining <= 0:
+                break
+            node = nodes[node_id]
+            if node.type != "tool_call":
+                continue
+            if node.attributes.get("name") != tool_name or not _is_failed_tool_result(
+                node.outputs.get("result", "")
+            ):
+                break
+            node.anomaly_flag = True
+            remaining -= 1
+
+
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
 
@@ -914,9 +1000,9 @@ def _compute_analytics(
     Returns:
         Dict with ``total_tokens``, ``total_prompt_tokens``,
         ``total_completion_tokens``, ``cost_usd``, ``elapsed_s``,
-        ``llm_call_count``, ``tool_call_count``, ``loop_count``, ``by_kind``
-        (tokens per call kind) and ``by_agent`` (per session id: tokens, wall
-        time, call count).
+        ``llm_call_count``, ``tool_call_count``, ``loop_count``,
+        ``anomaly_count``, ``by_kind`` (tokens per call kind) and ``by_agent``
+        (per session id: tokens, wall time, call count).
 
     Token totals cover every call kind (``main``, ``report``, ``handoff``,
     ``tool_router``, ``tool_arg_correction``, ``artifact_query``) across the
@@ -924,10 +1010,12 @@ def _compute_analytics(
     ``main`` calls only, for step semantics.
     """
     prompt_total = completion_total = 0
-    llm_count = tool_count = loop_count = 0
+    llm_count = tool_count = loop_count = anomaly_count = 0
     by_kind: dict[str, dict[str, int]] = {}
     by_agent: dict[str, dict[str, Any]] = {}
     for node in nodes.values():
+        if node.type == "anomaly":
+            anomaly_count += 1
         if node.type == "llm_call":
             kind = node.attributes.get("kind") or "main"
             prompt = node.attributes.get("prompt_tokens") or 0
@@ -965,6 +1053,7 @@ def _compute_analytics(
         "llm_call_count": llm_count,
         "tool_call_count": tool_count,
         "loop_count": loop_count,
+        "anomaly_count": anomaly_count,
         "by_kind": by_kind,
         "by_agent": by_agent,
     }

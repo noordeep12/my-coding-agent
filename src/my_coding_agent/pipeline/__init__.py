@@ -9,6 +9,7 @@ from .dag import Pipeline
 from .handoff import handoff_to_user_message, save_handoff
 from .node import BaseNode, Node
 from .nodes import (
+    AnomalyDetectNode,
     ContextGuardNode,
     FinalizeStepNode,
     LLMCallNode,
@@ -25,6 +26,7 @@ __all__ = [
     "ContextHandoff",
     "handoff_to_user_message",
     "save_handoff",
+    "AnomalyDetectNode",
     "ContextGuardNode",
     "FinalizeStepNode",
     "LLMCallNode",
@@ -37,7 +39,7 @@ __all__ = [
 def build_default_pipeline(
     spawn_fn: Callable[[], list[dict]] | None = None,
 ) -> Pipeline:
-    """Return a Pipeline with the standard 5-node agentic loop.
+    """Return a Pipeline with the standard 6-node agentic loop.
 
     Args:
         spawn_fn: Optional callable passed to ``ContextGuardNode`` for
@@ -51,6 +53,7 @@ def build_default_pipeline(
             ToolRoutingNode(),
             LLMCallNode(),
             ToolDispatchNode(),
+            AnomalyDetectNode(),
             FinalizeStepNode(),
         ]
     )

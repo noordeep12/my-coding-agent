@@ -5,6 +5,7 @@ from pathlib import Path
 
 from my_coding_agent.viewer.reader import (
     _detect_loops,
+    _flag_anomalies,
     _group_into_steps,
     _role_split,
     list_sessions,
@@ -1193,3 +1194,183 @@ class TestSummarizerNesting:
         assert f"{sid}::step1::summarizer" not in session.nodes
         llm = session.nodes[f"{sid}::step1::llm::2"]
         assert llm.parent_id == session.order[0]
+
+
+# ── Anomaly rendering ──────────────────────────────────────────────────────────
+
+
+def _failed_tool_call(name: str, command: str, started_at: str) -> dict:
+    result = json.dumps(
+        {"schema_version": 1, "tool": name, "ok": False, "output": "boom"}
+    )
+    return _ev(
+        "tool_call",
+        name=name,
+        args={"command": command},
+        result=result,
+        latency_s=0.1,
+        started_at=started_at,
+    )
+
+
+def _anomaly_row(streak_id: str, streak_len: int, step: int, tokens_spent: int) -> dict:
+    return _ev(
+        "anomaly",
+        kind="failure_streak",
+        streak_id=streak_id,
+        signature="bash|json.decoder.JSONDecodeError",
+        tool_name="bash",
+        streak_len=streak_len,
+        tokens_spent=tokens_spent,
+        step=step,
+        started_at=f"2026-01-01T10:00:0{step}.9",
+    )
+
+
+def _streak_session_events(sid: str = "aabbccdd1234") -> list:
+    """A 3-step session where every step's tool call fails, growing one streak."""
+    events = [
+        _ev(
+            "session_start",
+            session_id=sid,
+            label="Test",
+            model="gpt-4o-mini",
+            context_window=8192,
+            started_at="2026-01-01T10:00:00",
+            parent_session_id=None,
+        )
+    ]
+    for step in range(1, 4):
+        events += [
+            _ev(
+                "router",
+                signal="go",
+                selected=["bash"],
+                phase="p1",
+                used_llm=False,
+                started_at=f"2026-01-01T10:00:0{step}",
+            ),
+            _ev(
+                "llm_call",
+                call=step,
+                kind="main",
+                latency_s=1.0,
+                prompt=10,
+                completion=5,
+                total=15,
+                context_window=8192,
+                messages=None,
+                response={"content": "", "reasoning": "", "tool_calls": [], "raw": {}},
+                started_at=f"2026-01-01T10:00:0{step}.1",
+            ),
+            _failed_tool_call("bash", f"cmd{step}", f"2026-01-01T10:00:0{step}.2"),
+            _anomaly_row("abc123-1", step, step, step * 15) if step >= 3 else None,
+            _ev(
+                "token_tracking",
+                step=step,
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                ctx_pct=1.0,
+                context_window=8192,
+                started_at=f"2026-01-01T10:00:0{step}.3",
+            ),
+            _ev(
+                "finish_check",
+                step=step,
+                finish_reason="tool_use",
+                signal="CONTINUE",
+                started_at=f"2026-01-01T10:00:0{step}.4",
+            ),
+        ]
+    events = [e for e in events if e is not None]
+    events.append(
+        _ev(
+            "session_end",
+            stop_reason="max_steps",
+            steps=3,
+            elapsed_s=1.0,
+            ended_at="2026-01-01T10:00:10",
+        )
+    )
+    return events
+
+
+class TestAnomalyRendering:
+    def _load(self, tmp_path, sid, events):
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        return load_session(ep)
+
+    def test_anomaly_node_created_with_final_magnitude(self, tmp_path):
+        sid = "aabbccdd1234"
+        session = self._load(tmp_path, sid, _streak_session_events(sid))
+        node = session.nodes[f"{sid}::anomaly::abc123-1"]
+        assert node.type == "anomaly"
+        assert node.attributes["streak_len"] == 3
+        assert node.attributes["tokens_spent"] == 45
+        assert node.attributes["signature"] == "bash|json.decoder.JSONDecodeError"
+
+    def test_only_latest_row_kept_no_duplicate_nodes(self, tmp_path):
+        sid = "aabbccdd1234"
+        session = self._load(tmp_path, sid, _streak_session_events(sid))
+        anomaly_nodes = [n for n in session.nodes.values() if n.type == "anomaly"]
+        assert len(anomaly_nodes) == 1
+
+    def test_flags_exactly_the_streaks_tool_call_nodes(self, tmp_path):
+        sid = "aabbccdd1234"
+        session = self._load(tmp_path, sid, _streak_session_events(sid))
+        tool_nodes = [n for n in session.nodes.values() if n.type == "tool_call"]
+        assert len(tool_nodes) == 3
+        assert all(n.anomaly_flag for n in tool_nodes)
+
+    def test_analytics_anomaly_count(self, tmp_path):
+        sid = "aabbccdd1234"
+        session = self._load(tmp_path, sid, _streak_session_events(sid))
+        assert session.analytics["anomaly_count"] == 1
+
+    def test_session_without_anomaly_rows_unaffected(self, tmp_path):
+        sid = "aabbccdd1234"
+        session = self._load(tmp_path, sid, _minimal_events(sid))
+        assert not any(n.type == "anomaly" for n in session.nodes.values())
+        assert not any(n.anomaly_flag for n in session.nodes.values())
+        assert session.analytics["anomaly_count"] == 0
+
+
+class TestFlagAnomaliesUnit:
+    def test_stops_at_streak_len_even_with_more_matching_failures_earlier(self):
+        # Two failing bash nodes precede the streak's own 3, but the streak
+        # only claims the trailing 3 (streak_len=3), matching detection's
+        # consecutive-only semantics.
+        nodes = {
+            "a": _tool_node("a", "bash", {"command": "old1"}),
+            "b": _tool_node("b", "bash", {"command": "old2"}),
+            "c": _tool_node("c", "bash", {"command": "c1"}),
+            "d": _tool_node("d", "bash", {"command": "c2"}),
+            "e": _tool_node("e", "bash", {"command": "c3"}),
+        }
+        for n in nodes.values():
+            n.outputs = {"result": json.dumps({"ok": False})}
+        order = ["a", "b", "c", "d", "e"]
+        events = [_anomaly_row("s-1", 3, 1, 30)]
+        _flag_anomalies(nodes, order, events)
+        assert not nodes["a"].anomaly_flag
+        assert not nodes["b"].anomaly_flag
+        assert nodes["c"].anomaly_flag
+        assert nodes["d"].anomaly_flag
+        assert nodes["e"].anomaly_flag
+
+    def test_breaks_on_mismatching_tool_call(self):
+        nodes = {
+            "a": _tool_node("a", "bash", {"command": "c1"}),
+            "b": _tool_node("b", "read_file", {"path": "/x"}),
+        }
+        nodes["a"].outputs = {"result": json.dumps({"ok": False})}
+        nodes["b"].outputs = {"result": json.dumps({"ok": False})}
+        order = ["a", "b"]
+        events = [_anomaly_row("s-1", 2, 1, 30)]
+        _flag_anomalies(nodes, order, events)
+        assert not nodes["a"].anomaly_flag
+        assert not nodes["b"].anomaly_flag

@@ -41,6 +41,9 @@ class TraceNode:
             nested sub-agents. Drives the Tree view's indentation.
         loop_flag: ``True`` when this tool_call repeats an earlier (name, args)
             combination — signals a potential agent loop.
+        anomaly_flag: ``True`` when this tool_call is a member of a detected
+            same-class failure streak (``runtime-anomaly-detection``) — distinct
+            from and unrelated to ``loop_flag``.
         ctx_state: Per-node snapshot of the session context window after this
             node ran. Keys: ``tokens`` (current fill), ``window`` (max size),
             ``pct`` (fill percentage), ``composition`` (cumulative tokens per
@@ -60,6 +63,7 @@ class TraceNode:
     agent: str = ""
     depth: int = 0
     loop_flag: bool = False
+    anomaly_flag: bool = False
     ctx_state: dict[str, Any] = field(default_factory=dict)
 
 

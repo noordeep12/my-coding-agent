@@ -32,6 +32,7 @@ SESSION_END = "session_end"
 TOKEN_TRACKING = "token_tracking"
 FINISH_CHECK = "finish_check"
 SUMMARIZER = "summarizer"
+ANOMALY = "anomaly"
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -333,6 +334,37 @@ class Recorder:
                 "total_tokens": total_tokens,
                 "ctx_pct": round(ctx_pct, 1),
                 "context_window": context_window,
+                "started_at": _now(),
+            }
+        )
+
+    def record_anomaly(
+        self,
+        kind: str,
+        streak_id: str,
+        signature: str,
+        tool_name: str,
+        streak_len: int,
+        tokens_spent: int,
+        step: int,
+    ) -> None:
+        """Record one anomaly detection row (passive: reports what detection found).
+
+        ``streak_id`` is stable across the growth of one streak so later rows
+        with the same id supersede earlier ones for consumers keeping the
+        latest row per streak (the recorder itself does not dedupe or judge —
+        it only appends what it is told).
+        """
+        self._emit(
+            {
+                "type": ANOMALY,
+                "kind": kind,
+                "streak_id": streak_id,
+                "signature": signature,
+                "tool_name": tool_name,
+                "streak_len": streak_len,
+                "tokens_spent": tokens_spent,
+                "step": step,
                 "started_at": _now(),
             }
         )

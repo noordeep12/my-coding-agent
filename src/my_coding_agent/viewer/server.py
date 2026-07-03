@@ -104,6 +104,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .row-dot{width:11px;height:11px;border-radius:50%;flex:none}
 .row-dot.sm{width:8px;height:8px}
 .loop-tag{font-size:10px;font-weight:600;color:var(--amber);background:#fff3e6;border-radius:5px;padding:1px 6px}
+.anomaly-tag{font-size:10px;font-weight:600;color:var(--neg);background:var(--neg-bg);border-radius:5px;padding:1px 6px}
 
 /* ── tree ── */
 .tree{display:flex;flex-direction:column;gap:1px}
@@ -296,6 +297,7 @@ const TYPE_META = {
   report:         { name:'Subagent Report',   dot:'#5e5ce6' },
   summarizer:     { name:'Context Summarizer',dot:'#d9a800' },
   finalize_step:  { name:'Finalize Step',     dot:'#1aa3c4' },
+  anomaly:        { name:'Anomaly Detect',    dot:'#d70015' },
   session_end:    { name:'Session End',       dot:'#8e8e93' },
 };
 const meta = t => TYPE_META[t] || { name:t, dot:'#8e8e93' };
@@ -422,6 +424,7 @@ function Stats({data}){
       <span><b>${fmtNum(a.total_tokens||0)}</b> tokens</span>
       <span><b>${cost}</b></span>
       ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
+      ${a.anomaly_count ? html`<span class="warn">⚠ ${a.anomaly_count} anomaly(s)</span>` : null}
       ${data.stop_reason ? html`<span class="muted">stop: ${data.stop_reason}</span>` : null}
       ${hasBreakdown ? html`<button class="filter-btn" onClick=${()=>setOpen(!open)}>
         Breakdown</button>` : null}
@@ -487,6 +490,7 @@ function nodeBadges(node){
   else if(node.type==='llm_call' && a.kind && a.kind!=='main') b.push({t:a.kind, c:'name'});
   else if(node.type==='session' && a.model) b.push({t:a.model, c:'name'});
   else if(node.type==='session_end' && a.stop_reason) b.push({t:'stop: '+a.stop_reason, c:'stop'});
+  else if(node.type==='anomaly' && a.tool_name) b.push({t:a.tool_name, c:'name'});
   // 2. status — colored success/error
   if(r && r.ok===true) b.push({t:'✓ success', c:'ok'});
   else if(r && r.ok===false) b.push({t:'✗ error', c:'err'});
@@ -504,6 +508,7 @@ function nodeBadges(node){
     if(Array.isArray(tc) && tc.length) b.push({t:tc.length+' call'+(tc.length===1?'':'s'), c:'count'});
   }
   if(node.type==='session_end' && a.steps!=null) b.push({t:a.steps+' steps', c:'count'});
+  if(node.type==='anomaly' && a.streak_len!=null) b.push({t:a.streak_len+' fails', c:'count'});
   // 5. latency — de-emphasized (neutral)
   const lat = a.latency_s!=null ? a.latency_s : (node.type==='session_end' ? a.elapsed_s : null);
   if(lat!=null) b.push({t:'⚡ '+lat+'s', c:'lat'});
@@ -645,6 +650,7 @@ function Detail({node,mainAgent}){
         <span class="dbadge" style=${{background:m.dot}}>${nodeTitle(node)}</span>
         ${subAgent ? html`<span class="sub-tag">subagent ${subAgent.slice(0,8)}</span>` : null}
         ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
+        ${node.anomaly_flag ? html`<span class="anomaly-tag">anomaly</span>` : null}
       </div>
       ${badges.length ? html`<div class="badge-row">
         ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge '+x.c}>${x.t}</span>`)}
