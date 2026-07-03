@@ -93,7 +93,8 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 | `stderr.log` | Plain-text log of the full run |
 | `session_data.json` | Metrics, tool records, LLM call log, stop reason |
 | `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs) |
-| `tool_artifacts.json` | Full outputs for large tool results |
+| `artifacts/<tool_call_id>.<stream>.txt` | Full content of each offloaded large output stream (`stdout`/`stderr`), written at creation so bash can skim it during the run |
+| `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
 
 ### Trace Explorer
 
