@@ -303,16 +303,27 @@ def test_bash_at_threshold_boundary_returns_json(mocker):
 # --- read_article ------------------------------------------------------------
 
 
-def test_read_article_converts_html(mocker):
+def _mock_resp(mocker, text, content_type="text/html"):
     resp = mocker.Mock()
-    resp.text = "<h1>Title</h1><p>Body</p>"
+    resp.text = text
+    resp.headers = {"content-type": content_type} if content_type is not None else {}
     resp.raise_for_status = mocker.Mock()
+    return resp
+
+
+def test_read_article_converts_html(mocker):
+    resp = _mock_resp(mocker, "<h1>Title</h1><p>Body</p>", "text/html")
     mocker.patch(
         "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
     )
     out = ToolsRegistry.read_article("https://example.com")
-    assert "Title" in out
-    assert "Body" in out
+    assert isinstance(out, tuple)
+    assert "Title" in out[1]["stdout"]
+    assert "Body" in out[1]["stdout"]
+    assert out[1]["metadata"] == {
+        "content_type": "text/html",
+        "transform": "html-to-markdown",
+    }
 
 
 def test_read_article_http_error(mocker):
@@ -339,10 +350,9 @@ def test_read_article_generic_error(mocker):
 def test_read_article_large_page_returns_artifact_tuple(mocker):
     """A page whose converted markdown exceeds ARTIFACT_THRESHOLD is offloaded —
     not lossily truncated — so the full text stays in the artifact store."""
-    resp = mocker.Mock()
-    resp.text = "<p>" + ("word " * 20000) + "</p>"  # ~100_000 chars, well over
-    # ARTIFACT_THRESHOLD (8_000) but under the fetch-side sanity cap.
-    resp.raise_for_status = mocker.Mock()
+    resp = _mock_resp(mocker, "<p>" + ("word " * 20000) + "</p>", "text/html")
+    # ~100_000 chars, well over ARTIFACT_THRESHOLD (8_000) but under the
+    # fetch-side sanity cap.
     mocker.patch(
         "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
     )
@@ -359,9 +369,7 @@ def test_read_article_fetch_sanity_cap_truncates_pathological_page(mocker):
     the cap guards a pathological page, fidelity within it is still offloaded."""
     from my_coding_agent.engine.tool_registry.registry import ARTICLE_FETCH_MAX_CHARS
 
-    resp = mocker.Mock()
-    resp.text = "<p>" + ("word " * 100_000) + "</p>"  # far beyond the sanity cap
-    resp.raise_for_status = mocker.Mock()
+    resp = _mock_resp(mocker, "<p>" + ("word " * 100_000) + "</p>", "text/html")
     mocker.patch(
         "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
     )
@@ -369,6 +377,79 @@ def test_read_article_fetch_sanity_cap_truncates_pathological_page(mocker):
     assert isinstance(out, tuple)
     assert "[...truncated" in out[1]["stdout"]
     assert len(out[1]["stdout"]) < ARTICLE_FETCH_MAX_CHARS + 200
+
+
+# --- read_article: content-type fidelity (fetch-content-fidelity) ------------
+
+
+def test_read_article_json_with_escapes_stays_parseable(mocker):
+    """JSON body with backslash escapes and code blocks must round-trip through
+    json.loads — the session fbef66a33c18 failure shape."""
+    payload = {
+        "note": "line1\\nline2\\ttabbed",
+        "snippet": "```python\nprint('hi')\n```",
+    }
+    body = json.dumps(payload)
+    resp = _mock_resp(mocker, body, "application/json")
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
+    )
+    out = ToolsRegistry.read_article("https://api.example.com/data")
+    assert isinstance(out, tuple)
+    assert out[1]["stdout"] == body
+    assert json.loads(out[1]["stdout"]) == payload
+    assert out[1]["metadata"] == {
+        "content_type": "application/json",
+        "transform": "none",
+    }
+
+
+def test_read_article_plain_text_untouched(mocker):
+    body = "*bold* _italic_ \\escaped # heading"
+    resp = _mock_resp(mocker, body, "text/plain")
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
+    )
+    out = ToolsRegistry.read_article("https://example.com/notes.txt")
+    assert out[1]["stdout"] == body
+    assert out[1]["metadata"]["transform"] == "none"
+
+
+def test_read_article_missing_content_type_is_verbatim(mocker):
+    body = "raw content, no content-type header"
+    resp = _mock_resp(mocker, body, content_type=None)
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
+    )
+    out = ToolsRegistry.read_article("https://example.com/unknown")
+    assert out[1]["stdout"] == body
+    assert out[1]["metadata"] == {"content_type": "unknown", "transform": "none"}
+
+
+def test_read_article_binary_content_type_rejected(mocker):
+    resp = _mock_resp(mocker, "\x89PNG...", "image/png")
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
+    )
+    out = ToolsRegistry.read_article("https://example.com/pic.png")
+    assert isinstance(out, str)
+    assert out.startswith("Error:")
+    assert "image/png" in out
+
+
+def test_read_article_verbatim_truncation_signaled_in_metadata_not_body(mocker):
+    from my_coding_agent.engine.tool_registry.registry import ARTICLE_FETCH_MAX_CHARS
+
+    body = json.dumps({"data": "x" * (ARTICLE_FETCH_MAX_CHARS + 1000)})
+    resp = _mock_resp(mocker, body, "application/json")
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.httpx.get", return_value=resp
+    )
+    out = ToolsRegistry.read_article("https://example.com/big.json")
+    stdout = out[1]["stdout"]
+    assert stdout == body[:ARTICLE_FETCH_MAX_CHARS]
+    assert "truncated" not in stdout
+    assert out[1]["metadata"]["truncated"] is True
 
 
 # --- delegate ----------------------------------------------------------------

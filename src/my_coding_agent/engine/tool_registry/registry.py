@@ -458,16 +458,24 @@ class ToolRegistry:
 
     @staticmethod
     def read_article(url: str, timeout: float = 15.0) -> str | tuple[None, dict]:
-        """Fetch a web page and return its content as clean markdown.
-        Large pages are offloaded to the artifact store with a bounded preview
-        instead of flooding the context. Use when the user provides a URL or
-        link to an article, blog post, or documentation page.
+        """Fetch any text URL and return its content.
+
+        HTML responses (``text/html``, ``application/xhtml+xml``) are converted
+        to clean markdown, as for an article, blog post, or documentation page.
+        Every other text response (JSON, plain text, XML, ...) is returned
+        verbatim — the served body is never reshaped — so this is also the tool
+        for fetching a JSON API endpoint. The result's ``metadata`` always
+        discloses the served content type and whether a transform was applied
+        (``html-to-markdown`` or ``none``). Non-text content types (images,
+        binaries, PDFs) are rejected with an explicit error. Large bodies are
+        offloaded to the artifact store with a bounded preview instead of
+        flooding the context.
 
         Tags:
-            web, url, article, fetch, http, browse, documentation, link
+            web, url, article, fetch, http, browse, documentation, link, json, api
 
         Args:
-            url: Full URL of the web page to fetch. Example: 'https://example.com/article'
+            url: Full URL of the page to fetch. Example: 'https://example.com/article'
             timeout: Seconds before the request is abandoned. Defaults to 15.0.
         """
         try:
@@ -478,22 +486,55 @@ class ToolRegistry:
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             resp.raise_for_status()
-            h = html2text.HTML2Text()
-            h.ignore_links = False
-            h.ignore_images = True
-            h.body_width = 0
-            text = h.handle(resp.text)
-            if len(text) > ARTICLE_FETCH_MAX_CHARS:
+            content_type = resp.headers.get("content-type", "")
+            media_type = content_type.split(";", 1)[0].strip().lower()
+
+            if (
+                media_type
+                and not media_type.startswith("text/")
+                and media_type
+                not in (
+                    "application/xhtml+xml",
+                    "application/json",
+                    "application/xml",
+                )
+            ):
+                return f"Error: unsupported content type '{media_type}' for {url}"
+
+            is_html = media_type in ("text/html", "application/xhtml+xml")
+            if is_html:
+                h = html2text.HTML2Text()
+                h.ignore_links = False
+                h.ignore_images = True
+                h.body_width = 0
+                text = h.handle(resp.text)
+                transform = "html-to-markdown"
+            else:
+                text = resp.text
+                transform = "none"
+
+            metadata: dict = {
+                "content_type": media_type or "unknown",
+                "transform": transform,
+            }
+
+            truncated = len(text) > ARTICLE_FETCH_MAX_CHARS
+            if truncated:
                 # Sanity cap on a pathological page — guards fetch size, not fidelity
                 # within it (the kept portion still offloads losslessly below).
-                text = (
-                    text[:ARTICLE_FETCH_MAX_CHARS]
-                    + f"\n\n[...truncated — article exceeds {ARTICLE_FETCH_MAX_CHARS} "
-                    "chars]"
-                )
-            if len(text) > ARTIFACT_THRESHOLD:
-                return None, {"stdout": text, "ok": True}  # dispatcher offloads it
-            return text
+                if is_html:
+                    text = (
+                        text[:ARTICLE_FETCH_MAX_CHARS]
+                        + f"\n\n[...truncated — article exceeds "
+                        f"{ARTICLE_FETCH_MAX_CHARS} chars]"
+                    )
+                else:
+                    # Verbatim path: truncation is disclosed in metadata only —
+                    # no text is appended into a machine-readable body.
+                    text = text[:ARTICLE_FETCH_MAX_CHARS]
+                    metadata["truncated"] = True
+
+            return None, {"stdout": text, "ok": True, "metadata": metadata}
         except httpx.HTTPStatusError as e:
             return f"Error: HTTP {e.response.status_code} fetching {url}"
         except Exception as e:

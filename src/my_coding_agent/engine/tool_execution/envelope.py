@@ -17,6 +17,13 @@ from typing import Any
 
 from .schema import _ERROR_PREFIX_RE, _TOOL_RESULT_KEYS, TOOL_SCHEMA_VERSION
 
+# Tools whose raw output is the bash-style structured contract
+# (`ok`/`stdout`/`stderr`/`exit_code`). Only these are eligible for the
+# `_maybe_json` sniff in `result_envelope` — sniffing by content shape alone
+# would let an arbitrary JSON payload (e.g. a fetched body containing an
+# `"ok"` key) be misinterpreted as this contract.
+_STRUCTURED_RESULT_TOOLS = frozenset({"bash"})
+
 
 def build_tool_result(
     tool: str,
@@ -116,18 +123,24 @@ def result_envelope(
     if is_truncated:
         metadata["truncated"] = True
 
-    # bash-family: structured JSON carrying its own ok/exit_code.
-    parsed = _maybe_json(result)
-    if isinstance(parsed, dict) and "ok" in parsed:
-        output = parsed.get("stdout", "")
-        return _structured_envelope(tool, parsed, output, metadata)
+    # bash-family: structured JSON carrying its own ok/exit_code. Gated by tool
+    # name, not content shape, so an arbitrary fetched JSON body containing an
+    # "ok" key is never reinterpreted as this contract.
+    if tool in _STRUCTURED_RESULT_TOOLS:
+        parsed = _maybe_json(result)
+        if isinstance(parsed, dict) and "ok" in parsed:
+            output = parsed.get("stdout", "")
+            return _structured_envelope(tool, parsed, output, metadata)
 
-    # bash large output: offloaded per stream — `result` is the composed stdout
+    # large output offloaded per stream — `result` is the composed stdout
     # (preview or inline) and `error` is the composed stderr; each large stream's
-    # full content lives in its own on-disk file described by `preview`.
+    # full content lives in its own on-disk file described by `preview`. Any
+    # extra `metadata` bag on the structured-return dict rides along untouched.
     if is_artifact:
-        metadata.update({"artifact": True, "tool_call_id": tool_call_id})
+        metadata.update(artifact.get("metadata") or {})
         if preview:
+            metadata["artifact"] = True
+            metadata["tool_call_id"] = tool_call_id
             metadata["preview"] = preview
         ok = bool(artifact.get("ok", True))
         if "exit_code" in artifact:
