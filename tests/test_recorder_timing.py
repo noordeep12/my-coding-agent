@@ -54,7 +54,7 @@ def test_timed_events_start_and_end_fit_within_session_bounds(tmp_path):
     # Tool call: before_tool/after_tool stash and emit their own wall start.
     rec.before_tool("bash", {"command": "echo hi"})
     time.sleep(0.05)
-    rec.after_tool("bash", {"command": "echo hi"}, "hi")
+    rec.after_tool("bash", {"command": "echo hi"}, "hi", True, None)
 
     rec.finish("stop", steps=1, elapsed_s=0.2)
 

@@ -1439,6 +1439,34 @@ class TestAnomalyRendering:
         assert not any(n.anomaly_flag for n in session.nodes.values())
         assert session.analytics["anomaly_count"] == 0
 
+    def test_tool_call_node_carries_top_level_ok_and_error_class(self, tmp_path):
+        sid = "aabbccdd1234"
+        session = self._load(tmp_path, sid, _streak_session_events(sid))
+        tool_nodes = [n for n in session.nodes.values() if n.type == "tool_call"]
+        # Pre-change fixture events carry no top-level ok — node attribute
+        # reflects that absence rather than inventing a verdict.
+        assert all(n.attributes["ok"] is None for n in tool_nodes)
+
+
+class TestOutcomeFieldsFailureDetection:
+    def test_new_style_trace_detects_failure_from_top_level_fields(self):
+        node = _tool_node("a", "bash", {"command": "x"})
+        node.outputs = {"result": "not json — must not be parsed"}
+        node.attributes["ok"] = False
+        nodes = {"a": node}
+        events = [_anomaly_row("s-1", 1, 1, 10)]
+        _flag_anomalies(nodes, ["a"], events)
+        assert nodes["a"].anomaly_flag
+
+    def test_pre_change_trace_falls_back_to_result_parse(self):
+        node = _tool_node("a", "bash", {"command": "x"})
+        node.outputs = {"result": json.dumps({"ok": False})}
+        # No "ok" key set on attributes — mirrors a pre-change trace's node.
+        nodes = {"a": node}
+        events = [_anomaly_row("s-1", 1, 1, 10)]
+        _flag_anomalies(nodes, ["a"], events)
+        assert nodes["a"].anomaly_flag
+
 
 class TestFlagAnomaliesUnit:
     def test_stops_at_streak_len_even_with_more_matching_failures_earlier(self):
