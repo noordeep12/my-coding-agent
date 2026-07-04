@@ -23,7 +23,7 @@ from ...observability.recorder import (
 )
 from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
-from ...utils.parsing import extract_message
+from ...utils.parsing import extract_finish_reason, extract_message, extract_usage
 from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
 from ..tool_execution.schema import ARTICLE_FETCH_MAX_CHARS, ARTIFACT_THRESHOLD
 
@@ -275,6 +275,11 @@ class ToolRegistry:
         artifacts, sequential chunked scan for larger ones. Accumulates relevant
         extracts across chunks, stopping early once the output budget fills so
         the whole artifact stays reachable without ever returning it whole.
+
+        Every cut surface — a capped chunk completion, an unscanned remainder,
+        or a final slice to the output budget — is disclosed in the return so
+        the consuming model never mistakes a partial extract for the full
+        answer (see design.md D1-D5 of extract-completeness-disclosure).
         """
         chunks = [
             text[i : i + EXTRACTION_CHUNK_MAX_CHARS]
@@ -282,24 +287,86 @@ class ToolRegistry:
         ] or [""]
         collected: list[str] = []
         remaining = EXTRACTION_OUTPUT_MAX_CHARS
+        scanned_chars = 0
+        chunks_scanned = 0
+        any_chunk_cut = False
         for chunk in chunks:
             if remaining <= 0:
                 break
-            extract = self._extract_chunk(chunk, query)
+            extract, cut = self._extract_chunk(chunk, query)
             if extract is None:
                 return self._head_excerpt(tool_call_id, text)
+            chunks_scanned += 1
+            scanned_chars += len(chunk)
+            any_chunk_cut = any_chunk_cut or cut
             if extract.strip().upper() != "NOT FOUND":
                 collected.append(extract)
                 remaining -= len(extract)
-        if not collected:
-            return f"No content relevant to '{query}' was found in the stored output."
-        result = "\n\n---\n\n".join(collected)
-        return result[:EXTRACTION_OUTPUT_MAX_CHARS]
+        unscanned = chunks_scanned < len(chunks)
 
-    def _extract_chunk(self, chunk: str, query: str) -> str | None:
+        if not collected:
+            base = f"No content relevant to '{query}' was found in the stored output."
+            disclosure = self._extraction_disclosure(
+                tool_call_id, any_chunk_cut, unscanned, False, scanned_chars, len(text)
+            )
+            return base + disclosure
+
+        result = "\n\n---\n\n".join(collected)
+        sliced = len(result) > EXTRACTION_OUTPUT_MAX_CHARS
+        disclosure = self._extraction_disclosure(
+            tool_call_id, any_chunk_cut, unscanned, sliced, scanned_chars, len(text)
+        )
+        content_budget = EXTRACTION_OUTPUT_MAX_CHARS - len(disclosure)
+        return result[:content_budget] + disclosure
+
+    def _extraction_disclosure(
+        self,
+        tool_call_id: str,
+        chunk_cut: bool,
+        unscanned: bool,
+        sliced: bool,
+        scanned_chars: int,
+        total_chars: int,
+    ) -> str:
+        """Build the trailing incompleteness marker for an extraction return.
+        Returns "" when nothing was cut (no-false-positive rule, design D5)."""
+        if not (chunk_cut or unscanned or sliced):
+            return ""
+        reasons = []
+        if chunk_cut:
+            reasons.append("an extraction hit the extraction token cap mid-passage")
+        if sliced:
+            reasons.append(
+                "the combined extract exceeded the output budget and was cut"
+            )
+        if unscanned:
+            reasons.append(
+                f"only the first {scanned_chars} of {total_chars} stored characters "
+                "were scanned"
+            )
+        recovery = "a narrower follow-up query"
+        path = self._artifact_path_hint(tool_call_id)
+        if path:
+            recovery += (
+                f", or skimming {path} with bash text tools "
+                "(grep/rg, sed, awk, jq, head/tail, wc)"
+            )
+        return (
+            f"\n\n[Extract incomplete — {'; '.join(reasons)}. "
+            f"Not the full stored output. Try {recovery}.]"
+        )
+
+    def _extract_chunk(self, chunk: str, query: str) -> "tuple[str | None, bool]":
         """Make one bounded extraction call over a chunk. Returns the model's
-        (cleaned) response, or None when the call itself fails (degrades the
-        whole retrieval to the head-excerpt fallback)."""
+        (cleaned) response and whether the completion was cut at the extraction
+        token cap. Returns (None, False) when the call itself fails (degrades
+        the whole retrieval to the head-excerpt fallback).
+
+        A completion is treated as cut when the provider reports
+        ``finish_reason: length``, or reports no finish reason at all while its
+        completion tokens meet the extraction budget — some servers omit the
+        field on a capped completion, so usage corroborates it (design D1).
+        """
         prompt = (
             "/no_think\n"
             "You are extracting information from a stored tool output on behalf "
@@ -319,10 +386,16 @@ class ToolRegistry:
                 max_tokens=EXTRACTION_OUTPUT_TOKEN_BUDGET,
             )
             content = extract_message(resp).get("content") or ""
+            finish_reason = extract_finish_reason(resp)
+            completion_tokens = extract_usage(resp).get("completion_tokens", 0)
+            cut = finish_reason == "length" or (
+                not finish_reason
+                and completion_tokens >= EXTRACTION_OUTPUT_TOKEN_BUDGET
+            )
         except Exception as exc:
             logger.warning("artifact_query extraction failed: %s", exc)
-            return None
-        return _THINK_RE.sub("", content).strip()
+            return None, False
+        return _THINK_RE.sub("", content).strip(), cut
 
     def delegate(self, task: str, context: str) -> str:
         """Delegate a focused exploration or research task to a subagent.

@@ -209,6 +209,160 @@ def test_read_tool_artifact_huge_artifact_stays_within_budget(mocker):
     assert fake_llm.chat_completion.call_count == 1
 
 
+# --- extract-completeness-disclosure -----------------------------------------
+
+
+def test_extract_chunk_detects_length_finish_reason(mocker):
+    from my_coding_agent.engine.tool_registry.registry import (
+        EXTRACTION_OUTPUT_TOKEN_BUDGET,
+    )
+
+    fake_llm = mocker.Mock()
+    fake_llm.chat_completion.return_value = mocker.Mock(
+        json=lambda: {
+            "choices": [{"message": {"content": "cut mid"}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": EXTRACTION_OUTPUT_TOKEN_BUDGET},
+        }
+    )
+    reg = ToolsRegistry(llm=fake_llm)
+    extract, cut = reg._extract_chunk("chunk text", "q")
+    assert extract == "cut mid"
+    assert cut is True
+
+
+def test_extract_chunk_detects_cap_without_finish_reason(mocker):
+    from my_coding_agent.engine.tool_registry.registry import (
+        EXTRACTION_OUTPUT_TOKEN_BUDGET,
+    )
+
+    fake_llm = mocker.Mock()
+    fake_llm.chat_completion.return_value = mocker.Mock(
+        json=lambda: {
+            "choices": [{"message": {"content": "cut mid"}, "finish_reason": ""}],
+            "usage": {"completion_tokens": EXTRACTION_OUTPUT_TOKEN_BUDGET},
+        }
+    )
+    reg = ToolsRegistry(llm=fake_llm)
+    _, cut = reg._extract_chunk("chunk text", "q")
+    assert cut is True
+
+
+def test_extract_chunk_trusts_explicit_stop(mocker):
+    from my_coding_agent.engine.tool_registry.registry import (
+        EXTRACTION_OUTPUT_TOKEN_BUDGET,
+    )
+
+    fake_llm = mocker.Mock()
+    fake_llm.chat_completion.return_value = mocker.Mock(
+        json=lambda: {
+            "choices": [{"message": {"content": "clean"}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": EXTRACTION_OUTPUT_TOKEN_BUDGET},
+        }
+    )
+    reg = ToolsRegistry(llm=fake_llm)
+    _, cut = reg._extract_chunk("chunk text", "q")
+    assert cut is False
+
+
+def test_extract_discloses_unscanned_remainder(mocker):
+    """Output budget fills after the first of several chunks; the disclosure
+    must name the scanned-vs-total extent and a recovery path."""
+    from my_coding_agent.engine.tool_registry.registry import (
+        EXTRACTION_CHUNK_MAX_CHARS,
+        EXTRACTION_OUTPUT_MAX_CHARS,
+    )
+
+    fake_llm = mocker.Mock()
+    fake_llm.chat_completion.return_value = mocker.Mock(
+        json=lambda: {
+            "choices": [
+                {
+                    "message": {"content": "x" * EXTRACTION_OUTPUT_MAX_CHARS},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"completion_tokens": 10},
+        }
+    )
+    huge = "y" * (EXTRACTION_CHUNK_MAX_CHARS * 3)
+    reg = ToolsRegistry(artifacts={"call_1": huge}, llm=fake_llm)
+    out = reg.read_tool_artifact("call_1", "detail near the end")
+    assert "[Extract incomplete" in out
+    assert f"of {len(huge)} stored characters" in out
+    assert "follow-up query" in out
+
+
+def test_extract_slice_disclosed_and_bounded(mocker):
+    """A joined result exceeding the output budget is sliced and disclosed,
+    with content + disclosure together staying within the budget."""
+    from my_coding_agent.engine.tool_registry.registry import (
+        EXTRACTION_OUTPUT_MAX_CHARS,
+    )
+
+    fake_llm = mocker.Mock()
+    fake_llm.chat_completion.return_value = mocker.Mock(
+        json=lambda: {
+            "choices": [
+                {
+                    "message": {"content": "x" * (EXTRACTION_OUTPUT_MAX_CHARS + 1)},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"completion_tokens": 10},
+        }
+    )
+    reg = ToolsRegistry(artifacts={"call_1": "some stored text"}, llm=fake_llm)
+    out = reg.read_tool_artifact("call_1", "anything")
+    assert len(out) <= EXTRACTION_OUTPUT_MAX_CHARS
+    assert "[Extract incomplete" in out
+    assert "output budget" in out
+
+
+def test_extract_discloses_capped_chunk(mocker):
+    """A capped chunk completion surfaces the cut disclosure in the return."""
+    from my_coding_agent.engine.tool_registry.registry import (
+        EXTRACTION_OUTPUT_TOKEN_BUDGET,
+    )
+
+    fake_llm = mocker.Mock()
+    fake_llm.chat_completion.return_value = mocker.Mock(
+        json=lambda: {
+            "choices": [
+                {
+                    "message": {"content": "a short cut passage"},
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"completion_tokens": EXTRACTION_OUTPUT_TOKEN_BUDGET},
+        }
+    )
+    reg = ToolsRegistry(artifacts={"call_1": "some stored text"}, llm=fake_llm)
+    out = reg.read_tool_artifact("call_1", "anything")
+    assert "a short cut passage" in out
+    assert "[Extract incomplete" in out
+    assert "token cap" in out
+
+
+def test_complete_extract_unmarked(mocker):
+    """All chunks scanned, clean finish, within budget — no false-positive marker."""
+    fake_llm = mocker.Mock()
+    fake_llm.chat_completion.return_value = mocker.Mock(
+        json=lambda: {
+            "choices": [
+                {
+                    "message": {"content": "the relevant passage"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"completion_tokens": 10},
+        }
+    )
+    reg = ToolsRegistry(artifacts={"call_1": "some stored text"}, llm=fake_llm)
+    out = reg.read_tool_artifact("call_1", "find the passage")
+    assert out == "the relevant passage"
+    assert "[Extract incomplete" not in out
+
+
 def test_read_tool_artifact_reaches_detail_near_the_end_via_chunk_scan(mocker):
     """The relevant detail lives only in the last of several chunks; the scan
     must not stop at the first NOT FOUND — it reaches the whole stored output."""

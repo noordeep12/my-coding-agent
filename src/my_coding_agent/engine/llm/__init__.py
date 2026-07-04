@@ -294,6 +294,7 @@ class LLM:
                 response_data=data,
                 tools=tools,
                 started_at=_started_at,
+                max_tokens=max_tokens,
             )
         self.logger.api(
             "call #%d [%s] usage — prompt: %s, completion: %s, total: %s",
