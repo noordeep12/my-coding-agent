@@ -113,7 +113,7 @@ The node-based DAG execution engine. `pipeline/` only knows how to build and exe
 | Node | Stage | What it does |
 |---|---|---|
 | `ContextGuardNode` | 1 | Checks `last_prompt_tokens / context_window`; sets STOP (limit), RESET (handoff), or CONTINUE |
-| `ToolRoutingNode` | 2 | Creates `ToolRouter(ctx.llm)`, calls `route_tools`, writes `ctx.routed_tools` |
+| `ToolRoutingNode` | 2 | Creates `ToolRouter(ctx.llm)`; builds a work-state signal (last user message + last assistant content/tool-call names + subsequent tool messages, capped by `ROUTING_EXCERPT_CHARS`/`ROUTING_SIGNAL_MAX_CHARS`) and calls `route_tools` only when that signal changed from the previous step, reusing the memoized `ctx.routed_tools` otherwise (no re-routing, no router event, no router log line) |
 | `LLMCallNode` | 3 | Increments `step_num`, calls `chat_completion`, appends assistant message |
 | `ToolDispatchNode` | 4 | Builds `ToolExecutor(last_message, ctx.llm)`, runs it, merges records and artifacts into `ctx` |
 | `AnomalyDetectNode` | 5 | Scans `ctx.tool_records` for a same-signature failure streak (`pipeline/anomaly.py`); at the 3rd consecutive same-class failure (and each further one), records an `anomaly` event and logs one WARNING at first signal. Reads `ctx.tool_records`/`ctx.last_response` only; never touches `ctx.messages`/`ctx.signal`/`ctx.stop_reason`, makes no LLM calls — detection-only, covering subagents for free since every delegated run builds its own pipeline instance |
