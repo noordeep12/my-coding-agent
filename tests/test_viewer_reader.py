@@ -7,6 +7,8 @@ from my_coding_agent.viewer.reader import (
     _detect_loops,
     _flag_anomalies,
     _group_into_steps,
+    _read_events,
+    _resolve_message_deltas,
     _role_split,
     list_sessions,
     load_session,
@@ -1022,6 +1024,149 @@ class TestLlmToolDefinitions:
         nodes = self._llm_nodes(session)
         assert nodes
         assert all(n.inputs["tools"] == [] for n in nodes)
+
+    def test_delta_encoded_call_shows_full_reconstructed_messages(self, tmp_path):
+        sid = "tooldefs00002"
+        m1 = [{"role": "user", "content": "hi"}]
+        events = [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="T",
+                model="gpt-4o-mini",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _ev(
+                "router",
+                signal="go",
+                selected=["bash"],
+                phase="phase1_keyword",
+                used_llm=False,
+                started_at="2026-01-01T10:00:01",
+            ),
+            _delta_llm_event(call=1, messages=m1),
+            _delta_llm_event(
+                call=2,
+                messages=None,
+                messages_base_call=1,
+                messages_prefix_len=1,
+                messages_suffix=[{"role": "assistant", "content": "a1"}],
+            ),
+        ]
+        session = self._load(tmp_path, sid, events)
+        nodes = self._llm_nodes(session)
+        assert nodes[-1].inputs["messages"] == m1 + [
+            {"role": "assistant", "content": "a1"}
+        ]
+
+
+def _delta_llm_event(**kw):
+    base = {
+        "type": "llm_call",
+        "kind": "main",
+        "latency_s": 1.0,
+        "prompt": 10,
+        "completion": 5,
+        "total": 15,
+        "context_window": 8192,
+        "tools": [],
+        "response": {"content": "ok", "reasoning": "", "tool_calls": [], "raw": {}},
+        "started_at": "2026-01-01T10:00:02",
+    }
+    base.update(kw)
+    return base
+
+
+class TestResolveMessageDeltas:
+    """Reader-side reconstruction of prefix-delta ``llm_call`` events (D3)."""
+
+    def test_delta_reconstructs_full_snapshot(self):
+        m1 = [{"role": "user", "content": "hi"}]
+        events = [
+            _delta_llm_event(call=1, messages=m1),
+            _delta_llm_event(
+                call=2,
+                messages=None,
+                messages_base_call=1,
+                messages_prefix_len=1,
+                messages_suffix=[{"role": "assistant", "content": "a1"}],
+            ),
+        ]
+        _resolve_message_deltas(events)
+        assert events[1]["messages"] == m1 + [{"role": "assistant", "content": "a1"}]
+
+    def test_chained_deltas_resolve(self):
+        m1 = [{"role": "user", "content": "hi"}]
+        events = [
+            _delta_llm_event(call=1, messages=m1),
+            _delta_llm_event(
+                call=2,
+                messages=None,
+                messages_base_call=1,
+                messages_prefix_len=1,
+                messages_suffix=[{"role": "assistant", "content": "a1"}],
+            ),
+            _delta_llm_event(
+                call=3,
+                messages=None,
+                messages_base_call=2,
+                messages_prefix_len=2,
+                messages_suffix=[{"role": "user", "content": "u2"}],
+            ),
+        ]
+        _resolve_message_deltas(events)
+        assert events[2]["messages"] == [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+        ]
+
+    def test_legacy_full_snapshot_traces_are_unaffected(self):
+        m1 = [{"role": "user", "content": "hi"}]
+        m2 = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "a"}]
+        events = [
+            _delta_llm_event(call=1, messages=m1),
+            _delta_llm_event(call=2, messages=m2),
+        ]
+        _resolve_message_deltas(events)
+        assert events[0]["messages"] == m1
+        assert events[1]["messages"] == m2
+
+    def test_missing_base_degrades_gracefully(self):
+        events = [
+            _delta_llm_event(
+                call=2,
+                messages=None,
+                messages_base_call=1,
+                messages_prefix_len=1,
+                messages_suffix=[{"role": "assistant", "content": "a1"}],
+            ),
+        ]
+        _resolve_message_deltas(events)
+        assert events[0]["messages"] is None
+
+    def test_truncated_file_reconstructs_completed_events(self, tmp_path):
+        m1 = [{"role": "user", "content": "hi"}]
+        events = [
+            _delta_llm_event(call=1, messages=m1),
+            _delta_llm_event(
+                call=2,
+                messages=None,
+                messages_base_call=1,
+                messages_prefix_len=1,
+                messages_suffix=[{"role": "assistant", "content": "a1"}],
+            ),
+        ]
+        path = tmp_path / "events.jsonl"
+        lines = [json.dumps(e) for e in events]
+        # Truncate mid-write of a third (never-completed) event.
+        truncated = '{"type": "llm_call", "call"'
+        path.write_text("\n".join(lines) + "\n" + truncated, encoding="utf-8")
+        parsed = _read_events(path)
+        assert len(parsed) == 2
+        assert parsed[1]["messages"] == m1 + [{"role": "assistant", "content": "a1"}]
 
 
 class TestCappedLlmCallBadge:
