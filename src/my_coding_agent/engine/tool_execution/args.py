@@ -9,7 +9,6 @@ import json
 
 from ...utils import get_logger
 from ...utils.parsing import parse_tool_args
-from ..tool_registry import ToolRegistry
 
 logger = get_logger(__name__)
 
@@ -112,6 +111,8 @@ def strip_unknown_args(func_name: str, args: dict) -> dict:
     This prevents TypeError from hallucinated parameters (e.g. file_path on bash)
     from ever reaching the LLM correction loop, which is unreliable on local models.
     """
+    from ..tool_registry import ToolRegistry  # lazy: avoids a cycle
+
     func = getattr(ToolRegistry, func_name, None)
     if func is None:
         return args

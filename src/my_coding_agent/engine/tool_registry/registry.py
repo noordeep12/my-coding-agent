@@ -25,21 +25,15 @@ from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
 from ...utils.parsing import extract_message
 from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
+from ..tool_execution.schema import ARTICLE_FETCH_MAX_CHARS, ARTIFACT_THRESHOLD
 
 if TYPE_CHECKING:
     from ..llm import LLM
 
 logger = get_logger(__name__)
 
-# Single source of truth for the large-tool-output boundary (chars). bash output
-# above this triggers artifact separation; tool_execution.MAX_TOOL_OUTPUT_CHARS
-# aliases this.
-ARTIFACT_THRESHOLD = 8_000
-
-# Sanity cap on a fetched article's converted markdown (chars): guards a
-# pathological page. Fidelity within the cap is preserved on disk via offload
-# (below ARTIFACT_THRESHOLD) rather than thrown away like the old 24k pre-cut.
-ARTICLE_FETCH_MAX_CHARS = 200_000
+# ARTIFACT_THRESHOLD (large-output boundary) and ARTICLE_FETCH_MAX_CHARS (fetch
+# sanity cap) are centrally configured in tool_execution.schema, imported above.
 
 # Extraction budgets for read_tool_artifact (chars, ~4 chars/token estimate).
 _CHARS_PER_TOKEN = 4

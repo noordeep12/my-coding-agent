@@ -28,3 +28,36 @@ PREVIEW_KEYS = (
     "total_bytes",
     "full_output_path",
 )
+
+# ── Size/threshold configuration ──────────────────────────────────────────────
+# Single source of truth for every tunable boundary that decides whether/how a
+# tool output is offloaded to the on-disk artifact store. Both tool_execution
+# and tool_registry read these — this module is a leaf (no internal imports),
+# so either side can depend on it without introducing a cycle.
+
+_CHARS_PER_TOKEN = 4  # rough chars/token estimate used only for budgeting
+
+# Large-output boundary (~10,000 tokens): a tool's raw output above this size
+# takes the ``(None, artifact_dict)`` offload contract instead of returning inline.
+ARTIFACT_THRESHOLD_TOKEN_BUDGET = 10_000
+ARTIFACT_THRESHOLD = ARTIFACT_THRESHOLD_TOKEN_BUDGET * _CHARS_PER_TOKEN
+
+# Alias: the same boundary, named for its use truncating a plain-string
+# (non-artifact) tool output that exceeds it.
+MAX_TOOL_OUTPUT_CHARS = ARTIFACT_THRESHOLD
+
+# Sanity cap on a fetched article's body: guards a pathological page. A
+# separate, much larger boundary than ARTIFACT_THRESHOLD by design — everything
+# under it still gets evaluated for offload normally (fidelity within the cap
+# is preserved on disk via offload), it just stops a runaway fetch from being
+# considered at all. Expressed as a multiple of ARTIFACT_THRESHOLD_TOKEN_BUDGET
+# so the two move together if the offload boundary changes.
+ARTICLE_FETCH_MAX_TOKEN_BUDGET = ARTIFACT_THRESHOLD_TOKEN_BUDGET * 5
+ARTICLE_FETCH_MAX_CHARS = ARTICLE_FETCH_MAX_TOKEN_BUDGET * _CHARS_PER_TOKEN
+
+# Preview budget for an offloaded artifact: only a bounded excerpt goes into the
+# tool result `output`; the full content stays on disk. Deliberately a small
+# fraction of ARTIFACT_THRESHOLD_TOKEN_BUDGET so the preview never itself
+# approaches the offload boundary.
+PREVIEW_TOKEN_BUDGET = ARTIFACT_THRESHOLD_TOKEN_BUDGET // 10  # ~1000 tokens
+PREVIEW_MAX_CHARS = PREVIEW_TOKEN_BUDGET * _CHARS_PER_TOKEN

@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from ...observability import current_session_id
 from ...utils import get_logger
-from ..tool_registry import ToolRegistry, artifact_file_path
 from . import args as arg_prep
 from .envelope import (
     build_tool_result,
@@ -43,6 +42,18 @@ __all__ = [
     "build_tool_result",
     "validate_tool_result",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve ``ToolRegistry`` so it stays part of this module's public
+    surface (``__all__``) without an eager import — see ``ToolExecutor.__init__``
+    for why that import must be deferred (breaks a cycle with tool_registry)."""
+    if name == "ToolRegistry":
+        from ..tool_registry import ToolRegistry
+
+        return ToolRegistry
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Exceptions a tool may raise that are surfaced as an ``ok:false`` result rather
 # than re-raised. Anything not in this tuple hard-stops the agent loop.
@@ -81,6 +92,12 @@ class ToolExecutor:
         llm: "LLM",
         tools: list[dict[str, Any]] | None = None,
     ) -> None:
+        # Imported lazily (not at module level) to avoid a circular import:
+        # tool_registry reads its size-threshold constants from
+        # tool_execution.schema, so tool_execution can't eagerly import
+        # tool_registry back at module load time.
+        from ..tool_registry import ToolRegistry
+
         self.tool_calls = message.get("tool_calls", []) or []
         self.tool_messages: list[dict[str, Any]] = []
         self.tool_records: list[dict[str, Any]] = []
@@ -166,14 +183,14 @@ class ToolExecutor:
         """
         if not hasattr(self.registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
-            valid = [n for n in dir(ToolRegistry) if not n.startswith("_")]
+            valid = [n for n in dir(type(self.registry)) if not n.startswith("_")]
             err = f"Error: tool '{func_name}' not found. Available tools: {valid}"
             return None, {"reason": "not_found", "error": err}
 
         try:
             return getattr(self.registry, func_name)(**args), None
         except TypeError as exc:  # wrong arguments — surfaced as a failure, no retry
-            sig = inspect.signature(getattr(ToolRegistry, func_name))
+            sig = inspect.signature(getattr(type(self.registry), func_name))
             self.logger.error("wrong args %s → %s: %s", tool_call_id, func_name, exc)
             err = (
                 f"Error: wrong arguments for '{func_name}': {exc}. "
@@ -307,6 +324,8 @@ class ToolExecutor:
         is logged and downgraded to "no on-disk copy" so offloading continues
         rather than aborting the run.
         """
+        from ..tool_registry import artifact_file_path  # lazy: avoids a cycle
+
         path = artifact_file_path(current_session_id.get(), tool_call_id, stream)
         if path is None:
             return None

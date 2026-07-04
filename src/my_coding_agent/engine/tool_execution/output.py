@@ -7,20 +7,9 @@ execution state.
 import json
 
 from ...utils import get_logger
-from ..tool_registry import ARTIFACT_THRESHOLD
+from .schema import MAX_TOOL_OUTPUT_CHARS, PREVIEW_MAX_CHARS
 
 logger = get_logger(__name__)
-
-# Single source of truth lives in tools.ARTIFACT_THRESHOLD: the artifact-separation
-# boundary and this truncation boundary are the same concept (large tool output).
-MAX_TOOL_OUTPUT_CHARS = ARTIFACT_THRESHOLD
-
-# Preview budget for an offloaded artifact: only a bounded excerpt goes into the
-# tool result `output`; the full content stays on disk. Kept well under
-# ARTIFACT_THRESHOLD so the preview never itself approaches the offload boundary.
-PREVIEW_TOKEN_BUDGET = 500  # approx. tokens shown in the preview excerpt
-_CHARS_PER_TOKEN = 4  # rough chars/token estimate used only for budgeting
-PREVIEW_MAX_CHARS = PREVIEW_TOKEN_BUDGET * _CHARS_PER_TOKEN
 
 
 def validate_tool_output(
