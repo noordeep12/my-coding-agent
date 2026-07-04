@@ -236,6 +236,118 @@ class TestChildLlmCallLinking:
         assert "child_llm_calls" not in events[1]
 
 
+class TestRecordLlmCallMessageDeltas:
+    """Prefix-delta emission (design D2): consecutive calls of the same kind
+    that only append messages should emit a delta, not a full snapshot;
+    anything that breaks the identity-verified prefix must fall back to a
+    full snapshot."""
+
+    def _call(self, rec, *, kind, call, messages):
+        rec.record_llm_call(
+            kind=kind,
+            call=call,
+            latency_s=0.1,
+            usage=_USAGE,
+            messages=messages,
+            context_window=8192,
+            response_data=_RESPONSE,
+        )
+
+    def test_first_call_of_a_kind_is_full_snapshot(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        msgs = [{"role": "user", "content": "hi"}]
+        self._call(rec, kind="main", call=1, messages=msgs)
+        ev = _read_events(path)[-1]
+        assert ev["messages"] == msgs
+        assert "messages_base_call" not in ev
+
+    def test_appended_messages_emit_a_delta(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        m1 = [{"role": "user", "content": "hi"}]
+        self._call(rec, kind="main", call=1, messages=m1)
+        m2 = m1 + [{"role": "assistant", "content": "hello"}]
+        self._call(rec, kind="main", call=2, messages=m2)
+        ev = _read_events(path)[-1]
+        assert ev["messages"] is None
+        assert ev["messages_base_call"] == 1
+        assert ev["messages_prefix_len"] == 1
+        assert ev["messages_suffix"] == [{"role": "assistant", "content": "hello"}]
+
+    def test_deltas_chain_across_three_calls(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        m1 = [{"role": "user", "content": "hi"}]
+        self._call(rec, kind="main", call=1, messages=m1)
+        m2 = m1 + [{"role": "assistant", "content": "a1"}]
+        self._call(rec, kind="main", call=2, messages=m2)
+        m3 = m2 + [{"role": "user", "content": "u2"}]
+        self._call(rec, kind="main", call=3, messages=m3)
+        ev = _read_events(path)[-1]
+        assert ev["messages_base_call"] == 2
+        assert ev["messages_prefix_len"] == 2
+        assert ev["messages_suffix"] == [{"role": "user", "content": "u2"}]
+
+    def test_replaced_history_falls_back_to_full_snapshot(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        m1 = [{"role": "user", "content": "hi"}]
+        self._call(rec, kind="main", call=1, messages=m1)
+        # Handoff: brand-new list of brand-new dict objects — identity break.
+        m2 = [{"role": "system", "content": "reset"}]
+        self._call(rec, kind="main", call=2, messages=m2)
+        ev = _read_events(path)[-1]
+        assert ev["messages"] == m2
+        assert "messages_base_call" not in ev
+
+    def test_shorter_history_falls_back_to_full_snapshot(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        m1 = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "a"}]
+        self._call(rec, kind="main", call=1, messages=m1)
+        m2 = m1[:1]
+        self._call(rec, kind="main", call=2, messages=m2)
+        ev = _read_events(path)[-1]
+        assert ev["messages"] == m2
+        assert "messages_base_call" not in ev
+
+    def test_snapshot_is_not_corrupted_by_later_in_place_appends(self, tmp_path):
+        """Regression: the pipeline appends new messages to the *same*
+        ``ctx.messages`` list object after each call returns (never replacing
+        it), so the recorder must not keep a live reference to the caller's
+        list — only a snapshot of it as of call time. Otherwise the stored
+        "base" snapshot's length silently grows between calls, corrupting
+        ``messages_prefix_len`` and losing messages on reconstruction."""
+        rec, path = _make_recorder(tmp_path)
+        live_messages = [{"role": "user", "content": "hi"}]
+        self._call(rec, kind="main", call=1, messages=live_messages)
+        # Simulate the pipeline appending in place to the *same* list object
+        # (as llm_call.py / tool_dispatch.py do) between calls 1 and 2.
+        live_messages.append({"role": "assistant", "content": "a1"})
+        live_messages.append({"role": "tool", "content": "t1"})
+        self._call(rec, kind="main", call=2, messages=live_messages)
+        events = _read_events(path)
+        assert events[0]["messages"] == [{"role": "user", "content": "hi"}]
+        ev2 = events[1]
+        assert ev2["messages"] is None
+        assert ev2["messages_base_call"] == 1
+        assert ev2["messages_prefix_len"] == 1
+        assert ev2["messages_suffix"] == [
+            {"role": "assistant", "content": "a1"},
+            {"role": "tool", "content": "t1"},
+        ]
+
+    def test_interleaved_kinds_each_chain_independently(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        main1 = [{"role": "user", "content": "hi"}]
+        self._call(rec, kind="main", call=1, messages=main1)
+        router1 = [{"role": "user", "content": "route"}]
+        self._call(rec, kind="tool_router", call=2, messages=router1)
+        main2 = main1 + [{"role": "assistant", "content": "a1"}]
+        self._call(rec, kind="main", call=3, messages=main2)
+        events = _read_events(path)
+        router_ev = events[1]
+        main_ev = events[2]
+        assert "messages_base_call" not in router_ev  # first call of its kind
+        assert main_ev["messages_base_call"] == 1  # chains off main's call 1
+
+
 class TestRecordAnomaly:
     def test_emits_correct_type_and_row_shape(self, tmp_path):
         rec, path = _make_recorder(tmp_path)
