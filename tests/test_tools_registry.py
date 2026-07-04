@@ -508,6 +508,64 @@ def test_bash_at_threshold_boundary_returns_json(mocker):
     assert isinstance(out, str)
 
 
+def test_bash_stdin_delivers_data_byte_for_byte():
+    hostile = 'it\'s "quoted" $(cmd) `backtick` <<HEREDOC\nline two\n'
+    parsed = json.loads(ToolsRegistry().bash("cat", stdin=hostile))
+    assert parsed["stdout"] == hostile.rstrip()
+    assert parsed["ok"] is True
+
+
+def test_bash_stdin_omitted_matches_prior_behavior(mocker):
+    run = mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args="echo hi", returncode=0, stdout="hi\n", stderr=""
+        ),
+    )
+    ToolsRegistry().bash("echo hi")
+    assert run.call_args.kwargs["input"] is None
+
+
+def test_bash_stdin_empty_string_is_distinct_from_omitted(mocker):
+    run = mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args="cat", returncode=0, stdout="", stderr=""
+        ),
+    )
+    ToolsRegistry().bash("cat", stdin="")
+    assert run.call_args.kwargs["input"] == ""
+
+
+def test_bash_stdin_ignored_by_command_completes_normally():
+    parsed = json.loads(ToolsRegistry().bash("echo hi", stdin="unused input"))
+    assert parsed["ok"] is True
+    assert parsed["stdout"] == "hi"
+
+
+def test_bash_stdin_with_timeout_returns_existing_timeout_envelope(mocker):
+    mocker.patch(
+        "my_coding_agent.engine.tool_registry.registry.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="sleep 99", timeout=60),
+    )
+    parsed = json.loads(ToolsRegistry().bash("sleep 99", stdin="data"))
+    assert parsed["ok"] is False
+    assert parsed["exit_code"] == -1
+    assert "timed out" in parsed["stderr"]
+
+
+def test_bash_multiline_script_via_write_file_reads_stdin(tmp_path):
+    reg = ToolsRegistry(base_dir=str(tmp_path))
+    script = tmp_path / "process.py"
+    reg.write_file(
+        "process.py",
+        "import sys\ndata = sys.stdin.read()\nprint(data.strip().upper())\n",
+    )
+    parsed = json.loads(reg.bash(f"python3 {script}", stdin="hello world"))
+    assert parsed["ok"] is True
+    assert parsed["stdout"] == "HELLO WORLD"
+
+
 # --- read_article ------------------------------------------------------------
 
 

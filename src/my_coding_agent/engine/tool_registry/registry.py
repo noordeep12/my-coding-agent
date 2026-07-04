@@ -136,13 +136,20 @@ class ToolRegistry:
             )
         return target
 
-    def bash(self, command: str, timeout: int = 60) -> "str | tuple[None, dict]":
+    def bash(
+        self, command: str, timeout: int = 60, stdin: str | None = None
+    ) -> "str | tuple[None, dict]":
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
         Use for running tests, installing packages, git operations, or any shell task.
         The 'ok' field is true when exit_code is 0.
 
         Note: shell=True is intentional — this tool is a first-class shell execution
         surface that must support pipes, redirections, builtins, and compound commands.
+
+        For multi-line scripts: write the script to a file with `write_file`, then
+        run it with `bash` (e.g. `python3 script.py`), passing any input data via the
+        `stdin` parameter. Do not combine a pipe with a heredoc, and avoid multi-line
+        quote-nested `-c` one-liners — both are recurring sources of delivery failures.
 
         Tags:
             shell, bash, execute, run, command, git, test, install, terminal
@@ -151,6 +158,11 @@ class ToolRegistry:
             command: Shell command to run. Use absolute paths where possible.
                 Example: 'ls -la' or 'git status'
             timeout: Seconds before the command is killed. Defaults to 60.
+            stdin: Text delivered to the command's standard input, without passing
+                through shell composition. Omitted (None) means no stdin redirection
+                — identical to a call made before this parameter existed. An empty
+                string provides stdin that is immediately exhausted (EOF), which is
+                distinct from omitting it.
         """
         try:
             # shell=True is required here: this bash tool is a first-class execution
@@ -167,6 +179,7 @@ class ToolRegistry:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                input=stdin,
             )
         except subprocess.TimeoutExpired:
             return json.dumps(
