@@ -90,6 +90,65 @@ def artifact_file_path(
     )
 
 
+_PUNCT_RE = re.compile(r"[^\w\s]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+# Fraction of a line's word tokens that must be contained in the task's token
+# set for the line to be treated as a restatement and dropped (design D3).
+_RESTATEMENT_CONTAINMENT_THRESHOLD = 0.8
+# Lines with fewer tokens than this are exempt from the containment check
+# unless verbatim-contained in the task (short additive facts legitimately
+# share words with the task, e.g. "port 8443").
+_SHORT_LINE_TOKEN_CUTOFF = 4
+
+
+def _normalize_tokens(text: str) -> list[str]:
+    """Lowercase, strip punctuation, collapse whitespace, and split into words."""
+    normalized = _PUNCT_RE.sub(" ", text.lower())
+    normalized = _WHITESPACE_RE.sub(" ", normalized).strip()
+    return normalized.split(" ") if normalized else []
+
+
+def strip_task_restatements(task: str, known_facts: str) -> str:
+    """Drop lines of known_facts that restate task, keeping genuinely additive lines.
+
+    Pure, deterministic, no LLM/network use (design D3). A line is dropped when
+    at least ``_RESTATEMENT_CONTAINMENT_THRESHOLD`` of its word tokens are
+    contained in the task's token set — this catches both verbatim copies and
+    compressed restatements. Lines shorter than ``_SHORT_LINE_TOKEN_CUTOFF``
+    tokens are kept unless verbatim-contained in the task, since short additive
+    facts often share words with the task without being a restatement.
+
+    Args:
+        task: The task text the child will receive.
+        known_facts: Additive-context text to filter, one fact per line.
+
+    Returns:
+        The surviving lines rejoined with newlines, or "" if none survive.
+    """
+    task_tokens = set(_normalize_tokens(task))
+    if not task_tokens:
+        return known_facts.strip()
+    kept_lines = []
+    for line in known_facts.splitlines():
+        if not line.strip():
+            continue
+        line_tokens = _normalize_tokens(line)
+        if not line_tokens:
+            continue
+        line_token_set = set(line_tokens)
+        contained = len(line_token_set & task_tokens) / len(line_token_set)
+        if len(line_tokens) < _SHORT_LINE_TOKEN_CUTOFF:
+            if contained >= 1.0:
+                continue
+            kept_lines.append(line)
+            continue
+        if contained >= _RESTATEMENT_CONTAINMENT_THRESHOLD:
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines)
+
+
 class ToolRegistry:
     """Hold the callable tools exposed to the agent.
 
@@ -459,13 +518,12 @@ class ToolRegistry:
             return None, False
         return _THINK_RE.sub("", content).strip(), cut
 
-    def delegate(self, task: str, context: str) -> str:
+    def delegate(self, task: str, known_facts: str = "") -> str:
         """Delegate a focused exploration or research task to a subagent.
-        Provide 'context' with the relevant background the subagent needs (file
-        paths, goal of the main task, key names/symbols). The subagent starts
-        fresh with only that context, reads files, runs targeted bash commands,
-        and returns a structured report. Use when understanding a file or
-        codebase section would crowd the main context.
+        The subagent starts fresh with only the task (and any known_facts),
+        reads files, runs targeted bash commands, and returns a structured
+        report. Use when understanding a file or codebase section would crowd
+        the main context.
 
         Tags:
         delegate, subagent, explore, analyze, file, code, read, understand, investigate
@@ -473,9 +531,11 @@ class ToolRegistry:
         Args:
             task: What the subagent should do. Example: 'Read llm.py and explain
                 how before_tool_call hooks work'
-            context: Relevant background from the main agent. Include file paths,
-                goal, and key names. Example: 'We are adding a hook to the agent
-                loop. Relevant files: agent.py, llm.py at /abs/path/'
+            known_facts: Optional facts the main agent holds that the task text
+                does not already state — file paths, environment facts,
+                constraints, the nature of the resource being worked on. Do NOT
+                restate or summarize the task here. Omit when you have nothing
+                to add. Example: 'Relevant files: agent.py, llm.py at /abs/path/'
         """
         # Lazy import — avoids a circular dependency (agent → tools → registry).
         from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS, AgentNode
@@ -483,6 +543,12 @@ class ToolRegistry:
         from my_coding_agent.pipeline.schema import CLEAN_FINISH_REASONS
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
+        facts = strip_task_restatements(task, known_facts) if known_facts else ""
+        opening_message = (
+            f"Task:\n{task}\n\nKnown facts from the main agent:\n{facts}"
+            if facts
+            else task
+        )
         now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%Z)")
         system_prompt = (
             "You are a focused subagent working for a main coding assistant. "
@@ -505,7 +571,7 @@ class ToolRegistry:
             model=OMLX_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Context:\n{context}\n\nTask:\n{task}"},
+                {"role": "user", "content": opening_message},
             ],
             tools=subagent_tools,
             label="SubAgent",

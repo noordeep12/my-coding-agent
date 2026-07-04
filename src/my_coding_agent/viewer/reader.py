@@ -495,6 +495,8 @@ def _build_tool_node(
             "latency_s": ev.get("latency_s"),
             "started_at": ev.get("started_at", ""),
             "child_session_id": ev.get("child_session_id"),
+            "ok": ev.get("ok"),
+            "error_class": ev.get("error_class"),
         },
     )
 
@@ -962,8 +964,15 @@ def _add_anomaly_nodes(
         )
 
 
-def _is_failed_tool_result(result: str) -> bool:
-    """Return ``True`` when a tool_call event's raw JSON result reports failure."""
+def _is_failed_tool_result(result: str, ok: bool | None = None) -> bool:
+    """Return ``True`` when a ``tool_call`` node reports failure.
+
+    Reads the top-level ``ok`` field recorded at capture time when present
+    (``ok is not None``); falls back to parsing the raw envelope ``result``
+    string for pre-change traces that lack it.
+    """
+    if ok is not None:
+        return ok is False
     try:
         parsed = json.loads(result)
     except (TypeError, ValueError):
@@ -992,7 +1001,7 @@ def _flag_anomalies(
             if node.type != "tool_call":
                 continue
             if node.attributes.get("name") != tool_name or not _is_failed_tool_result(
-                node.outputs.get("result", "")
+                node.outputs.get("result", ""), node.attributes.get("ok")
             ):
                 break
             node.anomaly_flag = True
@@ -1265,7 +1274,9 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
         path: Path to an ``events.jsonl`` file.
 
     Returns:
-        List of parsed event dicts; invalid lines are silently skipped.
+        List of parsed event dicts, with any prefix-delta-encoded ``llm_call``
+        events resolved to their full ``messages`` snapshot (see
+        ``_resolve_message_deltas``); invalid lines are silently skipped.
     """
     events: list[dict[str, Any]] = []
     try:
@@ -1281,7 +1292,44 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
             events.append(json.loads(line))
         except json.JSONDecodeError as exc:
             logger.warning("Skipping malformed JSONL line in %s: %s", path, exc)
+    _resolve_message_deltas(events)
     return events
+
+
+def _resolve_message_deltas(events: list[dict[str, Any]]) -> None:
+    """Reconstruct full ``messages`` snapshots for prefix-delta ``llm_call`` events.
+
+    Mirrors the recorder's write-side choke point (D3): resolves deltas in
+    file order, keyed by physical call number, so a delta's base may itself
+    be a delta (chained resolution). Mutates each delta event's ``messages``
+    field in place to the reconstructed list; full-snapshot and legacy events
+    (``messages`` already non-null) are left untouched.
+
+    A delta whose base call number is missing from the file (corrupt or
+    hand-truncated mid-event) degrades gracefully: the event's ``messages``
+    is set to ``None`` rather than raising, so the rest of the trace still
+    loads.
+    """
+    snapshots: dict[int, list[dict[str, Any]]] = {}
+    for ev in events:
+        if ev.get("type") != "llm_call" or "messages_base_call" not in ev:
+            if ev.get("type") == "llm_call" and ev.get("messages") is not None:
+                call = ev.get("call")
+                if isinstance(call, int):
+                    snapshots[call] = ev["messages"]
+            continue
+        base_call = ev.get("messages_base_call")
+        prefix_len = ev.get("messages_prefix_len", 0)
+        suffix = ev.get("messages_suffix") or []
+        base = snapshots.get(base_call) if isinstance(base_call, int) else None
+        if base is None:
+            ev["messages"] = None
+        else:
+            reconstructed = base[:prefix_len] + suffix
+            ev["messages"] = reconstructed
+            call = ev.get("call")
+            if isinstance(call, int):
+                snapshots[call] = reconstructed
 
 
 def _find_start(events: list[dict[str, Any]]) -> dict[str, Any]:

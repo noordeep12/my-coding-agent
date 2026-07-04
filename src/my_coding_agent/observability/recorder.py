@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .error_classification import classify_error
+
 # ── Event type tags written as the first key of every JSONL row ───────────────
 SESSION_START = "session_start"
 LLM_CALL = "llm_call"
@@ -113,6 +115,20 @@ class Recorder:
         # the same "stash now, attach at after_tool" pattern as the delegate
         # child link above.
         self._pending_child_llm_calls: list[int] = []
+        # Per-kind last emitted snapshot, for prefix-delta emission (design D2):
+        # the physical call number that carried the snapshot, and the message
+        # *objects* themselves (not a copy) so future calls can prove prefix
+        # reuse by identity. Relies on the append-or-replace invariant on
+        # conversation message lists: a message dict, once appended to a
+        # conversation, is never edited in place — only appended after or the
+        # whole list is replaced with a new one (e.g. on handoff). This holds
+        # everywhere today (audited: pipeline/nodes/llm_call.py,
+        # pipeline/nodes/tool_dispatch.py, engine/agent.py,
+        # pipeline/nodes/context_summarizer.py all append or replace, never
+        # mutate an already-appended dict). If that ever changes, the identity
+        # check simply misses the mutation and falls back to a full snapshot —
+        # never a wrong delta.
+        self._last_snapshot: dict[str, tuple[int, list[dict[str, Any]]]] = {}
 
     def _emit(self, event: dict[str, Any]) -> None:
         """Append one event row to ``events.jsonl``, serialized immediately.
@@ -166,12 +182,22 @@ class Recorder:
         started_at: str | None = None,
         max_tokens: int | None = None,
     ) -> None:
-        """Record one chat-completion call (full snapshot for payload kinds).
+        """Record one chat-completion call (incremental snapshot for payload kinds).
 
         For kinds in ``FULL_PAYLOAD_KINDS`` the ``messages`` snapshot and the
         ``tools`` definitions given to the model this turn are both kept, so the
         viewer can show the exact input (conversation + available tools) the
         model saw. Other kinds keep neither, to bound the event-stream size.
+
+        When the current *messages* provably extends the last snapshot
+        recorded for this *kind* (identity-verified shared prefix — see D2 in
+        the incremental-trace-capture design), only the new suffix is
+        emitted, referencing the base call number and prefix length; the
+        reader reconstructs the full snapshot at load time. Whenever prefix
+        reuse cannot be proven (first call of a kind, a shorter or replaced
+        message list, or any identity mismatch in the shared region), the
+        full snapshot is emitted, exactly as before — fidelity always wins
+        over size.
 
         ``started_at`` is the wall-clock moment the call began (captured by the
         caller alongside its monotonic latency timer); falls back to emit time
@@ -189,23 +215,66 @@ class Recorder:
             # the tool's event rather than the flat session chain.
             self._pending_child_llm_calls.append(call)
         keep_payload = kind in FULL_PAYLOAD_KINDS
-        self._emit(
-            {
-                "type": LLM_CALL,
-                "call": call,
-                "kind": kind,
-                "started_at": started_at or _now(),
-                "latency_s": round(latency_s, 4),
-                "prompt": usage.get("prompt_tokens", 0),
-                "completion": usage.get("completion_tokens", 0),
-                "total": usage.get("total_tokens", 0),
-                "context_window": context_window,
-                "messages": messages if keep_payload else None,
-                "tools": (tools or []) if keep_payload else None,
-                "response": _response_summary(response_data),
-                **({"max_tokens": max_tokens} if max_tokens is not None else {}),
-            }
-        )
+        event: dict[str, Any] = {
+            "type": LLM_CALL,
+            "call": call,
+            "kind": kind,
+            "started_at": started_at or _now(),
+            "latency_s": round(latency_s, 4),
+            "prompt": usage.get("prompt_tokens", 0),
+            "completion": usage.get("completion_tokens", 0),
+            "total": usage.get("total_tokens", 0),
+            "context_window": context_window,
+            "tools": (tools or []) if keep_payload else None,
+            "response": _response_summary(response_data),
+            **({"max_tokens": max_tokens} if max_tokens is not None else {}),
+        }
+        if keep_payload:
+            event.update(self._encode_messages(kind, call, messages))
+        else:
+            event["messages"] = None
+        self._emit(event)
+
+    def _encode_messages(
+        self, kind: str, call: int, messages: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Return the message-payload fields for a payload-kind call.
+
+        Emits a prefix-delta against the last snapshot recorded for *kind*
+        when the shared region is identity-verified unchanged; otherwise
+        emits the full snapshot. Always updates the per-kind snapshot to
+        *(call, messages)* for the next call of this kind to compare against.
+
+        The stored snapshot is a shallow copy of the *list container*
+        (``list(messages)``), never the caller's own list object. The caller
+        (``ctx.messages``) is appended to in place after this call returns
+        (the pipeline appends the assistant reply, then any tool results), so
+        holding the live reference would let the "previous" snapshot's length
+        silently grow between calls — corrupting ``prefix_len`` for the next
+        delta. A shallow copy freezes the length and order at call time while
+        the copied elements remain the exact same dict objects, so the
+        identity check on the next call is unaffected.
+        """
+        prev = self._last_snapshot.get(kind)
+        fields: dict[str, Any]
+        if prev is not None:
+            base_call, base_messages = prev
+            prefix_len = len(base_messages)
+            if len(messages) >= prefix_len and all(
+                messages[i] is base_messages[i] for i in range(prefix_len)
+            ):
+                fields = {
+                    "messages": None,
+                    "messages_base_call": base_call,
+                    "messages_prefix_len": prefix_len,
+                    "messages_suffix": messages[prefix_len:],
+                }
+            else:
+                fields = {"messages": messages}
+        else:
+            fields = {"messages": messages}
+        self._last_snapshot[kind] = (call, list(messages))
+        return fields
 
     # ── tool capture (called directly by the ToolExecutor) ─────────────────────
     def before_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -214,8 +283,23 @@ class Recorder:
         self._pending_child_llm_calls = []
         return args
 
-    def after_tool(self, name: str, args: dict[str, Any], result: str) -> str:
-        """Post-dispatch hook: emit the tool event with full I/O. Result unchanged."""
+    def after_tool(
+        self,
+        name: str,
+        args: dict[str, Any],
+        result: str,
+        ok: bool,
+        error: str | None,
+    ) -> str:
+        """Post-dispatch hook: emit the tool event with full I/O. Result unchanged.
+
+        ``ok``/``error`` are the outcome the executor already holds (the
+        envelope's verdict/error text, or the executor-failure descriptor's
+        error text) — the capture-time identity, never re-derived from
+        ``result``. On failure, ``error_class`` is computed via the shared
+        classification helper so it agrees with the anomaly detector's
+        failure signature.
+        """
         if self._pending is not None and self._pending[1] == name:
             latency = time.monotonic() - self._pending[0]
             started_at = self._pending[2]
@@ -230,7 +314,12 @@ class Recorder:
             "result": result,
             "latency_s": round(latency, 4),
             "started_at": started_at,
+            "ok": ok,
         }
+        if not ok:
+            error_text = error or ""
+            event["error"] = error_text
+            event["error_class"] = classify_error(error_text)
         # Attach the spawned subagent's session id to a delegate call so the tree
         # nests the child under this exact tool call.
         if name == "delegate" and self._pending_delegate_child is not None:

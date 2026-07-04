@@ -316,10 +316,10 @@ class ToolExecutor:
         Serializes, then lets the recorder capture the final agent-facing content.
         """
 
-        def capture(content: str) -> str:
+        def capture(content: str, ok: bool, error: str | None) -> str:
             """Let the observability recorder (if any) emit the tool event."""
             if self.llm._recorder is not None:
-                self.llm._recorder.after_tool(func_name, args, content)
+                self.llm._recorder.after_tool(func_name, args, content, ok, error)
             return content
 
         if failure is not None:
@@ -367,7 +367,7 @@ class ToolExecutor:
 
         env["metadata"]["lang"] = resolve_lang(func_name, args, env)
         serialized = json.dumps(validate_tool_result(env), default=str)
-        return capture(serialized), status, record
+        return capture(serialized, env["ok"], env["error"]), status, record
 
     def _offload_streams(
         self, tool_call_id: str, artifact: dict[str, Any]

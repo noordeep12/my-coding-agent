@@ -7,33 +7,22 @@ from the pipeline node that consumes them (``nodes/anomaly_detect.py``).
 
 from __future__ import annotations
 
-import re
 from typing import Any
+
+from ..observability import classify_error
 
 # Threshold at which a same-signature failure streak is signaled. Not
 # configurable, per simplicity-first (confirmed by the motivating metric).
 STREAK_THRESHOLD = 3
 
-# Last Python-exception-style token in an error string, e.g. the
-# ``json.decoder.JSONDecodeError`` in a bash traceback. Matches a dotted
-# identifier ending in ``Error`` or ``Exception``.
-_EXC_TOKEN_RE = re.compile(r"[A-Za-z_][\w.]*(?:Error|Exception)\b")
-
-# Digits stripped from the fallback bucket so wording that differs only by a
-# number (line numbers, counts) still buckets together.
-_DIGITS_RE = re.compile(r"\d+")
-
-_FALLBACK_MAX_LEN = 80
-
 
 def error_signature(record: dict[str, Any]) -> str:
     """Return ``"<tool_name>|<error_class>"`` for a failed tool record.
 
-    ``error_class`` is the last ``…Error``/``…Exception``-style token found in
-    the record's ``error`` text when one is present (e.g.
-    ``json.decoder.JSONDecodeError`` inside a bash traceback); otherwise it
-    falls back to the error text's first line, digits stripped and truncated,
-    as a crude bucket. Args never participate in the signature.
+    ``error_class`` comes from the shared classification helper (same rule
+    the recorder uses for ``tool_call`` events' ``error_class``), so grouping
+    by signature here and by ``error_class`` there agree by construction. Args
+    never participate in the signature.
 
     Args:
         record: A tool-call record as appended to ``ctx.tool_records`` (must
@@ -44,14 +33,7 @@ def error_signature(record: dict[str, Any]) -> str:
     """
     tool_name = record.get("name", "")
     error_text = str(record.get("error", ""))
-    matches = _EXC_TOKEN_RE.findall(error_text)
-    if matches:
-        error_class = matches[-1]
-    else:
-        first_line = error_text.splitlines()[0] if error_text else ""
-        normalized = _DIGITS_RE.sub("", first_line).strip()
-        error_class = normalized[:_FALLBACK_MAX_LEN]
-    return f"{tool_name}|{error_class}"
+    return f"{tool_name}|{classify_error(error_text)}"
 
 
 def trailing_streak(

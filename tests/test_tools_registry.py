@@ -723,6 +723,154 @@ def test_read_article_verbatim_truncation_signaled_in_metadata_not_body(mocker):
     assert out[1]["metadata"]["truncated"] is True
 
 
+# --- strip_task_restatements (redundancy guard) -------------------------------
+
+
+def test_guard_drops_verbatim_task_copy():
+    from my_coding_agent.engine.tool_registry.registry import (
+        strip_task_restatements,
+    )
+
+    task = "Collect latest CVEs from GitHub Advisories API as JSON and summarize."
+    assert strip_task_restatements(task, task) == ""
+
+
+def test_guard_drops_compressed_restatement_from_session_fbef66a33c18():
+    from my_coding_agent.engine.tool_registry.registry import (
+        strip_task_restatements,
+    )
+
+    task = (
+        "This task: collect latest CVEs from GitHub Advisories API as JSON "
+        "and summarize them for the report."
+    )
+    restatement = (
+        "Task: Collect latest CVEs from GitHub Advisories API as JSON and summarize."
+    )
+    assert strip_task_restatements(task, restatement) == ""
+
+
+def test_guard_keeps_genuinely_additive_lines_unmodified():
+    from my_coding_agent.engine.tool_registry.registry import (
+        strip_task_restatements,
+    )
+
+    task = "Read llm.py and explain how before_tool_call hooks work"
+    facts = "Relevant files: agent.py, llm.py at /abs/path/repo"
+    assert strip_task_restatements(task, facts) == facts
+
+
+def test_guard_mixed_input_keeps_only_additive_lines():
+    from my_coding_agent.engine.tool_registry.registry import (
+        strip_task_restatements,
+    )
+
+    task = "Read llm.py and explain how before_tool_call hooks work"
+    facts = (
+        "Read llm.py and explain how before_tool_call hooks work\n"
+        "Working directory: /abs/path/repo"
+    )
+    result = strip_task_restatements(task, facts)
+    assert result == "Working directory: /abs/path/repo"
+
+
+def test_guard_all_restatement_input_yields_empty():
+    from my_coding_agent.engine.tool_registry.registry import (
+        strip_task_restatements,
+    )
+
+    task = "Summarize the README file for this repo"
+    facts = "Summarize the README\nfor this repo"
+    assert strip_task_restatements(task, facts) == ""
+
+
+def test_guard_keeps_short_additive_line_sharing_task_words():
+    from my_coding_agent.engine.tool_registry.registry import (
+        strip_task_restatements,
+    )
+
+    task = "Check whether the service on port 8443 responds"
+    facts = "use port 9000"
+    assert strip_task_restatements(task, facts) == facts
+
+
+def test_guard_uses_no_network_or_llm_calls(mocker):
+    from my_coding_agent.engine.tool_registry.registry import (
+        strip_task_restatements,
+    )
+
+    http_get = mocker.patch("httpx.get")
+    strip_task_restatements("do the thing", "some fact\nanother fact")
+    http_get.assert_not_called()
+
+
+# --- delegate schema and opening-message construction -------------------------
+
+
+def test_delegate_schema_known_facts_present_with_additive_description():
+    from my_coding_agent.engine.tool_registry import function_to_json
+
+    schema = function_to_json(ToolsRegistry.delegate)
+    props = schema["function"]["parameters"]["properties"]
+    assert "known_facts" in props
+    description = props["known_facts"]["description"].lower()
+    assert "not restate" in description or "do not restate" in description
+    assert "file paths" in description
+
+
+def test_delegate_schema_known_facts_not_required_task_is():
+    from my_coding_agent.engine.tool_registry import function_to_json
+
+    schema = function_to_json(ToolsRegistry.delegate)
+    required = schema["function"]["parameters"]["required"]
+    assert "task" in required
+    assert "known_facts" not in required
+
+
+def test_delegate_opening_message_task_only_when_known_facts_omitted(mocker):
+    fake_agent = _make_fake_agent(mocker)
+    captured = {}
+
+    def _fake_agent_node(*args, **kwargs):
+        captured["messages"] = kwargs["messages"]
+        return fake_agent
+
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    ToolsRegistry().delegate(task="do X")
+    opening = captured["messages"][1]["content"]
+    assert opening == "do X"
+
+
+def test_delegate_opening_message_task_only_when_guard_empties_facts(mocker):
+    fake_agent = _make_fake_agent(mocker)
+    captured = {}
+
+    def _fake_agent_node(*args, **kwargs):
+        captured["messages"] = kwargs["messages"]
+        return fake_agent
+
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    ToolsRegistry().delegate(task="do X", known_facts="do X")
+    opening = captured["messages"][1]["content"]
+    assert opening == "do X"
+
+
+def test_delegate_opening_message_presents_facts_distinctly_from_task(mocker):
+    fake_agent = _make_fake_agent(mocker)
+    captured = {}
+
+    def _fake_agent_node(*args, **kwargs):
+        captured["messages"] = kwargs["messages"]
+        return fake_agent
+
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    ToolsRegistry().delegate(task="do X", known_facts="file at /abs/path/repo")
+    opening = captured["messages"][1]["content"]
+    assert opening.count("do X") == 1
+    assert "file at /abs/path/repo" in opening
+    assert opening.index("do X") < opening.index("file at /abs/path/repo")
+
+
 # --- delegate ----------------------------------------------------------------
 
 
@@ -750,7 +898,7 @@ def test_delegate_clean_finish_returns_final_turn_verbatim(mocker):
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
-    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
     assert out == "final turn"
     fake_agent.execute.assert_called_once_with(max_steps=DEFAULT_MAX_STEPS)
     fake_agent.generate_report.assert_not_called()
@@ -768,7 +916,7 @@ def test_delegate_cutoff_returns_pipeline_report(mocker):
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
-    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
     assert out == "synthesized report"
     fake_agent.final_assistant_text.assert_not_called()
     fake_agent.generate_report.assert_not_called()
@@ -786,7 +934,7 @@ def test_delegate_empty_final_turn_falls_back_to_generate_report(mocker):
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
-    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
     assert out == "fallback report"
     fake_agent.generate_report.assert_called_once_with()
     # generate_report records its own report node; delegate must not add one.
@@ -802,7 +950,7 @@ def test_delegate_no_pipeline_report_falls_back_to_generate_report(mocker):
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
-    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
     assert out == "fallback report"
     fake_agent.generate_report.assert_called_once_with()
 
@@ -849,7 +997,7 @@ def test_delegate_clean_finish_end_to_end_zero_report_kind_rows(mocker, tmp_path
     )
     mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
 
-    ToolsRegistry().delegate(task="do X", context="ctx")
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
 
     events = _read_events(events_path)
     report_events = [e for e in events if e["type"] == "report"]
@@ -879,7 +1027,7 @@ def test_delegate_cutoff_end_to_end_one_report_kind_row(mocker, tmp_path):
     )
     mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
 
-    ToolsRegistry().delegate(task="do X", context="ctx")
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
 
     events = _read_events(events_path)
     report_events = [e for e in events if e["type"] == "report"]
@@ -899,7 +1047,7 @@ def test_delegate_fallback_end_to_end_one_report_kind_row_and_resave(mocker, tmp
     )
     mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
 
-    out = ToolsRegistry().delegate(task="do X", context="ctx")
+    out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
 
     assert out == "fallback report"
     events = _read_events(events_path)
@@ -924,7 +1072,7 @@ def test_delegate_resaves_session_data_after_generate_report(mocker):
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
-    ToolsRegistry().delegate(task="do X", context="ctx")
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
     fake_agent._save_session_data.assert_called_once_with(DEFAULT_MAX_STEPS)
 
 
@@ -935,7 +1083,7 @@ def test_delegate_skips_resave_on_clean_finish(mocker):
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
-    ToolsRegistry().delegate(task="do X", context="ctx")
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
     fake_agent._save_session_data.assert_not_called()
 
 
@@ -953,7 +1101,7 @@ def test_delegate_hands_usage_summary_up_to_parent_agent_node(mocker):
     parent = mocker.Mock()
     token = current_agent_node.set(parent)
     try:
-        ToolsRegistry().delegate(task="do X", context="ctx")
+        ToolsRegistry().delegate(task="do X", known_facts="ctx")
     finally:
         current_agent_node.reset(token)
     parent.add_child_usage.assert_called_once_with(
@@ -968,7 +1116,7 @@ def test_delegate_marks_subagent_needs_handback(mocker):
         "my_coding_agent.engine.agent.AgentNode",
         return_value=fake_agent,
     )
-    ToolsRegistry().delegate(task="do X", context="ctx")
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
     assert spy.call_args.kwargs["needs_handback"] is True
 
 
@@ -985,7 +1133,7 @@ def test_delegate_excludes_delegate_tool_from_subagent(mocker):
     ]
     reg = ToolsRegistry()
     reg._tools = tools
-    ToolsRegistry.delegate(reg, task="t", context="c")
+    ToolsRegistry.delegate(reg, task="t", known_facts="c")
     _, kwargs = spy.call_args
     passed_tools = kwargs["tools"]
     names = [t["function"]["name"] for t in passed_tools]
@@ -1013,7 +1161,7 @@ def test_delegate_forwards_parent_toolset_via_executor(mocker, bare_llm):
         {"function": {"name": "delegate"}},
     ]
     executor = ToolExecutor({"tool_calls": []}, bare_llm, tools=tools)
-    executor.registry.delegate(task="t", context="c")
+    executor.registry.delegate(task="t", known_facts="c")
     _, kwargs = spy.call_args
     names = [t["function"]["name"] for t in kwargs["tools"]]
     assert names == ["bash", "read_file"]

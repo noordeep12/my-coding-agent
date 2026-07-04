@@ -22,7 +22,7 @@ def _delegate_system_prompt(mocker):
         return fake_agent
 
     mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
-    ToolsRegistry().delegate(task="do X", context="ctx")
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
     return captured["messages"][0]["content"]
 
 

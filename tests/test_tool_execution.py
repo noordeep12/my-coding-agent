@@ -524,6 +524,43 @@ def test_executor_offloads_large_stderr_into_error(
     assert "stdout" not in env["metadata"]["preview"]
 
 
+def test_offloaded_artifact_reports_true_verdict_to_recorder(
+    bare_executor, bare_llm, tmp_path, monkeypatch, mocker
+):
+    """The offloaded-artifact path (result is only a bounded preview) still
+    records the envelope's true `ok`/`error` verdict to the recorder — not
+    derived from the truncated preview string."""
+    monkeypatch.chdir(tmp_path)
+    err = "ERRHEAD\n" + ("e" * (PREVIEW_MAX_CHARS + 500)) + "\nERRTAIL"
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            {"exit_code": 1, "ok": False, "stdout": "", "stderr": err},
+        ),
+    )
+    captured = {}
+    bare_llm._recorder = type(
+        "FakeRecorder",
+        (),
+        {
+            "before_tool": lambda self, name, args: args,
+            "after_tool": lambda self, name, args, result, ok, error: captured.update(
+                ok=ok, error=error
+            ),
+        },
+    )()
+    token = current_session_id.set("sess123")
+    try:
+        _invoke(bare_executor, "call1", "bash", {"command": "x"}, ToolsRegistry())
+    finally:
+        current_session_id.reset(token)
+
+    assert captured["ok"] is False
+    assert "[Preview:" in captured["error"]  # matches the envelope's own error text
+
+
 def test_executor_offloads_both_streams_separately(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
