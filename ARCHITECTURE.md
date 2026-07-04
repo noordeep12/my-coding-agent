@@ -243,3 +243,5 @@ The context window size is discovered lazily on first access to `LLM.context_win
 
 When the `bash` tool's combined stdout/stderr exceeds the artifact threshold, the dispatcher offloads it to a per-stream file and substitutes a deterministic bounded preview — it does not generate an LLM summary.
 
+The Trace Explorer's machine-wide resource badge (`🖥 cpu/ram/gpu`, node-resource-monitoring) renders only in the node detail panel, not the tree rows — it carries its own `res` badge class (distinct from `lat`) so `TREE_BADGE` can exclude it, keeping the tree scannable.
+

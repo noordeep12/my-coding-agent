@@ -156,6 +156,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .nbadge.ok{color:var(--pos);background:var(--pos-bg)}
 .nbadge.err{color:var(--neg);background:var(--neg-bg)}
 .nbadge.lat{color:var(--muted);background:var(--bg2)}
+.nbadge.res{color:var(--muted);background:var(--bg2)}
 .nbadge.ts{color:var(--muted);background:var(--bg2)}
 .nbadge.step{color:var(--muted);background:var(--bg2)}
 .nbadge.art{color:var(--sub);background:var(--sub-soft)}
@@ -541,12 +542,13 @@ function nodeBadges(node){
   const lat = a.latency_s!=null ? a.latency_s : (node.type==='session_end' ? a.elapsed_s : null);
   if(lat!=null) b.push({t:'⚡ '+lat+'s', c:'lat'});
   // machine-wide resource figures for this node's window (node-resource-monitoring)
+  // — detail-panel only (not TREE_BADGE), so the tree rows stay uncluttered.
   if(a.resources){
     const r = a.resources;
     const cpu = r.cpu_pct ? r.cpu_pct.avg+'%' : '?';
     const ram = r.ram_pct ? r.ram_pct.avg+'%' : '?';
     const gpu = r.gpu_pct ? ' gpu '+r.gpu_pct.avg+'%' : '';
-    b.push({t:'🖥 cpu '+cpu+' ram '+ram+gpu, c:'lat'});
+    b.push({t:'🖥 cpu '+cpu+' ram '+ram+gpu, c:'res'});
   }
   // 6. timestamp (neutral)
   const ts = fmtTime(a.started_at); if(ts) b.push({t:'🕘 '+ts, c:'ts'});
