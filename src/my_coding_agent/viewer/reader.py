@@ -495,6 +495,8 @@ def _build_tool_node(
             "latency_s": ev.get("latency_s"),
             "started_at": ev.get("started_at", ""),
             "child_session_id": ev.get("child_session_id"),
+            "ok": ev.get("ok"),
+            "error_class": ev.get("error_class"),
         },
     )
 
@@ -954,8 +956,15 @@ def _add_anomaly_nodes(
         )
 
 
-def _is_failed_tool_result(result: str) -> bool:
-    """Return ``True`` when a tool_call event's raw JSON result reports failure."""
+def _is_failed_tool_result(result: str, ok: bool | None = None) -> bool:
+    """Return ``True`` when a ``tool_call`` node reports failure.
+
+    Reads the top-level ``ok`` field recorded at capture time when present
+    (``ok is not None``); falls back to parsing the raw envelope ``result``
+    string for pre-change traces that lack it.
+    """
+    if ok is not None:
+        return ok is False
     try:
         parsed = json.loads(result)
     except (TypeError, ValueError):
@@ -984,7 +993,7 @@ def _flag_anomalies(
             if node.type != "tool_call":
                 continue
             if node.attributes.get("name") != tool_name or not _is_failed_tool_result(
-                node.outputs.get("result", "")
+                node.outputs.get("result", ""), node.attributes.get("ok")
             ):
                 break
             node.anomaly_flag = True

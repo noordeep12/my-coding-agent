@@ -209,7 +209,11 @@ class TestChildLlmCallLinking:
         rec.before_tool("read_tool_artifact", {"tool_call_id": "c1", "query": "q"})
         self._record_llm_call(rec, call=1)
         rec.after_tool(
-            "read_tool_artifact", {"tool_call_id": "c1", "query": "q"}, "result"
+            "read_tool_artifact",
+            {"tool_call_id": "c1", "query": "q"},
+            "result",
+            True,
+            None,
         )
         events = _read_events(path)
         tool_ev = next(e for e in events if e["type"] == "tool_call")
@@ -219,7 +223,7 @@ class TestChildLlmCallLinking:
         rec, path = _make_recorder(tmp_path)
         self._record_llm_call(rec, call=1)  # no tool pending
         rec.before_tool("bash", {"command": "ls"})
-        rec.after_tool("bash", {"command": "ls"}, "result")
+        rec.after_tool("bash", {"command": "ls"}, "result", True, None)
         events = _read_events(path)
         tool_ev = next(e for e in events if e["type"] == "tool_call")
         assert "child_llm_calls" not in tool_ev
@@ -228,9 +232,9 @@ class TestChildLlmCallLinking:
         rec, path = _make_recorder(tmp_path)
         rec.before_tool("read_tool_artifact", {})
         self._record_llm_call(rec, call=1)
-        rec.after_tool("read_tool_artifact", {}, "result 1")
+        rec.after_tool("read_tool_artifact", {}, "result 1", True, None)
         rec.before_tool("bash", {"command": "ls"})  # no LLM call inside this one
-        rec.after_tool("bash", {"command": "ls"}, "result 2")
+        rec.after_tool("bash", {"command": "ls"}, "result 2", True, None)
         events = [e for e in _read_events(path) if e["type"] == "tool_call"]
         assert events[0]["child_llm_calls"] == [1]
         assert "child_llm_calls" not in events[1]

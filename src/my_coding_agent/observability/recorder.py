@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .error_classification import classify_error
+
 # ── Event type tags written as the first key of every JSONL row ───────────────
 SESSION_START = "session_start"
 LLM_CALL = "llm_call"
@@ -281,8 +283,23 @@ class Recorder:
         self._pending_child_llm_calls = []
         return args
 
-    def after_tool(self, name: str, args: dict[str, Any], result: str) -> str:
-        """Post-dispatch hook: emit the tool event with full I/O. Result unchanged."""
+    def after_tool(
+        self,
+        name: str,
+        args: dict[str, Any],
+        result: str,
+        ok: bool,
+        error: str | None,
+    ) -> str:
+        """Post-dispatch hook: emit the tool event with full I/O. Result unchanged.
+
+        ``ok``/``error`` are the outcome the executor already holds (the
+        envelope's verdict/error text, or the executor-failure descriptor's
+        error text) — the capture-time identity, never re-derived from
+        ``result``. On failure, ``error_class`` is computed via the shared
+        classification helper so it agrees with the anomaly detector's
+        failure signature.
+        """
         if self._pending is not None and self._pending[1] == name:
             latency = time.monotonic() - self._pending[0]
             started_at = self._pending[2]
@@ -297,7 +314,12 @@ class Recorder:
             "result": result,
             "latency_s": round(latency, 4),
             "started_at": started_at,
+            "ok": ok,
         }
+        if not ok:
+            error_text = error or ""
+            event["error"] = error_text
+            event["error_class"] = classify_error(error_text)
         # Attach the spawned subagent's session id to a delegate call so the tree
         # nests the child under this exact tool call.
         if name == "delegate" and self._pending_delegate_child is not None:
