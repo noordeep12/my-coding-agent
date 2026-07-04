@@ -18,7 +18,11 @@ from my_coding_agent.engine.llm import LLM
 from my_coding_agent.pipeline.context import RunContext
 from my_coding_agent.pipeline.nodes.context_guard import ContextGuardNode
 from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
-from my_coding_agent.pipeline.nodes.tool_routing import _routing_signal
+from my_coding_agent.pipeline.nodes.tool_routing import (
+    ROUTING_EXCERPT_CHARS,
+    ROUTING_SIGNAL_MAX_CHARS,
+    _routing_signal,
+)
 
 # --- helpers -----------------------------------------------------------------
 
@@ -104,6 +108,50 @@ def test_routing_signal_skips_none_content():
         {"role": "assistant", "content": "only this"},
     ]
     assert _routing_signal(messages) == "only this"
+
+
+def test_routing_signal_tool_call_only_turn_contributes_names():
+    messages = [
+        {"role": "user", "content": "first task"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "bash"}}],
+        },
+    ]
+    assert _routing_signal(messages) == "first task bash"
+
+
+def test_routing_signal_changes_with_new_tool_results():
+    step1 = [
+        {"role": "user", "content": "first task"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "bash"}}],
+        },
+    ]
+    step2 = step1 + [
+        {"role": "tool", "name": "bash", "content": "output here"},
+    ]
+    assert _routing_signal(step1) != _routing_signal(step2)
+    assert "output here" in _routing_signal(step2)
+
+
+def test_routing_signal_caps_oversized_tool_result():
+    long_content = "x" * (ROUTING_EXCERPT_CHARS + 500)
+    messages = [
+        {"role": "user", "content": "task"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "bash"}}],
+        },
+        {"role": "tool", "name": "bash", "content": long_content},
+    ]
+    signal = _routing_signal(messages)
+    assert len(signal) <= ROUTING_SIGNAL_MAX_CHARS
+    assert "x" * (ROUTING_EXCERPT_CHARS + 1) not in signal
 
 
 # --- FinalizeStepNode (previously _track_step_usage on Agent) ---------------

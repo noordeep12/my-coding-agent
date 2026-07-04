@@ -174,24 +174,67 @@ def test_tool_dispatch_node_no_op_on_empty_messages():
 def test_tool_routing_node_creates_router_once(mocker):
     ctx = _make_ctx()
     ctx.messages = [{"role": "user", "content": "do it"}]
-    mock_router = mocker.patch(
+    mock_router_cls = mocker.patch(
         "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter"
-    ).return_value
-    mock_router.route_tools.return_value = []
+    )
+    mock_router = mock_router_cls.return_value
+    mock_router.route_tools.side_effect = [["a"], ["b"]]
 
     node = ToolRoutingNode()
     node.run(ctx)
-    node.run(ctx)  # second call must reuse the same instance
+    ctx.messages = [{"role": "user", "content": "do something else"}]
+    node.run(ctx)  # second call, different signal, must reuse the same instance
 
-    # ToolRouter constructor called once, route_tools called twice
-    from my_coding_agent.pipeline.nodes.tool_routing import ToolRouter  # noqa: F401
+    assert mock_router_cls.call_count == 1
+    assert mock_router.route_tools.call_count == 2
 
-    assert (
-        mocker.patch(
-            "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter"
-        ).call_count
-        == 0
-    )  # already patched above — constructor was called once total
+
+def test_tool_routing_node_reuses_selection_on_unchanged_signal(mocker):
+    ctx = _make_ctx()
+    ctx.messages = [{"role": "user", "content": "do it"}]
+    mock_router = mocker.patch(
+        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter"
+    ).return_value
+    mock_router.route_tools.return_value = ["a"]
+
+    node = ToolRoutingNode()
+    node.run(ctx)
+    node.run(ctx)  # identical signal — must not recompute
+
+    assert mock_router.route_tools.call_count == 1
+    assert ctx.routed_tools == ["a"]
+
+
+def test_tool_routing_node_skips_record_router_on_unchanged_signal():
+    ctx = _make_ctx()
+    ctx.messages = [{"role": "user", "content": "do it"}]
+    ctx.all_tools = []  # real ToolRouter, phase "empty", still records once per call
+
+    node = ToolRoutingNode()
+    node.run(ctx)
+    node.run(ctx)  # identical signal — record_router must not fire again
+
+    assert ctx.llm._recorder.record_router.call_count == 1
+
+
+def test_tool_routing_node_reroutes_on_changed_signal(mocker):
+    ctx = _make_ctx()
+    ctx.messages = [{"role": "user", "content": "do it"}]
+    mock_router = mocker.patch(
+        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter"
+    ).return_value
+    mock_router.route_tools.side_effect = [["a"], ["b"]]
+
+    node = ToolRoutingNode()
+    node.run(ctx)
+    ctx.messages = [
+        {"role": "user", "content": "do it"},
+        {"role": "assistant", "content": "working"},
+    ]
+    node.run(ctx)
+
+    assert mock_router.route_tools.call_count == 2
+    assert ctx.routed_tools == ["b"]
 
 
 # ---------------------------------------------------------------------------
@@ -298,3 +341,49 @@ def test_pipeline_execute_returns_messages_on_stop():
     ctx.messages = [{"role": "user", "content": "hi"}]
     result = Pipeline([_SignalNode("STOP")]).execute(ctx)
     assert result == ctx.messages
+
+
+# ---------------------------------------------------------------------------
+# ToolRoutingNode — end-to-end cadence across multiple pipeline steps
+# ---------------------------------------------------------------------------
+
+
+def test_tool_routing_records_one_event_when_signal_stays_static():
+    class _AdvanceStep(BaseNode):
+        name = "advance"
+
+        def run(self, ctx):
+            ctx.step_num += 1
+            ctx.signal = "CONTINUE"
+
+    ctx = _make_ctx(max_steps=3)
+    ctx.messages = [{"role": "user", "content": "do it"}]
+    ctx.all_tools = []
+    Pipeline([ToolRoutingNode(), _AdvanceStep()]).execute(ctx)
+    assert ctx.llm._recorder.record_router.call_count == 1
+
+
+def test_tool_routing_records_one_event_per_changed_signal():
+    class _AppendToolMessage(BaseNode):
+        name = "append_tool_msg"
+        counter = 0
+
+        def run(self, ctx):
+            self.counter += 1
+            ctx.messages.append(
+                {"role": "tool", "name": "bash", "content": f"output {self.counter}"}
+            )
+            ctx.step_num += 1
+            ctx.signal = "CONTINUE"
+
+    ctx = _make_ctx(max_steps=3)
+    ctx.messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "bash"}}],
+        }
+    ]
+    ctx.all_tools = []
+    Pipeline([ToolRoutingNode(), _AppendToolMessage()]).execute(ctx)
+    assert ctx.llm._recorder.record_router.call_count == 3
