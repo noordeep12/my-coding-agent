@@ -104,6 +104,7 @@ Visualise sessions in a browser with an interactive pipeline DAG:
 ```bash
 my-coding-agent-traces          # defaults: port 7474, dir .my_coding_agent
 my-coding-agent-traces --port 8080 --dir /path/to/.my_coding_agent
+my-coding-agent-traces --dir .my_coding_agent --check <session_id>  # deterministic sum-check, no server; exit 0/1
 ```
 
 Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, served fully offline) shows:

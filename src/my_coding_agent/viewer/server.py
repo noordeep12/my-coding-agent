@@ -16,6 +16,7 @@ import dataclasses
 import json
 import logging
 import re
+import sys
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -25,6 +26,7 @@ import click
 
 from ..utils.exceptions import MyCodingAgentError
 from .reader import list_sessions, load_session
+from .sumcheck import check_tree
 
 logger = logging.getLogger(__name__)
 
@@ -510,6 +512,11 @@ function nodeBadges(node){
   if(node.type==='llm_call' && a.capped===true) b.push({t:'✂️ cut at '+a.max_tokens+'-token cap', c:'trunc'});
   if(node.type==='tool_call' && a.name==='bash' && isMultilineBashCall(node)) b.push({t:'📜 multi-line', c:'art'});
   if(node.type==='router' && a.phase) b.push({t:'🧭 '+phaseLabel(a.phase), c:'phase'});
+  if(node.type==='report'){
+    if(a.source==='verbatim') b.push({t:'🆓 free', c:'ok'});
+    else if(a.source==='summarizer'||a.source==='fallback') b.push({t:'💰 paid', c:'trunc'});
+    else b.push({t:'❔ unknown', c:'phase'});
+  }
   // 4. counts (neutral type signals)
   if(node.type==='router'){
     const sel = node.outputs && node.outputs.selected;
@@ -1049,9 +1056,28 @@ def run_server(
     show_default=True,
     help="Root directory containing session subdirectories.",
 )
-def _cli(port: int, sessions_dir: str) -> None:
+@click.option(
+    "--check",
+    "check_session_id",
+    default=None,
+    help=(
+        "Run the deterministic, LLM-free sum-check on this session id "
+        "(and its delegated subtree) and exit — no server is started."
+    ),
+)
+def _cli(port: int, sessions_dir: str, check_session_id: str | None) -> None:
     """Launch the Trace Explorer on localhost.
 
     Opens http://localhost:PORT in your browser. Press Ctrl-C to stop.
     """
+    if check_session_id is not None:
+        results = check_tree(Path(sessions_dir), check_session_id)
+        failed = False
+        for result in results:
+            if result.status == "fail":
+                failed = True
+            label = result.status.upper()
+            suffix = f": {'; '.join(result.reasons)}" if result.reasons else ""
+            click.echo(f"{label} {result.session_id}{suffix}")
+        sys.exit(1 if failed else 0)
     run_server(port=port, base_dir=Path(sessions_dir))

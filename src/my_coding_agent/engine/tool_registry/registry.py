@@ -25,6 +25,11 @@ from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
 from ...utils.parsing import extract_finish_reason, extract_message, extract_usage
 from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
+from ..schema import (
+    REPORT_SOURCE_FALLBACK,
+    REPORT_SOURCE_SUMMARIZER,
+    REPORT_SOURCE_VERBATIM,
+)
 from ..tool_execution.schema import (
     ARTICLE_FETCH_MAX_CHARS,
     ARTIFACT_THRESHOLD,
@@ -518,23 +523,27 @@ class ToolRegistry:
         # generate_report() remains the out-of-pipeline fallback (aborted runs,
         # or a clean finish whose final turn carries no usable text).
         report = None
+        source = REPORT_SOURCE_VERBATIM
         if agent.stop_reason in CLEAN_FINISH_REASONS:
             report = agent.final_assistant_text()
         if not (report and report.strip()):
             report = agent.handback_report
+            source = REPORT_SOURCE_SUMMARIZER
         if report and report.strip():
-            agent.recorder.record_report(report)
+            agent.recorder.record_report(report, source=source)
         else:
+            source = REPORT_SOURCE_FALLBACK
             report = agent.generate_report()
             # execute() already saved session_data.json before this
             # out-of-pipeline report call ran; re-save so the child's
             # persisted totals include the report's tokens (D4).
             agent._save_session_data(DEFAULT_MAX_STEPS)
         # Hand the completed child's usage summary up to the parent so it can
-        # accumulate its rollup without re-reading the child's files (D3).
+        # accumulate its rollup without re-reading the child's files (D3), the
+        # report's source riding along so the run summary can mark it free/paid.
         parent_node = current_agent_node.get()
         if parent_node is not None:
-            parent_node.add_child_usage(agent._usage_summary())
+            parent_node.add_child_usage(agent._usage_summary(report_source=source))
         return report
 
     def read_file(self, file_path: str) -> str | tuple[None, dict]:

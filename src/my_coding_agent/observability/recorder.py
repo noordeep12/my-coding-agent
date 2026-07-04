@@ -279,12 +279,19 @@ class Recorder:
         )
 
     # ── subagent report ─────────────────────────────────────────────────────────
-    def record_report(self, content: str) -> None:
-        """Record a subagent's end-of-turn final report (distinct from handoff)."""
+    def record_report(self, content: str, source: str) -> None:
+        """Record a subagent's end-of-turn final report (distinct from handoff).
+
+        ``source`` names which of the three cost-divergent paths produced the
+        report (``verbatim`` / ``summarizer`` / ``fallback``, from
+        ``engine.schema``) — required, no default, so a future call site
+        cannot record a report without declaring its path.
+        """
         self._emit(
             {
                 "type": REPORT,
                 "content": content,
+                "source": source,
                 "started_at": _now(),
             }
         )

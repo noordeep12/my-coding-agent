@@ -125,6 +125,19 @@ class TestRoutes:
         ]
         assert "isMultilineBashCall" in node_badges_src
 
+    def test_report_provenance_badge_source(self, server):
+        """The report node's badge distinguishes free/paid/unknown provenance
+        at a glance (D3: unknown, never a guessed path, when source is absent)."""
+        port, _ = server
+        status, body = _get(port, "/")
+        html = body.decode()
+        node_badges_src = html[
+            html.index("function nodeBadges") : html.index("const treeBadges")
+        ]
+        assert "node.type==='report'" in node_badges_src
+        assert "a.source==='verbatim'" in node_badges_src
+        assert "a.source==='summarizer'" in node_badges_src
+
     def test_sessions_empty_dir(self, server):
         port, _ = server
         status, body = _get(port, "/api/sessions")
