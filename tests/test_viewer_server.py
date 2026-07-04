@@ -103,6 +103,28 @@ class TestRoutes:
         assert "addedText(node.ctx_state)" in tree_group_src
         assert "tleaf-sub" in tree_group_src
 
+    def test_multiline_bash_badge_detection_source(self, server):
+        """Regression: bash-stdin-delivery — the multi-line badge must be
+        detected from recorded args alone (non-empty `stdin`, or a newline in
+        `command`), so old traces without `stdin` still badge via the
+        newline-in-command signal, and plain single-line calls stay unbadged."""
+        port, _ = server
+        status, body = _get(port, "/")
+        html = body.decode()
+        detect_src = html[
+            html.index("function isMultilineBashCall") : html.index(
+                "function nodeBadges"
+            )
+        ]
+        assert "args.stdin" in detect_src
+        assert "args.command" in detect_src
+        assert "includes('\\n')" in detect_src
+
+        node_badges_src = html[
+            html.index("function nodeBadges") : html.index("const treeBadges")
+        ]
+        assert "isMultilineBashCall" in node_badges_src
+
     def test_sessions_empty_dir(self, server):
         port, _ = server
         status, body = _get(port, "/api/sessions")

@@ -478,6 +478,16 @@ const fmtTime = s => s ? (String(s).slice(11,19) || String(s)) : null;
 // it is not duplicated in the title.
 const nodeTitle = node => (node.label||'').replace(/\\s*\\(.*\\)\\s*$/, '');
 
+// A bash tool_call executes multi-line code when its recorded args carry a
+// non-empty `stdin` or a `command` containing a newline — detected from the
+// trace alone, so traces recorded before `stdin` existed still badge via the
+// newline-in-command signal.
+function isMultilineBashCall(node){
+  const args = (node.inputs && node.inputs.args) || {};
+  if(typeof args.stdin==='string' && args.stdin.length>0) return true;
+  return typeof args.command==='string' && args.command.includes('\\n');
+}
+
 // Uniform badge descriptors for a node, ordered by importance left→right: the
 // most meaningful and colored badges (identity, status, colored type signals)
 // lead; housekeeping (latency, timestamp, step) trails. Each is {t: label,
@@ -498,6 +508,7 @@ function nodeBadges(node){
   if(r && r.metadata && r.metadata.artifact===true) b.push({t:'📦 artifact', c:'art'});
   if(r && r.metadata && r.metadata.truncated===true) b.push({t:'✂️ truncated', c:'trunc'});
   if(node.type==='llm_call' && a.capped===true) b.push({t:'✂️ cut at '+a.max_tokens+'-token cap', c:'trunc'});
+  if(node.type==='tool_call' && a.name==='bash' && isMultilineBashCall(node)) b.push({t:'📜 multi-line', c:'art'});
   if(node.type==='router' && a.phase) b.push({t:'🧭 '+phaseLabel(a.phase), c:'phase'});
   // 4. counts (neutral type signals)
   if(node.type==='router'){
