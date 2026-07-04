@@ -596,14 +596,14 @@ def test_executor_offloads_both_streams_separately(
 def test_executor_offloads_large_json_fetch_with_disclosure(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
-    """A large JSON read_article fetch offloads losslessly and the envelope
+    """A large JSON fetch_web fetch offloads losslessly and the envelope
     discloses content_type/transform without mislabeling small bodies."""
     monkeypatch.chdir(tmp_path)
     payload = {"note": "line1\\nline2", "big": "x" * (PREVIEW_MAX_CHARS + 500)}
     body = json.dumps(payload)
     mocker.patch.object(
         ToolsRegistry,
-        "read_article",
+        "fetch_web",
         staticmethod(
             lambda url, timeout=15.0: (
                 None,
@@ -623,7 +623,7 @@ def test_executor_offloads_large_json_fetch_with_disclosure(
         env, _status, _record = _invoke(
             bare_executor,
             "call1",
-            "read_article",
+            "fetch_web",
             {"url": "https://example.com/data.json"},
             ToolsRegistry(),
         )
@@ -643,7 +643,7 @@ def test_executor_small_verbatim_fetch_not_labeled_as_offloaded(bare_executor, m
     not carry metadata.artifact — it was never actually offloaded."""
     mocker.patch.object(
         ToolsRegistry,
-        "read_article",
+        "fetch_web",
         staticmethod(
             lambda url, timeout=15.0: (
                 None,
@@ -661,7 +661,7 @@ def test_executor_small_verbatim_fetch_not_labeled_as_offloaded(bare_executor, m
     env, _status, _record = _invoke(
         bare_executor,
         "call1",
-        "read_article",
+        "fetch_web",
         {"url": "https://example.com/data.json"},
         ToolsRegistry(),
     )

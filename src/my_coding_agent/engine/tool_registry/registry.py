@@ -31,8 +31,8 @@ from ..schema import (
     REPORT_SOURCE_VERBATIM,
 )
 from ..tool_execution.schema import (
-    ARTICLE_FETCH_MAX_CHARS,
     ARTIFACT_THRESHOLD,
+    PAGE_FETCH_MAX_CHARS,
     RANGE_MAX_CHARS,
 )
 
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# ARTIFACT_THRESHOLD (large-output boundary) and ARTICLE_FETCH_MAX_CHARS (fetch
+# ARTIFACT_THRESHOLD (large-output boundary) and PAGE_FETCH_MAX_CHARS (fetch
 # sanity cap) are centrally configured in tool_execution.schema, imported above.
 
 # Extraction budgets for read_tool_artifact (chars, ~4 chars/token estimate).
@@ -154,7 +154,7 @@ class ToolRegistry:
 
     Each public method is a tool the LLM can invoke: ``bash`` runs a shell command,
     ``read_file``/``write_file`` access the workspace (confined to ``base_dir`` to
-    block path traversal), ``read_article`` fetches a URL as markdown,
+    block path traversal), ``fetch_web`` fetches a URL as markdown,
     ``read_tool_artifact`` queries a previously stored large output for a
     query-scoped, bounded extract, and ``delegate`` spawns a read-only subagent.
     Large outputs (``bash`` streams, file reads, web fetches) are offloaded to
@@ -656,11 +656,11 @@ class ToolRegistry:
             return f"Error writing {file_path}: {e}"
 
     @staticmethod
-    def read_article(url: str, timeout: float = 15.0) -> str | tuple[None, dict]:
+    def fetch_web(url: str, timeout: float = 15.0) -> str | tuple[None, dict]:
         """Fetch any text URL and return its content.
 
         HTML responses (``text/html``, ``application/xhtml+xml``) are converted
-        to clean markdown, as for an article, blog post, or documentation page.
+        to clean markdown, as for a blog post, documentation page, or article.
         Every other text response (JSON, plain text, XML, ...) is returned
         verbatim — the served body is never reshaped — so this is also the tool
         for fetching a JSON API endpoint. The result's ``metadata`` always
@@ -671,10 +671,10 @@ class ToolRegistry:
         flooding the context.
 
         Tags:
-            web, url, article, fetch, http, browse, documentation, link, json, api
+            web, url, page, fetch, http, browse, documentation, link, json, api
 
         Args:
-            url: Full URL of the page to fetch. Example: 'https://example.com/article'
+            url: Full URL of the page to fetch. Example: 'https://example.com/page'
             timeout: Seconds before the request is abandoned. Defaults to 15.0.
         """
         try:
@@ -717,20 +717,20 @@ class ToolRegistry:
                 "transform": transform,
             }
 
-            truncated = len(text) > ARTICLE_FETCH_MAX_CHARS
+            truncated = len(text) > PAGE_FETCH_MAX_CHARS
             if truncated:
                 # Sanity cap on a pathological page — guards fetch size, not fidelity
                 # within it (the kept portion still offloads losslessly below).
                 if is_html:
                     text = (
-                        text[:ARTICLE_FETCH_MAX_CHARS]
-                        + f"\n\n[...truncated — article exceeds "
-                        f"{ARTICLE_FETCH_MAX_CHARS} chars]"
+                        text[:PAGE_FETCH_MAX_CHARS]
+                        + f"\n\n[...truncated — page exceeds "
+                        f"{PAGE_FETCH_MAX_CHARS} chars]"
                     )
                 else:
                     # Verbatim path: truncation is disclosed in metadata only —
                     # no text is appended into a machine-readable body.
-                    text = text[:ARTICLE_FETCH_MAX_CHARS]
+                    text = text[:PAGE_FETCH_MAX_CHARS]
                     metadata["truncated"] = True
 
             return None, {"stdout": text, "ok": True, "metadata": metadata}
