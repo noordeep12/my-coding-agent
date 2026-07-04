@@ -442,6 +442,13 @@ def _build_llm_node(
     node_id = f"{session_id}::step{step}::llm::{counters['llm']}"
     label = "LLMCallNode" + (f" ({kind})" if kind != "main" else "")
     resp = ev.get("response") or {}
+    max_tokens = ev.get("max_tokens")
+    completion_tokens = ev.get("completion")
+    finish_reason = resp.get("finish_reason")
+    capped = max_tokens is not None and (
+        finish_reason == "length"
+        or (completion_tokens is not None and completion_tokens >= max_tokens)
+    )
     return node_id, _make_node(
         id=node_id,
         type="llm_call",
@@ -460,10 +467,12 @@ def _build_llm_node(
             "kind": kind,
             "latency_s": ev.get("latency_s"),
             "prompt_tokens": ev.get("prompt"),
-            "completion_tokens": ev.get("completion"),
+            "completion_tokens": completion_tokens,
             "total_tokens": ev.get("total"),
             "context_window": ev.get("context_window"),
             "started_at": ev.get("started_at", ""),
+            "max_tokens": max_tokens,
+            "capped": capped,
         },
     )
 

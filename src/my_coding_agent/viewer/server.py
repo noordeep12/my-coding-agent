@@ -497,6 +497,7 @@ function nodeBadges(node){
   // 3. colored type signals
   if(r && r.metadata && r.metadata.artifact===true) b.push({t:'📦 artifact', c:'art'});
   if(r && r.metadata && r.metadata.truncated===true) b.push({t:'✂️ truncated', c:'trunc'});
+  if(node.type==='llm_call' && a.capped===true) b.push({t:'✂️ cut at '+a.max_tokens+'-token cap', c:'trunc'});
   if(node.type==='router' && a.phase) b.push({t:'🧭 '+phaseLabel(a.phase), c:'phase'});
   // 4. counts (neutral type signals)
   if(node.type==='router'){

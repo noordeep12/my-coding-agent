@@ -1024,6 +1024,107 @@ class TestLlmToolDefinitions:
         assert all(n.inputs["tools"] == [] for n in nodes)
 
 
+class TestCappedLlmCallBadge:
+    """llm_call nodes derive a ``capped`` attribute from the recorded cap
+    (extract-completeness-disclosure D6)."""
+
+    def _load(self, tmp_path, sid, events):
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        return load_session(ep)
+
+    def _llm_nodes(self, session):
+        return [n for n in session.nodes.values() if n.type == "llm_call"]
+
+    def _events(self, sid, llm_event):
+        return [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="T",
+                model="gpt-4o-mini",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _ev(
+                "router",
+                signal="go",
+                selected=["bash"],
+                phase="phase1_keyword",
+                used_llm=False,
+                started_at="2026-01-01T10:00:00.5",
+            ),
+            llm_event,
+        ]
+
+    def test_reader_marks_capped_llm_call(self, tmp_path):
+        sid = "capped000001"
+        events = self._events(
+            sid,
+            _ev(
+                "llm_call",
+                call=1,
+                kind="artifact_query",
+                latency_s=1.0,
+                prompt=10,
+                completion=800,
+                total=810,
+                context_window=8192,
+                messages=None,
+                max_tokens=800,
+                response={
+                    "content": "cut",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                    "finish_reason": None,
+                },
+                started_at="2026-01-01T10:00:01",
+            ),
+        )
+        nodes = self._llm_nodes(self._load(tmp_path, sid, events))
+        assert nodes[0].attributes["capped"] is True
+        assert nodes[0].attributes["max_tokens"] == 800
+
+    def test_reader_clean_call_not_capped(self, tmp_path):
+        sid = "capped000002"
+        events = self._events(
+            sid,
+            _ev(
+                "llm_call",
+                call=1,
+                kind="artifact_query",
+                latency_s=1.0,
+                prompt=10,
+                completion=10,
+                total=20,
+                context_window=8192,
+                messages=None,
+                max_tokens=800,
+                response={
+                    "content": "ok",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                    "finish_reason": "stop",
+                },
+                started_at="2026-01-01T10:00:01",
+            ),
+        )
+        nodes = self._llm_nodes(self._load(tmp_path, sid, events))
+        assert nodes[0].attributes["capped"] is False
+
+    def test_reader_tolerates_missing_cap_field(self, tmp_path):
+        # Old trace: no max_tokens field at all.
+        session = self._load(tmp_path, "aabbccdd1234", _minimal_events())
+        nodes = self._llm_nodes(session)
+        assert nodes
+        assert all(n.attributes["capped"] is False for n in nodes)
+
+
 # ── Summarizer nesting ────────────────────────────────────────────────────────
 
 

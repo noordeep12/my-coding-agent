@@ -164,6 +164,7 @@ class Recorder:
         response_data: dict[str, Any],
         tools: list[dict[str, Any]] | None = None,
         started_at: str | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         """Record one chat-completion call (full snapshot for payload kinds).
 
@@ -175,6 +176,11 @@ class Recorder:
         ``started_at`` is the wall-clock moment the call began (captured by the
         caller alongside its monotonic latency timer); falls back to emit time
         when the caller does not supply one.
+
+        ``max_tokens`` is the completion token cap in force for the call, if
+        any — recorded on the event (absent when uncapped) so the viewer can
+        badge a completion that was cut at its cap without importing the
+        engine's budget constants (extract-completeness-disclosure D6).
         """
         if self._pending is not None:
             # A tool is currently dispatching (before_tool ran, after_tool has
@@ -197,6 +203,7 @@ class Recorder:
                 "messages": messages if keep_payload else None,
                 "tools": (tools or []) if keep_payload else None,
                 "response": _response_summary(response_data),
+                **({"max_tokens": max_tokens} if max_tokens is not None else {}),
             }
         )
 
@@ -390,11 +397,18 @@ def _response_summary(data: dict[str, Any]) -> dict[str, Any]:
     """
     choices = data.get("choices", []) or []
     if not choices:
-        return {"content": "", "reasoning": "", "tool_calls": [], "raw": {}}
+        return {
+            "content": "",
+            "reasoning": "",
+            "tool_calls": [],
+            "raw": {},
+            "finish_reason": None,
+        }
     msg = choices[0].get("message", {}) or {}
     return {
         "content": msg.get("content") or "",
         "reasoning": msg.get("reasoning_content") or "",
         "tool_calls": msg.get("tool_calls") or [],
         "raw": msg,
+        "finish_reason": choices[0].get("finish_reason"),
     }
