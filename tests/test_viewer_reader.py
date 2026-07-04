@@ -943,6 +943,7 @@ class TestReportNode:
                 _ev(
                     "report",
                     content="the final report",
+                    source="verbatim",
                     started_at="2026-01-01T10:00:10",
                 )
             ],
@@ -953,10 +954,29 @@ class TestReportNode:
         assert node.type == "report" and node.type != "handoff"
         assert node.label == "Subagent Report"
         assert node.outputs["content"] == "the final report"
+        assert node.attributes["source"] == "verbatim"
 
     def test_no_report_node_without_report_event(self, tmp_path):
         session = self._load_with(tmp_path, "noreport", [])
         assert not any(n.type == "report" for n in session.nodes.values())
+
+    def test_pre_provenance_report_event_surfaces_unknown_source(self, tmp_path):
+        """A report event recorded before provenance existed (no ``source``
+        key) still loads and is presented as unknown, never an error (D3)."""
+        session = self._load_with(
+            tmp_path,
+            "prereport",
+            [
+                _ev(
+                    "report",
+                    content="an old report",
+                    started_at="2026-01-01T10:00:10",
+                )
+            ],
+        )
+        reports = [n for n in session.nodes.values() if n.type == "report"]
+        assert len(reports) == 1
+        assert reports[0].attributes["source"] == "unknown"
 
 
 class TestLlmToolDefinitions:

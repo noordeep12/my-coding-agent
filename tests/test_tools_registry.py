@@ -11,6 +11,11 @@ import httpx
 import pytest
 
 from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS
+from my_coding_agent.engine.schema import (
+    REPORT_SOURCE_FALLBACK,
+    REPORT_SOURCE_SUMMARIZER,
+    REPORT_SOURCE_VERBATIM,
+)
 from my_coding_agent.engine.tool_registry import ARTIFACT_THRESHOLD
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 from my_coding_agent.observability import current_session_id
@@ -897,7 +902,9 @@ def test_delegate_clean_finish_returns_final_turn_verbatim(mocker):
     assert out == "final turn"
     fake_agent.execute.assert_called_once_with(max_steps=DEFAULT_MAX_STEPS)
     fake_agent.generate_report.assert_not_called()
-    fake_agent.recorder.record_report.assert_called_once_with("final turn")
+    fake_agent.recorder.record_report.assert_called_once_with(
+        "final turn", source=REPORT_SOURCE_VERBATIM
+    )
 
 
 def test_delegate_cutoff_returns_pipeline_report(mocker):
@@ -913,7 +920,9 @@ def test_delegate_cutoff_returns_pipeline_report(mocker):
     assert out == "synthesized report"
     fake_agent.final_assistant_text.assert_not_called()
     fake_agent.generate_report.assert_not_called()
-    fake_agent.recorder.record_report.assert_called_once_with("synthesized report")
+    fake_agent.recorder.record_report.assert_called_once_with(
+        "synthesized report", source=REPORT_SOURCE_SUMMARIZER
+    )
 
 
 def test_delegate_empty_final_turn_falls_back_to_generate_report(mocker):
@@ -944,6 +953,112 @@ def test_delegate_no_pipeline_report_falls_back_to_generate_report(mocker):
     out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
     assert out == "fallback report"
     fake_agent.generate_report.assert_called_once_with()
+
+
+def _make_fake_agent_with_real_recorder(mocker, tmp_path, **kwargs):
+    """Like ``_make_fake_agent``, but wired to a real ``Recorder`` writing into
+    ``tmp_path`` so a test can read back the persisted ``report`` event and
+    confirm its provenance from ``events.jsonl`` directly (no mock assertion)."""
+    from my_coding_agent.engine.llm.schema import CALL_KIND_REPORT
+    from my_coding_agent.observability.recorder import Recorder
+
+    fake = _make_fake_agent(mocker, **kwargs)
+    sdir = tmp_path / fake.session_id
+    sdir.mkdir()
+    fake.recorder = Recorder(session_id=fake.session_id, session_dir=sdir)
+
+    def _fallback_report():
+        fake.recorder.record_llm_call(
+            kind=CALL_KIND_REPORT,
+            call=1,
+            latency_s=0.1,
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            messages=[],
+            context_window=8192,
+            response_data={},
+        )
+        fake.recorder.record_report(
+            kwargs.get("report", "report text"), source=REPORT_SOURCE_FALLBACK
+        )
+        return kwargs.get("report", "report text")
+
+    fake.generate_report.side_effect = _fallback_report
+    return fake, sdir / "events.jsonl"
+
+
+def _read_events(path):
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def test_delegate_clean_finish_end_to_end_zero_report_kind_rows(mocker, tmp_path):
+    """Clean finish: verbatim source, no `report`-kind LLM call row exists."""
+    fake_agent, events_path = _make_fake_agent_with_real_recorder(
+        mocker, tmp_path, stop_reason="stop", final_text="final turn"
+    )
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
+
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
+
+    events = _read_events(events_path)
+    report_events = [e for e in events if e["type"] == "report"]
+    assert len(report_events) == 1
+    assert report_events[0]["source"] == REPORT_SOURCE_VERBATIM
+    assert not [e for e in events if e["type"] == "llm_call" and e["kind"] == "report"]
+
+
+def test_delegate_cutoff_end_to_end_one_report_kind_row(mocker, tmp_path):
+    """Cutoff with a pipeline hand-back: summarizer source, exactly one
+    `report`-kind row (recorded in-pipeline before delegate() sees it)."""
+    from my_coding_agent.engine.llm.schema import CALL_KIND_REPORT
+
+    fake_agent, events_path = _make_fake_agent_with_real_recorder(
+        mocker, tmp_path, stop_reason="max_steps", handback_report="synthesized report"
+    )
+    # Simulate ContextSummarizerNode already having recorded its report-kind
+    # LLM call in-pipeline, before delegate() hands back the child's report.
+    fake_agent.recorder.record_llm_call(
+        kind=CALL_KIND_REPORT,
+        call=1,
+        latency_s=0.1,
+        usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        messages=[],
+        context_window=8192,
+        response_data={},
+    )
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
+
+    ToolsRegistry().delegate(task="do X", known_facts="ctx")
+
+    events = _read_events(events_path)
+    report_events = [e for e in events if e["type"] == "report"]
+    assert len(report_events) == 1
+    assert report_events[0]["source"] == REPORT_SOURCE_SUMMARIZER
+    report_kind_rows = [
+        e for e in events if e["type"] == "llm_call" and e["kind"] == "report"
+    ]
+    assert len(report_kind_rows) == 1
+
+
+def test_delegate_fallback_end_to_end_one_report_kind_row_and_resave(mocker, tmp_path):
+    """Fallback path: fallback source, exactly one `report`-kind row, and the
+    child record is re-saved so its persisted totals include that call."""
+    fake_agent, events_path = _make_fake_agent_with_real_recorder(
+        mocker, tmp_path, stop_reason="aborted", report="fallback report"
+    )
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
+
+    out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
+
+    assert out == "fallback report"
+    events = _read_events(events_path)
+    report_events = [e for e in events if e["type"] == "report"]
+    assert len(report_events) == 1
+    assert report_events[0]["source"] == REPORT_SOURCE_FALLBACK
+    report_kind_rows = [
+        e for e in events if e["type"] == "llm_call" and e["kind"] == "report"
+    ]
+    assert len(report_kind_rows) == 1
+    fake_agent._save_session_data.assert_called_once_with(DEFAULT_MAX_STEPS)
 
 
 def test_delegate_resaves_session_data_after_generate_report(mocker):

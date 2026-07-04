@@ -536,20 +536,20 @@ def _subagent_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]
     ]
     for i, child in enumerate(descendants, start=1):
         child_total = child.get("grand_total") or {}
+        report_label = (
+            "free report" if child.get("report_source") == "verbatim" else "paid report"
+        )
         line_vis = (
             f"  {i}. {child.get('session_id', '?')} — "
             f"{child_total.get('total_tokens', 0):,} tok, "
-            f"{child.get('elapsed_s', 0.0):.1f}s"
+            f"{child.get('elapsed_s', 0.0):.1f}s, {report_label}"
         )
         pad = s.W - len(line_vis)
         lines.append(
             s.BORDER + "║" + f"  {i}. {s.VALUE}{child.get('session_id', '?')}{s.R} — "
             f"{s.VALUE}{child_total.get('total_tokens', 0):,}{s.R} tok, "
-            f"{s.VALUE}{child.get('elapsed_s', 0.0):.1f}{s.R}s"
-            + " " * max(pad, 0)
-            + s.BORDER
-            + "║"
-            + s.R
+            f"{s.VALUE}{child.get('elapsed_s', 0.0):.1f}{s.R}s, "
+            f"{s.VALUE}{report_label}{s.R}" + " " * max(pad, 0) + s.BORDER + "║" + s.R
         )
     return lines
 

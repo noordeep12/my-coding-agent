@@ -29,6 +29,7 @@ from ..utils import (
 )
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
+from .schema import REPORT_SOURCE_FALLBACK
 
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
 # and delegated subagents, so all three run with the same ceiling.
@@ -224,7 +225,7 @@ class AgentNode(BaseNode):
         )
         if not content.strip():
             content = "(subagent produced no report)"
-        self.recorder.record_report(content)
+        self.recorder.record_report(content, source=REPORT_SOURCE_FALLBACK)
         return content
 
     def _generate_handoff(
@@ -310,11 +311,17 @@ class AgentNode(BaseNode):
                 total[key] += child_total[key]
         return total
 
-    def _usage_summary(self) -> dict[str, Any]:
+    def _usage_summary(self, report_source: str | None = None) -> dict[str, Any]:
         """This agent's usage summary: own per-kind totals plus its rollup.
 
         Returned up through ``delegate()`` (via ``add_child_usage``) so the
         parent accumulates usage without re-reading the child's files (D3).
+
+        ``report_source`` is the delegated report's provenance (verbatim /
+        summarizer / fallback), passed by ``delegate()`` for a subagent's own
+        summary so the run summary can mark that delegation free or paid
+        without re-reading the child's files (D5). ``None`` for the top-level
+        agent, which has no report of its own.
         """
         by_kind = self._own_usage_by_kind()
         own_total = self._sum_totals(by_kind)
@@ -325,6 +332,7 @@ class AgentNode(BaseNode):
             "by_kind": by_kind,
             "descendants": self.child_rollups,
             "grand_total": self._grand_total(own_total, self.child_rollups),
+            "report_source": report_source,
         }
 
     def _print_summary(self, max_steps: int) -> None:

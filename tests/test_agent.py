@@ -15,6 +15,7 @@ import pytest
 
 from my_coding_agent.engine.agent import AgentNode as Agent
 from my_coding_agent.engine.llm import LLM
+from my_coding_agent.engine.schema import REPORT_SOURCE_FALLBACK
 from my_coding_agent.pipeline.context import RunContext
 from my_coding_agent.pipeline.nodes.context_guard import ContextGuardNode
 from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
@@ -646,7 +647,9 @@ def test_generate_report_records_distinct_report_node(silent_logger, mocker):
 
     agent.generate_report()
 
-    agent.recorder.record_report.assert_called_once_with("report body")
+    agent.recorder.record_report.assert_called_once_with(
+        "report body", source=REPORT_SOURCE_FALLBACK
+    )
 
 
 def test_generate_report_falls_back_when_empty(silent_logger, mocker):
@@ -662,7 +665,7 @@ def test_generate_report_falls_back_when_empty(silent_logger, mocker):
 
     assert result == "(subagent produced no report)"
     agent.recorder.record_report.assert_called_once_with(
-        "(subagent produced no report)"
+        "(subagent produced no report)", source=REPORT_SOURCE_FALLBACK
     )
 
 
@@ -699,7 +702,7 @@ def test_generate_report_uses_reasoning_when_content_empty(silent_logger, mocker
 
     assert result == "I fetched the data: 1631 CVEs."
     agent.recorder.record_report.assert_called_once_with(
-        "I fetched the data: 1631 CVEs."
+        "I fetched the data: 1631 CVEs.", source=REPORT_SOURCE_FALLBACK
     )
 
 

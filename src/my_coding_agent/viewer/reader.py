@@ -524,7 +524,12 @@ def _build_handoff_node(
 def _build_report_node(
     ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
 ) -> tuple[str, TraceNode]:
-    """Build the subagent report node for a ``report`` event."""
+    """Build the subagent report node for a ``report`` event.
+
+    ``source`` surfaces the report's cost provenance (verbatim / summarizer /
+    fallback); a pre-provenance event has no ``source`` key, which becomes an
+    explicit ``"unknown"`` here rather than an error or a guessed path (D3).
+    """
     node_id = f"{session_id}::step{step}::report"
     return node_id, _make_node(
         id=node_id,
@@ -532,7 +537,10 @@ def _build_report_node(
         label="Subagent Report",
         inputs={},
         outputs={"content": ev.get("content", "")},
-        attributes={"started_at": ev.get("started_at", "")},
+        attributes={
+            "source": ev.get("source", "unknown"),
+            "started_at": ev.get("started_at", ""),
+        },
     )
 
 

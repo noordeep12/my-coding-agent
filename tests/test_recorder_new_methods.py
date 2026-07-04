@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from my_coding_agent.engine.schema import (
+    REPORT_SOURCE_FALLBACK,
+    REPORT_SOURCE_SUMMARIZER,
+    REPORT_SOURCE_VERBATIM,
+)
 from my_coding_agent.observability.recorder import (
     ANOMALY,
     FINISH_CHECK,
@@ -91,7 +98,7 @@ class TestRecordTokenTracking:
 class TestRecordReport:
     def test_emits_report_type(self, tmp_path):
         rec, path = _make_recorder(tmp_path)
-        rec.record_report(content="final report")
+        rec.record_report(content="final report", source=REPORT_SOURCE_VERBATIM)
         ev = _read_events(path)[-1]
         assert ev["type"] == REPORT
 
@@ -100,7 +107,7 @@ class TestRecordReport:
         rec.record_handoff(
             step=1, ctx_tokens=100, ctx_pct=50.0, content="h", path="/tmp/h.md"
         )
-        rec.record_report(content="r")
+        rec.record_report(content="r", source=REPORT_SOURCE_VERBATIM)
         events = _read_events(path)
         assert events[-2]["type"] == HANDOFF
         assert events[-1]["type"] == REPORT
@@ -108,10 +115,30 @@ class TestRecordReport:
 
     def test_content_and_started_at_present(self, tmp_path):
         rec, path = _make_recorder(tmp_path)
-        rec.record_report(content="the report body")
+        rec.record_report(content="the report body", source=REPORT_SOURCE_VERBATIM)
         ev = _read_events(path)[-1]
         assert ev["content"] == "the report body"
         assert "started_at" in ev and ev["started_at"]
+
+    def test_source_is_required(self, tmp_path):
+        rec, _ = _make_recorder(tmp_path)
+        with pytest.raises(TypeError):
+            rec.record_report(content="no source")
+
+    def test_each_source_round_trips(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        for source in (
+            REPORT_SOURCE_VERBATIM,
+            REPORT_SOURCE_SUMMARIZER,
+            REPORT_SOURCE_FALLBACK,
+        ):
+            rec.record_report(content="r", source=source)
+        events = [ev for ev in _read_events(path) if ev["type"] == REPORT]
+        assert [ev["source"] for ev in events] == [
+            REPORT_SOURCE_VERBATIM,
+            REPORT_SOURCE_SUMMARIZER,
+            REPORT_SOURCE_FALLBACK,
+        ]
 
 
 class TestRecordFinishCheck:
