@@ -29,6 +29,10 @@ PREVIEW_KEYS = (
     "full_output_path",
 )
 
+# Shape of one entry in ``metadata.duplicate_of`` (keyed by stream: "stdout"/
+# "stderr"): locates a deduplicated read-back within the artifact it duplicates.
+DUPLICATE_OF_KEYS = ("tool_call_id", "stream", "offset", "length")
+
 # ── Size/threshold configuration ──────────────────────────────────────────────
 # Single source of truth for every tunable boundary that decides whether/how a
 # tool output is offloaded to the on-disk artifact store. Both tool_execution
@@ -61,3 +65,8 @@ ARTICLE_FETCH_MAX_CHARS = ARTICLE_FETCH_MAX_TOKEN_BUDGET * _CHARS_PER_TOKEN
 # approaches the offload boundary.
 PREVIEW_TOKEN_BUDGET = ARTIFACT_THRESHOLD_TOKEN_BUDGET // 10  # ~1000 tokens
 PREVIEW_MAX_CHARS = PREVIEW_TOKEN_BUDGET * _CHARS_PER_TOKEN
+
+# Per-call cap for a `read_tool_artifact` byte-range slice. Aliased to
+# PREVIEW_MAX_CHARS so the boundary is named where the other offload constants
+# live, rather than introducing an independent budget.
+RANGE_MAX_CHARS = PREVIEW_MAX_CHARS

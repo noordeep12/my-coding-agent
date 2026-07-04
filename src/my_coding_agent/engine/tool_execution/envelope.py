@@ -15,7 +15,12 @@ This module is pure data logic: no LLM client, no execution state, no I/O. The
 import json
 from typing import Any
 
-from .schema import _ERROR_PREFIX_RE, _TOOL_RESULT_KEYS, TOOL_SCHEMA_VERSION
+from .schema import (
+    _ERROR_PREFIX_RE,
+    _TOOL_RESULT_KEYS,
+    DUPLICATE_OF_KEYS,
+    TOOL_SCHEMA_VERSION,
+)
 
 # Tools whose raw output is the bash-style structured contract
 # (`ok`/`stdout`/`stderr`/`exit_code`). Only these are eligible for the
@@ -58,7 +63,28 @@ def validate_tool_result(result: Any) -> dict[str, Any]:
         raise ValueError("tool result 'error' must be a str or None")
     if not isinstance(result["metadata"], dict):
         raise ValueError("tool result 'metadata' must be a dict")
+    _validate_duplicate_of(result["metadata"].get("duplicate_of"))
     return result
+
+
+def _validate_duplicate_of(duplicate_of: Any) -> None:
+    """Enforce the ``metadata.duplicate_of`` shape when present (absent is fine)."""
+    if duplicate_of is None:
+        return
+    if not isinstance(duplicate_of, dict):
+        raise ValueError("tool result 'metadata.duplicate_of' must be a dict")
+    for stream, descriptor in duplicate_of.items():
+        if stream not in ("stdout", "stderr"):
+            raise ValueError(
+                f"tool result 'metadata.duplicate_of' has invalid stream key: "
+                f"{stream!r}"
+            )
+        missing_keys = [k for k in DUPLICATE_OF_KEYS if k not in descriptor]
+        if missing_keys:
+            raise ValueError(
+                f"tool result 'metadata.duplicate_of[{stream!r}]' missing "
+                f"keys: {missing_keys}"
+            )
 
 
 def _maybe_json(text: Any) -> Any:
@@ -96,6 +122,7 @@ def result_envelope(
     artifact: Any = None,
     preview: dict[str, Any] | None = None,
     error: str | None = None,
+    duplicate_of: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalize a tool's raw return into the canonical schema envelope.
 
@@ -118,6 +145,10 @@ def result_envelope(
         error: The composed ``error`` (stderr) for an offloaded artifact — a bounded
             preview when the stderr was large, the inline stderr when small, or
             ``None`` when empty. Ignored on non-artifact paths.
+        duplicate_of: Per-stream ``{"stdout": {...}, "stderr": {...}}`` descriptor
+            (a key per stream whose offload-bound output deduplicated against an
+            already-stored artifact). When non-empty it is attached to
+            ``metadata.duplicate_of``.
     """
     metadata: dict[str, Any] = {}
     if is_truncated:
@@ -142,6 +173,10 @@ def result_envelope(
             metadata["artifact"] = True
             metadata["tool_call_id"] = tool_call_id
             metadata["preview"] = preview
+        if duplicate_of:
+            metadata["artifact"] = True
+            metadata["tool_call_id"] = tool_call_id
+            metadata["duplicate_of"] = duplicate_of
         ok = bool(artifact.get("ok", True))
         if "exit_code" in artifact:
             metadata["exit_code"] = artifact["exit_code"]

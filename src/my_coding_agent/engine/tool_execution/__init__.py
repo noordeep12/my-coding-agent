@@ -8,8 +8,10 @@ excerpt plus skim guidance). It makes no LLM calls itself; the LLM client is hel
 only for the session log path and the observability recorder.
 """
 
+import hashlib
 import inspect
 import json
+import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +71,96 @@ _RECOVERABLE_EXCEPTIONS = (
 # live in the sibling modules schema / envelope / output / args; the executor
 # below composes them. The envelope builders (build/validate/normalize) and the
 # truncation limit (MAX_TOOL_OUTPUT_CHARS) are imported above.
+
+# Matches a stored per-stream artifact filename, as written by
+# ``_write_artifact_file`` / read by ``artifact_file_path`` (tool_registry).
+_ARTIFACT_FILENAME_RE = re.compile(
+    r"^(?P<tool_call_id>[A-Za-z0-9_-]+)\.(?P<stream>stdout|stderr)\.txt$"
+)
+
+
+def _iter_stored_artifacts(
+    session_id: str | None,
+) -> list[tuple[str, str, str]]:
+    """Return ``(tool_call_id, stream, content)`` for every artifact on disk
+    in this run's session, newest first. Empty when there is no session or
+    artifacts directory yet. No LLM, no caching beyond the OS page cache —
+    the run's own artifact count and size are small and bounded.
+    """
+    from ..tool_registry import artifact_file_path  # lazy: avoids a cycle
+
+    # A placeholder id purely to resolve the artifacts directory shared with
+    # the write side; it is never itself read or written here.
+    marker = artifact_file_path(session_id, "_dir_marker")
+    if marker is None:
+        return []
+    directory = marker.parent
+    if not directory.is_dir():
+        return []
+    files = sorted(
+        directory.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    artifacts = []
+    for f in files:
+        match = _ARTIFACT_FILENAME_RE.match(f.name)
+        if not match:
+            continue
+        try:
+            content = f.read_text()
+        except OSError:
+            continue
+        artifacts.append((match["tool_call_id"], match["stream"], content))
+    return artifacts
+
+
+def _find_duplicate(session_id: str | None, text: str) -> dict[str, Any] | None:
+    """Return a duplicate-of descriptor if ``text`` matches an already-stored
+    artifact, or ``None``. Exact hash match first (byte-identical read-back),
+    then containment (``text`` a contiguous substring of a stored artifact of
+    equal or larger size, newest first) — needed because ``bash`` rstrips its
+    streams, so a read-back of an artifact with a trailing newline differs by
+    exactly that stripped whitespace. Deterministic, no LLM call.
+    """
+    if not text:
+        return None
+    stored = _iter_stored_artifacts(session_id)
+    if not stored:
+        return None
+    text_hash = hashlib.sha256(text.encode()).hexdigest()
+    for tool_call_id, stream, content in stored:
+        if hashlib.sha256(content.encode()).hexdigest() == text_hash:
+            return {
+                "tool_call_id": tool_call_id,
+                "stream": stream,
+                "offset": 0,
+                "length": len(text),
+            }
+    for tool_call_id, stream, content in stored:
+        if len(content) < len(text):
+            continue
+        offset = content.find(text)
+        if offset != -1:
+            return {
+                "tool_call_id": tool_call_id,
+                "stream": stream,
+                "offset": offset,
+                "length": len(text),
+            }
+    return None
+
+
+def _build_duplicate_notice(duplicate: dict[str, Any], path: str | None) -> str:
+    """Build the agent-facing pointer for a deduplicated stream — no excerpt,
+    just enough to retrieve the exact bytes deterministically."""
+    location = f" (on disk at {path})" if path else ""
+    return (
+        f"[This output is already stored — it duplicates tool_call_id="
+        f"'{duplicate['tool_call_id']}' {duplicate['stream']}{location}, "
+        f"at byte offset {duplicate['offset']}, length {duplicate['length']}. "
+        "No new artifact was created. Retrieve the exact bytes with "
+        f'read_tool_artifact(tool_call_id="{duplicate["tool_call_id"]}", '
+        f"start={duplicate['offset']}, length={duplicate['length']}).]"
+    )
 
 
 class ToolExecutor:
@@ -240,10 +332,13 @@ class ToolExecutor:
             is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
             preview: dict[str, Any] | None = None
             error: str | None = None
+            duplicate_of: dict[str, Any] | None = None
             if is_artifact:
                 _, artifact = raw_result
                 self.tool_artifacts[tool_call_id] = artifact
-                result, error, preview = self._offload_streams(tool_call_id, artifact)
+                result, error, preview, duplicate_of = self._offload_streams(
+                    tool_call_id, artifact
+                )
             else:
                 result = raw_result
             if not isinstance(result, str):
@@ -264,6 +359,7 @@ class ToolExecutor:
                 self.tool_artifacts.get(tool_call_id),
                 preview=preview,
                 error=error,
+                duplicate_of=duplicate_of,
             )
             status, record = call_record(
                 func_name, args, tool_call_id, env, is_artifact, is_truncated
@@ -275,40 +371,64 @@ class ToolExecutor:
 
     def _offload_streams(
         self, tool_call_id: str, artifact: dict[str, Any]
-    ) -> tuple[str, str | None, dict[str, Any]]:
+    ) -> tuple[str, str | None, dict[str, Any], dict[str, Any]]:
         """Bound each output stream of an offloaded command artifact independently.
 
-        Returns ``(output, error, preview)``: ``output`` is the composed stdout
-        (bounded preview when large, else inline), ``error`` is the composed stderr
-        (preview, inline, or ``None`` when empty), and ``preview`` maps each stream
-        that was previewed to its descriptor.
+        Returns ``(output, error, preview, duplicate_of)``: ``output`` is the
+        composed stdout (bounded preview, duplicate pointer, or inline), ``error``
+        is the composed stderr (same three shapes, or ``None`` when empty),
+        ``preview`` maps each freshly-offloaded stream to its descriptor, and
+        ``duplicate_of`` maps each deduplicated stream to its descriptor. A stream
+        appears in at most one of the two maps.
         """
         preview: dict[str, Any] = {}
-        output, out_desc = self._offload_stream(
+        duplicate_of: dict[str, Any] = {}
+        output, out_desc, out_dup = self._offload_stream(
             tool_call_id, "stdout", artifact.get("stdout") or ""
         )
         if out_desc is not None:
             preview["stdout"] = out_desc
-        error, err_desc = self._offload_stream(
+        if out_dup is not None:
+            duplicate_of["stdout"] = out_dup
+        error, err_desc, err_dup = self._offload_stream(
             tool_call_id, "stderr", artifact.get("stderr") or ""
         )
         if err_desc is not None:
             preview["stderr"] = err_desc
-        return output, (error or None), preview
+        if err_dup is not None:
+            duplicate_of["stderr"] = err_dup
+        return output, (error or None), preview, duplicate_of
 
     def _offload_stream(
         self, tool_call_id: str, stream: str, text: str
-    ) -> tuple[str, dict[str, Any] | None]:
-        """Return ``(field_value, preview_descriptor)`` for one output stream.
+    ) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+        """Return ``(field_value, preview_descriptor, duplicate_descriptor)`` for
+        one output stream.
 
         Small streams (within the preview budget) are inlined with no descriptor
-        and no file; larger streams are written to a per-stream file and replaced
-        with a bounded excerpt + skim guidance.
+        and no file. Larger streams are checked against this run's already-stored
+        artifacts (deterministic, no LLM): a duplicate (byte-identical or
+        contained) skips the file write and preview entirely, returning a pointer
+        instead; a novel stream is written to a per-stream file and replaced with
+        a bounded excerpt + skim guidance.
         """
         if len(text) <= PREVIEW_MAX_CHARS:
-            return text, None
+            return text, None, None
+        session_id = current_session_id.get()
+        duplicate = _find_duplicate(session_id, text)
+        if duplicate is not None:
+            from ..tool_registry import artifact_file_path  # lazy: avoids a cycle
+
+            original_path = artifact_file_path(
+                session_id, duplicate["tool_call_id"], duplicate["stream"]
+            )
+            notice = _build_duplicate_notice(
+                duplicate, str(original_path) if original_path else None
+            )
+            return notice, None, duplicate
         path = self._write_artifact_file(tool_call_id, stream, text)
-        return build_stream_preview(text, path)
+        field_value, preview_desc = build_stream_preview(text, path)
+        return field_value, preview_desc, None
 
     def _write_artifact_file(
         self, tool_call_id: str, stream: str, text: str

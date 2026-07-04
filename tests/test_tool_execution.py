@@ -427,6 +427,25 @@ def test_build_stream_preview_bounds_output_and_reports_true_totals():
     assert "guidance" not in preview
 
 
+def test_skim_guidance_multiline_states_shape_and_names_both_retrieval_modes():
+    body = "line1\nline2\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nlineN"
+    output_text, _preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert f"total {len(body)} bytes" in output_text
+    assert "read_tool_artifact(tool_call_id=..., query=" in output_text
+    assert "read_tool_artifact(tool_call_id=..., start=" in output_text
+    assert "cat " not in output_text
+    assert " head " not in output_text and "tail " not in output_text
+
+
+def test_skim_guidance_single_line_warns_off_line_tools():
+    body = "x" * (PREVIEW_MAX_CHARS + 500)  # one line, no newlines
+    output_text, preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert preview["total_lines"] == 1
+    assert "single line" in output_text
+    assert "cannot bound it" in output_text
+    assert "read_tool_artifact(tool_call_id=..., start=" in output_text
+
+
 def test_build_stream_preview_small_shown_in_full():
     output_text, preview = build_stream_preview("hello", None)
     assert output_text.startswith("hello")
@@ -730,3 +749,224 @@ def test_executor_writes_artifacts_under_each_session_dir(
         assert "no artifact found" in out
     finally:
         current_session_id.reset(token)
+
+
+# ── duplicate read-back detection (issue #92) ──────────────────────────────────
+
+
+def _bash_offload(stdout: str = "", stderr: str = "", exit_code: int = 0) -> dict:
+    return {
+        "exit_code": exit_code,
+        "ok": exit_code == 0,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+
+
+def test_dedup_byte_identical_readback_creates_no_new_artifact(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """Reading back a stored artifact's exact content offloads to a pointer, not
+    a second file — the file count in the artifacts dir stays at one."""
+    monkeypatch.chdir(tmp_path)
+    body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAIL"
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (None, _bash_offload(stdout=body)),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        env1, _s1, _r1 = _invoke(
+            bare_executor, "call1", "bash", {"command": "orig"}, ToolsRegistry()
+        )
+        art_dir = tmp_path / ".my_coding_agent" / "sess123" / "artifacts"
+        assert len(list(art_dir.glob("*.txt"))) == 1
+
+        env2, _s2, _r2 = _invoke(
+            bare_executor, "call2", "bash", {"command": "cat"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert len(list(art_dir.glob("*.txt"))) == 1  # no second file written
+    assert not (art_dir / "call2.stdout.txt").exists()
+    dup = env2["metadata"]["duplicate_of"]["stdout"]
+    assert dup["tool_call_id"] == "call1"
+    assert dup["stream"] == "stdout"
+    assert dup["offset"] == 0
+    assert dup["length"] == len(body)
+    assert "duplicate_of" not in env1["metadata"]
+
+
+def test_dedup_rstripped_variant_is_contained_match(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """bash rstrips its own stdout, so a read-back of an artifact with trailing
+    whitespace differs by exactly that — containment must still catch it."""
+    monkeypatch.chdir(tmp_path)
+    inner = "x" * (PREVIEW_MAX_CHARS + 500)
+    stored = inner + "\n\n"  # trailing whitespace as originally written
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (None, _bash_offload(stdout=stored)),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        _invoke(bare_executor, "call1", "bash", {"command": "orig"}, ToolsRegistry())
+
+        mocker.patch.object(
+            ToolsRegistry,
+            "bash",
+            lambda self, command, timeout=60: (
+                None,
+                _bash_offload(stdout=inner),  # rstripped read-back
+            ),
+        )
+        env2, _s2, _r2 = _invoke(
+            bare_executor, "call2", "bash", {"command": "cat"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    dup = env2["metadata"]["duplicate_of"]["stdout"]
+    assert dup["tool_call_id"] == "call1"
+    assert dup["offset"] == 0
+    assert dup["length"] == len(inner)
+
+
+def test_dedup_contained_slice_readback_reports_offset(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """head-style output that is a contiguous slice of a single-line artifact
+    dedups with the correct byte offset."""
+    monkeypatch.chdir(tmp_path)
+    prefix = "P" * 1000
+    body = prefix + ("x" * (PREVIEW_MAX_CHARS + 500)) + "SUFFIX"
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (None, _bash_offload(stdout=body)),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        _invoke(bare_executor, "call1", "bash", {"command": "orig"}, ToolsRegistry())
+
+        slice_ = body[1000 : 1000 + PREVIEW_MAX_CHARS + 501]
+        mocker.patch.object(
+            ToolsRegistry,
+            "bash",
+            lambda self, command, timeout=60: (None, _bash_offload(stdout=slice_)),
+        )
+        env2, _s2, _r2 = _invoke(
+            bare_executor, "call2", "bash", {"command": "head"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    dup = env2["metadata"]["duplicate_of"]["stdout"]
+    assert dup["tool_call_id"] == "call1"
+    assert dup["offset"] == 1000
+    assert dup["length"] == len(slice_)
+
+
+def test_dedup_novel_large_output_offloads_unaffected(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    """A genuinely novel large output — no match to any stored artifact — offloads
+    exactly as before, with no duplicate_of key."""
+    monkeypatch.chdir(tmp_path)
+    first = "A" * (PREVIEW_MAX_CHARS + 500)
+    second = "B" * (PREVIEW_MAX_CHARS + 500)
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (None, _bash_offload(stdout=first)),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        _invoke(bare_executor, "call1", "bash", {"command": "one"}, ToolsRegistry())
+
+        mocker.patch.object(
+            ToolsRegistry,
+            "bash",
+            lambda self, command, timeout=60: (None, _bash_offload(stdout=second)),
+        )
+        env2, _s2, _r2 = _invoke(
+            bare_executor, "call2", "bash", {"command": "two"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    art_dir = tmp_path / ".my_coding_agent" / "sess123" / "artifacts"
+    assert (art_dir / "call2.stdout.txt").read_text() == second
+    assert "duplicate_of" not in env2["metadata"]
+    assert "[Preview:" in env2["output"]
+
+
+def test_dedup_duplicate_stdout_with_novel_stderr_handled_independently(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    monkeypatch.chdir(tmp_path)
+    stdout_body = "S" * (PREVIEW_MAX_CHARS + 500)
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (
+            None,
+            _bash_offload(stdout=stdout_body),
+        ),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        _invoke(bare_executor, "call1", "bash", {"command": "orig"}, ToolsRegistry())
+
+        stderr_body = "E" * (PREVIEW_MAX_CHARS + 500)
+        mocker.patch.object(
+            ToolsRegistry,
+            "bash",
+            lambda self, command, timeout=60: (
+                None,
+                _bash_offload(stdout=stdout_body, stderr=stderr_body, exit_code=1),
+            ),
+        )
+        env2, _s2, _r2 = _invoke(
+            bare_executor, "call2", "bash", {"command": "again"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    art_dir = tmp_path / ".my_coding_agent" / "sess123" / "artifacts"
+    assert not (art_dir / "call2.stdout.txt").exists()  # stdout deduped
+    assert (art_dir / "call2.stderr.txt").read_text() == stderr_body  # stderr novel
+    assert "stdout" in env2["metadata"]["duplicate_of"]
+    assert "stderr" not in env2["metadata"]["duplicate_of"]
+    assert "stderr" in env2["metadata"]["preview"]
+    assert "[Preview:" in env2["error"]
+
+
+def test_dedup_envelope_validates_and_absent_on_non_duplicate(
+    bare_executor, tmp_path, monkeypatch, mocker
+):
+    monkeypatch.chdir(tmp_path)
+    body = "x" * (PREVIEW_MAX_CHARS + 500)
+    mocker.patch.object(
+        ToolsRegistry,
+        "bash",
+        lambda self, command, timeout=60: (None, _bash_offload(stdout=body)),
+    )
+    token = current_session_id.set("sess123")
+    try:
+        env1, _s1, _r1 = _invoke(
+            bare_executor, "call1", "bash", {"command": "orig"}, ToolsRegistry()
+        )
+        env2, _s2, _r2 = _invoke(
+            bare_executor, "call2", "bash", {"command": "cat"}, ToolsRegistry()
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert "duplicate_of" not in env1["metadata"]
+    validate_tool_result(env1)
+    validate_tool_result(env2)  # duplicate_of shape validates

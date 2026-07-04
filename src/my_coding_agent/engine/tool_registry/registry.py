@@ -25,7 +25,11 @@ from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
 from ...utils.parsing import extract_message
 from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
-from ..tool_execution.schema import ARTICLE_FETCH_MAX_CHARS, ARTIFACT_THRESHOLD
+from ..tool_execution.schema import (
+    ARTICLE_FETCH_MAX_CHARS,
+    ARTIFACT_THRESHOLD,
+    RANGE_MAX_CHARS,
+)
 
 if TYPE_CHECKING:
     from ..llm import LLM
@@ -185,29 +189,54 @@ class ToolRegistry:
             return None, full  # dispatcher offloads it
         return json.dumps(full)
 
-    def read_tool_artifact(self, tool_call_id: str, query: str) -> str:
-        """Query a previously offloaded large tool output for a specific detail.
+    def read_tool_artifact(
+        self,
+        tool_call_id: str,
+        query: str | None = None,
+        start: int | None = None,
+        length: int | None = None,
+    ) -> str:
+        """Query, or exactly slice, a previously offloaded large tool output.
 
-        This is the primary way to pull detail out of an offloaded output: it
-        never returns the whole stored content, only a bounded extract relevant
-        to your query. Call it as many times as you need with different queries.
+        Two bounded, mutually exclusive modes:
+
+        - Query mode (default): pass ``query`` for a bounded extract relevant to
+          it — never the whole stored content. Call it as many times as you need
+          with different queries.
+        - Range mode: pass ``start`` (and optionally ``length``) for an exact,
+          verbatim byte slice — no LLM call, deterministic. This is the only mode
+          that works on content with little or no line structure (e.g. a single
+          giant JSON line), and is what a ``duplicate_of`` pointer's offset/length
+          feed directly into.
+
         Bash text tools (grep/rg, sed, awk, jq, head/tail, wc) over the on-disk
         artifact file remain available as a secondary path when you already know
-        the shape of what you're looking for (e.g. a specific line number).
+        the shape of what you're looking for and the content has line structure.
 
         Tags:
-            artifact, output, result, retrieve, query, search
+            artifact, output, result, retrieve, query, search, range
 
         Args:
             tool_call_id: The tool_call_id from a previous call whose output was
                 offloaded. Example: 'call_abc123'
             query: Natural-language description of what you need from the stored
-                output. Required. Example: 'the traceback line naming the failing
-                assertion'
+                output. Required unless ``start`` is given. Example: 'the
+                traceback line naming the failing assertion'
+            start: Byte offset (0-based) for exact verbatim range retrieval. When
+                given, ``query`` is ignored and the exact slice is returned.
+            length: Number of bytes to return from ``start``. Defaults to, and is
+                capped at, the per-call budget (RANGE_MAX_CHARS). Only used with
+                ``start``.
         """
+        if start is not None:
+            text = self._load_artifact_text(tool_call_id)
+            if text is None:
+                return f"Error: no artifact found for tool_call_id '{tool_call_id}'"
+            return self._range_slice(text, start, length)
         if not query or not query.strip():
             return (
-                "Error: 'query' is required and must be non-empty. Example: "
+                "Error: 'query' is required and must be non-empty unless 'start' "
+                "is given for byte-range retrieval. Example: "
                 f'read_tool_artifact(tool_call_id="{tool_call_id}", '
                 'query="the error message near the end of the output")'
             )
@@ -217,6 +246,21 @@ class ToolRegistry:
         if self._llm is None:
             return self._head_excerpt(tool_call_id, text)
         return self._extract(tool_call_id, text, query)
+
+    def _range_slice(self, text: str, start: int, length: int | None) -> str:
+        """Return an exact, verbatim byte-range slice of ``text``, capped at
+        RANGE_MAX_CHARS, prefixed by a one-line range/total header. No LLM call.
+        """
+        total = len(text)
+        if start < 0 or start >= total:
+            return (
+                f"Error: 'start' {start} is out of range — stored content is "
+                f"{total} bytes."
+            )
+        requested = length if length is not None else RANGE_MAX_CHARS
+        bounded = max(0, min(requested, RANGE_MAX_CHARS, total - start))
+        end = start + bounded
+        return f"[range {start}-{end} of {total} bytes]\n{text[start:end]}"
 
     def _load_artifact_text(self, tool_call_id: str) -> str | None:
         """Return the full stored text for tool_call_id, or None if nothing is

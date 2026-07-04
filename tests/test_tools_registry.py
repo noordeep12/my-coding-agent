@@ -155,6 +155,60 @@ def test_read_tool_artifact_rejects_unsafe_id(tmp_path, monkeypatch):
         current_session_id.reset(token)
 
 
+# --- read_tool_artifact: byte-range retrieval --------------------------------
+
+
+def test_read_tool_artifact_range_returns_exact_slice():
+    """A single-line artifact larger than the offload threshold is readable in
+    exact, bounded pieces via start/length — no LLM call needed."""
+    from my_coding_agent.engine.tool_registry.registry import RANGE_MAX_CHARS
+
+    body = "x" * 100 + "y" * 100 + "z" * 100
+    reg = ToolsRegistry(artifacts={"call_1": {"stdout": body, "stderr": ""}})
+    out = reg.read_tool_artifact("call_1", start=100, length=100)
+    assert out == f"[range 100-200 of {len(body)} bytes]\n" + "y" * 100
+    assert RANGE_MAX_CHARS > 0  # sanity: budget constant is importable and positive
+
+
+def test_read_tool_artifact_range_ignores_query():
+    reg = ToolsRegistry(artifacts={"call_1": {"stdout": "0123456789", "stderr": ""}})
+    out = reg.read_tool_artifact("call_1", query="ignored", start=0, length=5)
+    assert out == "[range 0-5 of 10 bytes]\n01234"
+
+
+def test_read_tool_artifact_range_defaults_length_to_budget():
+    from my_coding_agent.engine.tool_registry.registry import RANGE_MAX_CHARS
+
+    body = "a" * (RANGE_MAX_CHARS + 500)
+    reg = ToolsRegistry(artifacts={"call_1": {"stdout": body, "stderr": ""}})
+    out = reg.read_tool_artifact("call_1", start=0)
+    header, _, slice_ = out.partition("\n")
+    assert header == f"[range 0-{RANGE_MAX_CHARS} of {len(body)} bytes]"
+    assert len(slice_) == RANGE_MAX_CHARS
+
+
+def test_read_tool_artifact_range_length_is_capped_at_budget():
+    from my_coding_agent.engine.tool_registry.registry import RANGE_MAX_CHARS
+
+    body = "a" * (RANGE_MAX_CHARS + 500)
+    reg = ToolsRegistry(artifacts={"call_1": {"stdout": body, "stderr": ""}})
+    out = reg.read_tool_artifact("call_1", start=0, length=RANGE_MAX_CHARS + 500)
+    header = out.splitlines()[0]
+    assert header == f"[range 0-{RANGE_MAX_CHARS} of {len(body)} bytes]"
+
+
+def test_read_tool_artifact_range_out_of_range_start_errors_with_total_size():
+    reg = ToolsRegistry(artifacts={"call_1": {"stdout": "0123456789", "stderr": ""}})
+    out = reg.read_tool_artifact("call_1", start=10)
+    assert "Error" in out and "10 bytes" in out
+
+
+def test_read_tool_artifact_range_missing_artifact_errors():
+    reg = ToolsRegistry(artifacts={})
+    out = reg.read_tool_artifact("nope", start=0)
+    assert "no artifact found" in out
+
+
 def test_read_tool_artifact_uses_llm_for_extraction(mocker):
     """With an LLM injected, read_tool_artifact makes a bounded extraction call
     tagged with the artifact_query kind instead of falling back to a head excerpt."""

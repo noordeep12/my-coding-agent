@@ -48,32 +48,63 @@ def validate_tool_output(
 
 
 def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str:
-    """Build the inline guidance that steers the model to query-scoped access.
+    """Build the inline guidance that steers the model to bounded access paths.
 
-    Primary path: ``read_tool_artifact(tool_call_id=..., query=...)``, which
-    returns a bounded extract relevant to the query — never the whole output.
-    Bash text tools over the on-disk file remain a secondary path for callers
-    who already know the shape of what they need (a line number, an exact
-    pattern).
+    States the artifact's shape (total bytes/lines) so the model can judge which
+    access path is viable, then names the two bounded, deterministic retrieval
+    modes: query-scoped ``read_tool_artifact(tool_call_id=..., query=...)`` and
+    exact byte-range ``read_tool_artifact(tool_call_id=..., start=..., length=...)``.
+    Never suggests a whole-file read (no ``cat``-equivalents, no bare
+    ``head``/``tail`` on an unknown shape). Pattern/slice bash text tools
+    (``grep``/``rg``, ``sed`` ranges) remain suggested for multi-line content,
+    where they can actually bound the result; for single-line (or near it)
+    content they cannot, so that case is called out separately.
     """
-    counts = (
-        f"showing {preview['shown_lines']}/{preview['total_lines']} lines, "
-        f"{preview['shown_bytes']}/{preview['total_bytes']} bytes"
+    total_lines = preview["total_lines"]
+    total_bytes = preview["total_bytes"]
+    shape = f"total {total_bytes} bytes, {total_lines} line(s)"
+    query_path = (
+        'read_tool_artifact(tool_call_id=..., query="what you need") for a '
+        "bounded, query-scoped extract"
     )
-    primary = (
-        "Do NOT assume the excerpt is everything — to pull out a specific "
-        'detail, call read_tool_artifact(tool_call_id=..., query="what you '
-        'need") — it returns a bounded extract, never the full output.'
+    range_path = (
+        "read_tool_artifact(tool_call_id=..., start=<offset>, length=<n>) "
+        "for an exact, verbatim byte-range slice"
+    )
+    modes = f"Use {query_path}, or {range_path}."
+
+    if total_lines <= 1:
+        line_warning = (
+            "This output is a single line (or near it), so line-oriented tools "
+            "(head/tail, wc -l, sed line ranges) cannot bound it — "
+            f"{range_path} is the way to read it in pieces."
+        )
+        return (
+            f"[Preview: {shape}, showing {preview['shown_bytes']}/{total_bytes} "
+            f"bytes. Do NOT assume the excerpt is everything. {line_warning} "
+            f"{modes}]"
+        )
+
+    counts = (
+        f"showing {preview['shown_lines']}/{total_lines} lines, "
+        f"{preview['shown_bytes']}/{total_bytes} bytes"
     )
     if full_output_path:
         p = full_output_path
-        return (
-            f"[Preview: {counts}. {primary} Full output also on disk at {p} — "
-            f"skim it with bash text tools (grep/rg '<pattern>' {p}; "
-            f"sed -n '<start>,<end>p' {p}; awk; jq; head/tail; wc -l {p}) if you "
-            "already know what you're looking for.]"
+        pattern_tools = (
+            f"Pattern/slice bash text tools over the full file at {p} remain "
+            f"available if you already know what you're looking for (grep/rg "
+            f"'<pattern>' {p}; sed -n '<start>,<end>p' {p}; awk; jq) — never "
+            "read the whole file at once."
         )
-    return f"[Preview: {counts}. {primary}]"
+        return (
+            f"[Preview: {shape}, {counts}. Do NOT assume the excerpt is "
+            f"everything — {modes} {pattern_tools}]"
+        )
+    return (
+        f"[Preview: {shape}, {counts}. Do NOT assume the excerpt is "
+        f"everything — {modes}]"
+    )
 
 
 def build_stream_preview(
