@@ -418,7 +418,8 @@ function Stats({data}){
   const cost = a.cost_usd!=null ? '$'+Number(a.cost_usd).toFixed(4) : '—';
   const byKind = a.by_kind || {};
   const byAgent = a.by_agent || {};
-  const hasBreakdown = Object.keys(byKind).length>0 || Object.keys(byAgent).length>0;
+  const rr = a.resource_rollup;
+  const hasBreakdown = Object.keys(byKind).length>0 || Object.keys(byAgent).length>0 || !!rr;
   return html`<div>
     <div class="stats">
       <span><b>${data.model||'?'}</b></span>
@@ -442,6 +443,14 @@ function Stats({data}){
         ${Object.entries(byAgent).map(([sid,v])=>html`<span key=${sid} class="chip">
           ${sid.slice(0,8)}: ${fmtNum(v.tokens)} tok · ${v.call_count} calls${
             v.elapsed_s!=null ? ' · '+Number(v.elapsed_s).toFixed(1)+'s' : ''}</span>`)}
+      </div>` : null}
+      ${rr ? html`<div class="bd-row">
+        <span class="muted">machine (run):</span>
+        <span class="chip">ram avg ${rr.ram_pct.avg}% peak ${rr.ram_pct.peak}%</span>
+        <span class="chip">cpu avg ${rr.cpu_pct.avg}% peak ${rr.cpu_pct.peak}%</span>
+        ${rr.gpu_pct ? html`<span class="chip">gpu avg ${rr.gpu_pct.avg}% peak ${rr.gpu_pct.peak}%</span>` : null}
+        <span class="chip">net ${(rr.net_bytes/1048576).toFixed(1)} MB</span>
+        <span class="chip">disk ${(rr.disk_bytes/1048576).toFixed(1)} MB</span>
       </div>` : null}
     </div>` : null}
   </div>`;
@@ -531,6 +540,14 @@ function nodeBadges(node){
   // 5. latency — de-emphasized (neutral)
   const lat = a.latency_s!=null ? a.latency_s : (node.type==='session_end' ? a.elapsed_s : null);
   if(lat!=null) b.push({t:'⚡ '+lat+'s', c:'lat'});
+  // machine-wide resource figures for this node's window (node-resource-monitoring)
+  if(a.resources){
+    const r = a.resources;
+    const cpu = r.cpu_pct ? r.cpu_pct.avg+'%' : '?';
+    const ram = r.ram_pct ? r.ram_pct.avg+'%' : '?';
+    const gpu = r.gpu_pct ? ' gpu '+r.gpu_pct.avg+'%' : '';
+    b.push({t:'🖥 cpu '+cpu+' ram '+ram+gpu, c:'lat'});
+  }
   // 6. timestamp (neutral)
   const ts = fmtTime(a.started_at); if(ts) b.push({t:'🕘 '+ts, c:'ts'});
   // 7. step — least important

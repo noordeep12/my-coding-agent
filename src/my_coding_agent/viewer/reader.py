@@ -212,6 +212,9 @@ def load_session(
         graph.nodes, graph.order, start_ev.get("context_window"), session_id
     )
     analytics = _compute_analytics(graph.nodes, model, end_ev)
+    resource_rollup = _read_resource_rollup(session_dir)
+    if resource_rollup is not None:
+        analytics["resource_rollup"] = resource_rollup
 
     return TraceSession(
         session_id=session_id,
@@ -473,6 +476,7 @@ def _build_llm_node(
             "started_at": ev.get("started_at", ""),
             "max_tokens": max_tokens,
             "capped": capped,
+            "resources": ev.get("resources"),
         },
     )
 
@@ -497,6 +501,7 @@ def _build_tool_node(
             "child_session_id": ev.get("child_session_id"),
             "ok": ev.get("ok"),
             "error_class": ev.get("error_class"),
+            "resources": ev.get("resources"),
         },
     )
 
@@ -566,6 +571,7 @@ def _build_summarizer_node(
             "completion_tokens": ev.get("completion_tokens"),
             "total_tokens": ev.get("total_tokens"),
             "started_at": ev.get("started_at", ""),
+            "resources": ev.get("resources"),
         },
     )
 
@@ -1083,6 +1089,25 @@ def _compute_analytics(
         "by_kind": by_kind,
         "by_agent": by_agent,
     }
+
+
+def _read_resource_rollup(session_dir: Path) -> dict[str, Any] | None:
+    """Read the run-level resource rollup from ``session_data.json``, if any.
+
+    ``session_data.json`` is written once the run finishes, so a session still
+    in progress (or one recorded before resource capture existed) simply has
+    no ``resource_rollup`` key — this returns ``None`` in both cases, never
+    an error, keeping legacy sessions loading unchanged.
+    """
+    data_path = session_dir / "session_data.json"
+    if not data_path.exists():
+        return None
+    try:
+        data = json.loads(data_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    rollup = data.get("resource_rollup")
+    return rollup if isinstance(rollup, dict) else None
 
 
 # ── Session directory helpers ─────────────────────────────────────────────────

@@ -362,6 +362,7 @@ class AgentNode(BaseNode):
             started_at=self.started_at,
             tools=self.tools,
             rollup=self._usage_summary(),
+            resource_rollup=self.recorder.resource_rollup(),
         )
 
     def _save_session_data(self, max_steps: int) -> None:
@@ -392,6 +393,9 @@ class AgentNode(BaseNode):
             "llm_calls": self.llm.llm_calls,
             "last_message": last_message,
         }
+        resource_rollup = self.recorder.resource_rollup()
+        if resource_rollup is not None:
+            data["resource_rollup"] = resource_rollup
         out = Path(".my_coding_agent") / self.session_id / "session_data.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, indent=2))
