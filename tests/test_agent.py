@@ -63,6 +63,12 @@ def _make_agent(silent_logger, **overrides):
         if client_attr in overrides:
             setattr(agent.llm, client_attr, overrides.pop(client_attr))
     agent.tool_artifacts = {}  # a per-message ToolExecutor is built inside run()
+
+    class _NoopRecorder:
+        def resource_rollup(self):
+            return None
+
+    agent.recorder = _NoopRecorder()
     for key, value in overrides.items():
         setattr(agent, key, value)
     return agent

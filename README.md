@@ -97,6 +97,10 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 | `artifacts/<tool_call_id>.<stream>.txt` | Full content of each offloaded large output stream (`stdout`/`stderr`), written at creation so bash can skim it during the run |
 | `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
 
+### Machine-wide resource capture
+
+Since the LLM runs locally, machine load *is* the run's real cost. A background sampler (no sudo required) records **machine-wide** RAM/CPU/GPU/network/disk figures — what the Mac was doing, not per-process attribution — for the execution window of every timed event (`llm_call`, `tool_call`, `summarizer`), and a session-wide rollup (peaks/averages, byte totals) is persisted in `session_data.json` alongside the token/time totals. These figures are explicitly labeled `machine_wide: true` since other processes on the machine (e.g. a browser) count toward them too. Capture is passive (never throttles or aborts the run) and degrades gracefully: if the GPU reading is unavailable (non-macOS, or the `ioreg` output changes) or the sampler ever fails, the affected field (or all `resources` data) is simply absent — the run and its trace are unaffected. Sessions recorded before this existed load and render unchanged. Both the terminal run summary and the Trace Explorer (node detail, session stats) show these figures whenever they were captured.
+
 ### Trace Explorer
 
 Visualise sessions in a browser with an interactive pipeline DAG:

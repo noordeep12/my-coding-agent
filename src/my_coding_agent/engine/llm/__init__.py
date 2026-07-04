@@ -295,6 +295,7 @@ class LLM:
                 tools=tools,
                 started_at=_started_at,
                 max_tokens=max_tokens,
+                resources=self._recorder.resource_window(_t0, time.monotonic()),
             )
         self.logger.api(
             "call #%d [%s] usage — prompt: %s, completion: %s, total: %s",

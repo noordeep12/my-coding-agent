@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .error_classification import classify_error
+from .sampler import get_sampler
 
 # ── Event type tags written as the first key of every JSONL row ───────────────
 SESSION_START = "session_start"
@@ -101,6 +102,11 @@ class Recorder:
         self.session_id = session_id
         self.parent_session_id = parent_session_id
         self.path = Path(session_dir) / "events.jsonl"
+        # Process-wide machine-wide resource sampler (node-resource-monitoring),
+        # shared by the main agent and any in-process subagents; start/stop are
+        # ref-counted so nested sessions don't tear the thread down under
+        # each other.
+        self._sampler = get_sampler()
         # Single pending slot: tools dispatch sequentially (before → after), so
         # one in-flight start time is sufficient to compute latency. Carries
         # both the monotonic start (duration) and the wall-clock start
@@ -144,6 +150,7 @@ class Recorder:
     # ── lifecycle ──────────────────────────────────────────────────────────────
     def start(self, label: str, model: str, context_window: int) -> None:
         """Emit the session-start event with run metadata."""
+        self._sampler.start()
         self._emit(
             {
                 "type": SESSION_START,
@@ -167,6 +174,20 @@ class Recorder:
                 "ended_at": _now(),
             }
         )
+        self._sampler.stop()
+
+    def resource_window(self, start: float, end: float) -> dict[str, Any] | None:
+        """Summarize machine-wide resource use over a monotonic ``[start, end]``.
+
+        Thin pass-through to the shared sampler, so timed-event call sites
+        (LLM call, summarizer) don't need to import the sampler directly.
+        Returns ``None`` when capture is unavailable or has been disabled.
+        """
+        return self._sampler.summarize_window(start, end)
+
+    def resource_rollup(self) -> dict[str, Any] | None:
+        """Session-wide resource rollup so far (peaks/averages, byte totals)."""
+        return self._sampler.session_rollup()
 
     # ── LLM calls ──────────────────────────────────────────────────────────────
     def record_llm_call(
@@ -181,6 +202,7 @@ class Recorder:
         tools: list[dict[str, Any]] | None = None,
         started_at: str | None = None,
         max_tokens: int | None = None,
+        resources: dict[str, Any] | None = None,
     ) -> None:
         """Record one chat-completion call (incremental snapshot for payload kinds).
 
@@ -207,6 +229,10 @@ class Recorder:
         any — recorded on the event (absent when uncapped) so the viewer can
         badge a completion that was cut at its cap without importing the
         engine's budget constants (extract-completeness-disclosure D6).
+
+        ``resources`` is the caller's machine-wide sampler-window summary for
+        the call's execution bracket (node-resource-monitoring); omitted from
+        the event entirely when ``None`` (capture unavailable).
         """
         if self._pending is not None:
             # A tool is currently dispatching (before_tool ran, after_tool has
@@ -228,6 +254,7 @@ class Recorder:
             "tools": (tools or []) if keep_payload else None,
             "response": _response_summary(response_data),
             **({"max_tokens": max_tokens} if max_tokens is not None else {}),
+            **({"resources": resources} if resources is not None else {}),
         }
         if keep_payload:
             event.update(self._encode_messages(kind, call, messages))
@@ -301,11 +328,14 @@ class Recorder:
         failure signature.
         """
         if self._pending is not None and self._pending[1] == name:
-            latency = time.monotonic() - self._pending[0]
+            pending_start = self._pending[0]
+            latency = time.monotonic() - pending_start
             started_at = self._pending[2]
+            resources = self.resource_window(pending_start, time.monotonic())
         else:
             latency = 0.0
             started_at = _now()
+            resources = None
         self._pending = None
         event: dict[str, Any] = {
             "type": TOOL_CALL,
@@ -316,6 +346,8 @@ class Recorder:
             "started_at": started_at,
             "ok": ok,
         }
+        if resources is not None:
+            event["resources"] = resources
         if not ok:
             error_text = error or ""
             event["error"] = error_text
@@ -388,6 +420,7 @@ class Recorder:
         completion_tokens: int,
         total_tokens: int,
         started_at: str | None = None,
+        resources: dict[str, Any] | None = None,
     ) -> None:
         """Record one ContextSummarizerNode invocation, linked to its trigger.
 
@@ -395,21 +428,23 @@ class Recorder:
         (``finalize_step`` or ``context_guard``) so the viewer can nest the
         summarizer node under it in the trace tree. ``started_at`` is the
         wall-clock moment the summarization began, captured by the caller
-        alongside its monotonic latency timer.
+        alongside its monotonic latency timer. ``resources`` is the caller's
+        sampler-window summary for the same bracket; omitted when ``None``.
         """
-        self._emit(
-            {
-                "type": SUMMARIZER,
-                "kind": kind,
-                "step": step,
-                "triggered_by": triggered_by,
-                "latency_s": round(latency_s, 4),
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "started_at": started_at or _now(),
-            }
-        )
+        event: dict[str, Any] = {
+            "type": SUMMARIZER,
+            "kind": kind,
+            "step": step,
+            "triggered_by": triggered_by,
+            "latency_s": round(latency_s, 4),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "started_at": started_at or _now(),
+        }
+        if resources is not None:
+            event["resources"] = resources
+        self._emit(event)
 
     def record_token_tracking(
         self,

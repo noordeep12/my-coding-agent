@@ -27,3 +27,21 @@ ANOMALY_STEP = "step"
 # taxonomy so future detectors (exact-repeat loops, cost growth) add new
 # values without a schema change.
 ANOMALY_KIND_FAILURE_STREAK = "failure_streak"
+
+# Keys of a machine-wide "resources" object, optionally attached to timed
+# events (``llm_call``, ``tool_call``, ``summarizer``) and to the run-level
+# rollup in ``session_data.json`` (node-resource-monitoring). Absent means
+# "not captured" — legacy rows and hosts without a working sampler simply
+# omit the key.
+RESOURCES = "resources"
+RESOURCES_MACHINE_WIDE = "machine_wide"
+RESOURCES_SAMPLE_COUNT = "sample_count"
+# Gauge resources: {"avg": float, "peak": float} over the window.
+RESOURCES_RAM_PCT = "ram_pct"
+RESOURCES_CPU_PCT = "cpu_pct"
+RESOURCES_GPU_PCT = "gpu_pct"
+RESOURCES_GAUGE_AVG = "avg"
+RESOURCES_GAUGE_PEAK = "peak"
+# Counter resources: byte-count delta across the window.
+RESOURCES_NET_BYTES = "net_bytes"
+RESOURCES_DISK_BYTES = "disk_bytes"

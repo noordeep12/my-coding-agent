@@ -116,6 +116,7 @@ class ContextSummarizerNode(BaseNode):
             ctx.llm, ctx.messages, _PROMPTS[self._kind], self._kind
         )
         latency = time.monotonic() - t0
+        resources = ctx.recorder.resource_window(t0, time.monotonic())
         if self._kind == CALL_KIND_REPORT:
             ctx.handback_report = content
         else:
@@ -130,4 +131,5 @@ class ContextSummarizerNode(BaseNode):
             completion_tokens=last_call.get("completion", 0),
             total_tokens=last_call.get("total", 0),
             started_at=started_at,
+            resources=resources,
         )

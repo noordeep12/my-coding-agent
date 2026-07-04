@@ -507,6 +507,45 @@ def _context_resets_section(
     return lines
 
 
+def _resource_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]:
+    """Box rows for the run's machine-wide resource rollup (peaks/averages, bytes).
+
+    Returns no rows when *rollup* is absent (capture unavailable), so runs
+    without resource capture render exactly as before.
+    """
+    if not rollup:
+        return []
+    ram = rollup.get("ram_pct") or {}
+    cpu = rollup.get("cpu_pct") or {}
+    gpu = rollup.get("gpu_pct")
+    net_mb = (rollup.get("net_bytes") or 0) / (1024 * 1024)
+    disk_mb = (rollup.get("disk_bytes") or 0) / (1024 * 1024)
+    lines = [
+        s.empty_row(),
+        s.mid,
+        s.empty_row(),
+        s.metric_row1(
+            "RAM (machine)",
+            f"avg {ram.get('avg', 0):.1f}%  peak {ram.get('peak', 0):.1f}%",
+        ),
+        s.metric_row1(
+            "CPU (machine)",
+            f"avg {cpu.get('avg', 0):.1f}%  peak {cpu.get('peak', 0):.1f}%",
+        ),
+    ]
+    if gpu:
+        lines.append(
+            s.metric_row1(
+                "GPU (machine)",
+                f"avg {gpu.get('avg', 0):.1f}%  peak {gpu.get('peak', 0):.1f}%",
+            )
+        )
+    lines.append(
+        s.metric_row1("NET / DISK (machine)", f"{net_mb:.1f} MB / {disk_mb:.1f} MB")
+    )
+    return lines
+
+
 def _subagent_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]:
     """Box rows for task-level cost when delegations occurred: own vs rolled-up
     totals plus one line per direct subagent (session id, tokens, elapsed).
@@ -589,6 +628,7 @@ def print_run_summary(
     started_at: str = "",
     tools: list | None = None,
     rollup: dict | None = None,
+    resource_rollup: dict | None = None,
 ) -> None:
     """Render the end-of-run summary box to stderr.
 
@@ -607,6 +647,10 @@ def print_run_summary(
         rollup: This agent's usage summary (``AgentNode._usage_summary()``);
             when it carries delegated subagents, a task-level cost section is
             appended (own vs rolled-up totals, one line per subagent).
+        resource_rollup: Session-wide machine-wide resource rollup
+            (``Recorder.resource_rollup()``); the resource section is omitted
+            when ``None`` (capture unavailable), so a run without capture
+            renders unchanged.
     """
     s = _SummaryStyle()
     metric_row1 = s.metric_row1
@@ -671,6 +715,7 @@ def print_run_summary(
     lines += _tool_calls_section(s, records)
     lines += _context_resets_section(s, handoffs, context_window)
     lines += _subagent_rollup_section(s, rollup)
+    lines += _resource_rollup_section(s, resource_rollup)
 
     if last_message:
         lines += [s.empty_row(), s.mid, s.empty_row()]
