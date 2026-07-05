@@ -546,8 +546,8 @@ def test_offloaded_artifact_reports_true_verdict_to_recorder(
         (),
         {
             "before_tool": lambda self, name, args: args,
-            "after_tool": lambda self, name, args, result, ok, error: captured.update(
-                ok=ok, error=error
+            "after_tool": lambda self, name, args, result, ok, error, timing=None: (
+                captured.update(ok=ok, error=error)
             ),
         },
     )()

@@ -8,16 +8,22 @@ excerpt plus skim guidance). It makes no LLM calls itself; the LLM client is hel
 only for the session log path and the observability recorder.
 """
 
+import contextvars
 import hashlib
 import inspect
 import json
 import re
 import subprocess
+import time
+from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from ...observability import current_session_id
+from ...observability.recorder import _now
 from ...utils import get_logger
 from . import args as arg_prep
+from .concurrency import is_parallel_safe, max_tool_concurrency
 from .envelope import (
     build_tool_result,
     result_envelope,
@@ -163,6 +169,39 @@ def _build_duplicate_notice(duplicate: dict[str, Any], path: str | None) -> str:
     )
 
 
+# One parsed tool call, before dispatch. ``error`` is set (and ``func_name`` /
+# ``args`` may be partial) only when parsing failed; otherwise both are present.
+_PreparedCall = namedtuple("_PreparedCall", "tool_call_id func_name args error")
+
+
+def _plan_groups(prepared: list["_PreparedCall"]) -> list[list["_PreparedCall"]]:
+    """Partition parsed calls into ordered execution groups.
+
+    A maximal run of *contiguous* parallel-safe calls becomes one group (the
+    executor overlaps it); every other call — a parse error, or one whose
+    effects cannot be proven read-only — is its own singleton group and runs
+    inline in sequence. Group order matches call order, so a non-overlappable
+    call acts as a barrier: nothing after it starts until it finishes, and it
+    starts only once everything before it has finished. This preserves the exact
+    observable ordering of the sequential path for every call that is not itself
+    part of a read-only overlap.
+    """
+    groups: list[list[_PreparedCall]] = []
+    run: list[_PreparedCall] = []
+    for item in prepared:
+        safe = item.error is None and is_parallel_safe(item.func_name, item.args)
+        if safe:
+            run.append(item)
+            continue
+        if run:
+            groups.append(run)
+            run = []
+        groups.append([item])
+    if run:
+        groups.append(run)
+    return groups
+
+
 class ToolExecutor:
     """Dispatch the tool calls in one assistant message.
 
@@ -203,50 +242,142 @@ class ToolExecutor:
     def run(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Dispatch every tool call, filling ``tool_messages`` / ``tool_records``.
 
-        Each call runs the three phases — before → call → after — except parse
-        failures, which short-circuit to an error result. Returns the two lists
-        for convenience; they are also available as attributes.
+        Calls are parsed, then partitioned into ordered groups (:func:`_plan_groups`):
+        a contiguous run of provably read-only calls runs concurrently (bounded
+        pool), while every other call runs inline in sequence. Each call still
+        runs the three phases — before → call → after — and parse failures
+        short-circuit to an error result. Results are appended strictly in call
+        order regardless of finish order, so the conversation stays coherent.
+        Returns the two lists for convenience; they are also attributes.
         """
         self.logger.tool("dispatch: %d tool call(s)", len(self.tool_calls))
-        for tool_call in self.tool_calls:
-            tool_call_id, func_name, args, error = arg_prep.parse_tool_call(tool_call)
-            if error:
-                name = func_name or "<unknown>"
-                env = build_tool_result(
-                    name, False, "", error, {"reason": "parse_error"}
-                )
-                env["metadata"]["lang"] = resolve_lang(name, {}, env)
-                self.tool_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": json.dumps(validate_tool_result(env), default=str),
-                        "status": "error",
-                    }
-                )
-                self.tool_records.append(error_record(name, {}, tool_call_id, error))
-                continue
-
-            # parse_tool_call guarantees func_name/args are set when error is None.
-            assert func_name is not None and args is not None
-
-            args = self.before_tool_call(func_name, args)
-            self.logger.tool("%s → %s(%s)", tool_call_id, func_name, args)
-            raw, failure = self.invoke_tool(tool_call_id, func_name, args)
-            content, status, record = self.after_tool_call(
-                tool_call_id, func_name, args, raw, failure
-            )
-            self.tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": content,
-                    "status": status,
-                }
-            )
-            self.tool_records.append(record)
-
+        prepared = [
+            _PreparedCall(*arg_prep.parse_tool_call(tc)) for tc in self.tool_calls
+        ]
+        for group in _plan_groups(prepared):
+            if len(group) > 1:
+                self._dispatch_parallel(group)
+            else:
+                self._dispatch_one(group[0])
         return self.tool_messages, self.tool_records
+
+    def _dispatch_one(self, item: "_PreparedCall") -> None:
+        """Run one call through the sequential before → call → after path.
+
+        Unchanged from the pre-concurrency path: a parse failure short-circuits
+        to an error result; otherwise the recorder times the call via its own
+        pending-slot. This is the path for every non-overlappable call and for a
+        read-only call that has no read-only neighbour to overlap with.
+        """
+        if item.error is not None:
+            self._append_parse_error(item)
+            return
+        # parse_tool_call guarantees func_name/args are set when error is None.
+        assert item.func_name is not None and item.args is not None
+        args = self.before_tool_call(item.func_name, item.args)
+        self.logger.tool("%s → %s(%s)", item.tool_call_id, item.func_name, args)
+        raw, failure = self.invoke_tool(item.tool_call_id, item.func_name, args)
+        content, status, record = self.after_tool_call(
+            item.tool_call_id, item.func_name, args, raw, failure
+        )
+        self._append_result(item.tool_call_id, content, status, record)
+
+    def _dispatch_parallel(self, group: list["_PreparedCall"]) -> None:
+        """Overlap a run of read-only calls, then process results in call order.
+
+        Only the tool *invocation* (the I/O-bound work) overlaps: argument prep,
+        output offloading, envelope building, and every recorder emit stay on the
+        main thread, in call order, so the shared artifact store, session files,
+        and recorder capture state are never touched concurrently. Each worker
+        captures its own true start/end so the recorded per-call latency reflects
+        the isolated call, not the group's wall-clock. Non-recoverable exceptions
+        propagate (``future.result``) exactly as in the sequential path.
+        """
+        prepared_args = [
+            self._prepare_args(item.func_name, item.args) for item in group
+        ]
+        workers = min(max_tool_concurrency(), len(group))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            # copy_context() per task: each worker runs under the parent's
+            # contextvars (session id, recorder) without sharing one Context.
+            futures = [
+                pool.submit(
+                    contextvars.copy_context().run,
+                    self._invoke_timed,
+                    item.tool_call_id,
+                    item.func_name,
+                    args,
+                )
+                for item, args in zip(group, prepared_args)
+            ]
+        for item, args, future in zip(group, prepared_args, futures):
+            raw, failure, start_mono, end_mono, started_at = future.result()
+            content, status, record = self.after_tool_call(
+                item.tool_call_id,
+                item.func_name,
+                args,
+                raw,
+                failure,
+                timing=(start_mono, end_mono, started_at),
+            )
+            self._append_result(item.tool_call_id, content, status, record)
+
+    def _invoke_timed(
+        self, tool_call_id: str, func_name: str, args: dict
+    ) -> tuple[Any, dict | None, float, float, str]:
+        """Worker body: invoke one tool, bracketed by its own true timing.
+
+        Returns ``(raw, failure, start_mono, end_mono, started_at)`` — the
+        monotonic bracket bounds the call's real duration for latency/resource
+        accounting, and ``started_at`` is its wall-clock start in the recorder's
+        format. Runs no recorder or artifact-store code; those stay on the main
+        thread so overlap never races shared state.
+        """
+        started_at = _now()
+        start_mono = time.monotonic()
+        raw, failure = self.invoke_tool(tool_call_id, func_name, args)
+        return raw, failure, start_mono, time.monotonic(), started_at
+
+    def _append_parse_error(self, item: "_PreparedCall") -> None:
+        """Append the error result for a call that failed to parse."""
+        name = item.func_name or "<unknown>"
+        env = build_tool_result(name, False, "", item.error, {"reason": "parse_error"})
+        env["metadata"]["lang"] = resolve_lang(name, {}, env)
+        self.tool_messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": item.tool_call_id,
+                "content": json.dumps(validate_tool_result(env), default=str),
+                "status": "error",
+            }
+        )
+        self.tool_records.append(error_record(name, {}, item.tool_call_id, item.error))
+
+    def _append_result(
+        self, tool_call_id: str, content: str, status: str, record: dict
+    ) -> None:
+        """Append one dispatched call's tool message and record, in call order."""
+        self.tool_messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content,
+                "status": status,
+            }
+        )
+        self.tool_records.append(record)
+
+    def _prepare_args(self, func_name: str, args: dict) -> dict:
+        """Alias-remap args and strip unknown kwargs (no recorder side effect).
+
+        The pure argument-prep half of :meth:`before_tool_call`, split out so the
+        concurrent path can prepare args on the main thread without stamping the
+        recorder's single pending-slot (which it bypasses via explicit timing).
+        """
+        args = arg_prep.apply_arg_aliases(func_name, args)
+        args = arg_prep.strip_unknown_args(func_name, args)
+        self.logger.tool("before %s(%s) [after alias remapping]", func_name, args)
+        return args
 
     def before_tool_call(self, func_name: str, args: dict) -> dict:
         """Before the call: alias-remap args, strip unknown kwargs, stamp recorder.
@@ -254,9 +385,7 @@ class ToolExecutor:
         Returns the prepared args. The recorder (if any) stamps the call's start
         time for latency accounting.
         """
-        args = arg_prep.apply_arg_aliases(func_name, args)
-        args = arg_prep.strip_unknown_args(func_name, args)
-        self.logger.tool("before %s(%s) [after alias remapping]", func_name, args)
+        args = self._prepare_args(func_name, args)
         if self.llm._recorder is not None:
             self.llm._recorder.before_tool(func_name, args)
         return args
@@ -306,6 +435,7 @@ class ToolExecutor:
         args: dict,
         raw_result: Any,
         failure: dict | None,
+        timing: tuple[float, float, str] | None = None,
     ) -> tuple[str, str, dict]:
         """Turn the tool's raw return (or failure) into (content, status, record).
 
@@ -314,12 +444,20 @@ class ToolExecutor:
         per-artifact file and replacing it with a bounded preview — no LLM),
         coerces to str, truncates, and normalizes into the canonical envelope.
         Serializes, then lets the recorder capture the final agent-facing content.
+
+        ``timing`` is supplied only by the concurrent path — a
+        ``(start_mono, end_mono, started_at)`` bracket the worker captured — so
+        the recorded latency reflects the isolated call rather than the shared
+        pending-slot, which overlap would otherwise race. ``None`` keeps the
+        sequential path's recorder timing exactly as before.
         """
 
         def capture(content: str, ok: bool, error: str | None) -> str:
             """Let the observability recorder (if any) emit the tool event."""
             if self.llm._recorder is not None:
-                self.llm._recorder.after_tool(func_name, args, content, ok, error)
+                self.llm._recorder.after_tool(
+                    func_name, args, content, ok, error, timing=timing
+                )
             return content
 
         if failure is not None:
