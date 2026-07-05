@@ -76,7 +76,7 @@ _READ_ONLY_COMMANDS = frozenset(
         "ls", "pwd", "echo", "printf", "wc", "cut", "tr", "nl", "tac",
         "basename", "dirname", "realpath", "readlink",
         "stat", "file", "du", "df",
-        "whoami", "hostname", "uname", "id", "which", "type",
+        "whoami", "uname", "id", "which", "type",
         "xxd", "hexdump", "od", "strings", "jq",
         "sha256sum", "shasum", "md5sum", "cksum",
     }
