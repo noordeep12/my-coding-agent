@@ -41,3 +41,8 @@ PROBLEM.md
 PROBLEM.*.md
 
 openspec/*
+
+CLAUDE.md
+CLAUDE-*.md
+AGENTS.md
+AGENTS-*.md
