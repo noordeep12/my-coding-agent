@@ -70,3 +70,19 @@ PREVIEW_MAX_CHARS = PREVIEW_TOKEN_BUDGET * _CHARS_PER_TOKEN
 # PREVIEW_MAX_CHARS so the boundary is named where the other offload constants
 # live, rather than introducing an independent budget.
 RANGE_MAX_CHARS = PREVIEW_MAX_CHARS
+
+# ── Skill-index budget (skill-knowledge-delivery, issue #19) ───────────────────
+# The skill index is appended to the session's opening user message (never the
+# system prompt, so the #75 prefix-cache invariant holds). These fixed character
+# caps bound it deterministically — no LLM, no ranking. Kept here alongside the
+# other offload/size thresholds so every size boundary lives in one module.
+
+# Per-entry cap: the maximum length of one rendered index line
+# (``- <name>: <description>``); a longer description is truncated with an
+# ellipsis.
+SKILL_INDEX_PER_ENTRY_MAX_CHARS = 200
+
+# Total cap: the rendered index (header + all lines) never exceeds this. Over
+# budget, descriptions are truncated evenly; still over, lines degrade to
+# names-only. The block placed into the opening message never exceeds this cap.
+SKILL_INDEX_TOTAL_MAX_CHARS = 2_000

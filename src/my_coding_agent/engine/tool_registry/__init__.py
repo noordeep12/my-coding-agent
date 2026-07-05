@@ -14,6 +14,13 @@ import logging
 
 from .converter import function_to_json, tool
 from .registry import ARTIFACT_THRESHOLD, ToolRegistry, artifact_file_path
+from .skills import (
+    RenderedIndex,
+    Skill,
+    build_opening_block,
+    discover_skills,
+    render_skill_index,
+)
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -23,4 +30,9 @@ __all__ = [
     "artifact_file_path",
     "function_to_json",
     "tool",
+    "Skill",
+    "RenderedIndex",
+    "discover_skills",
+    "render_skill_index",
+    "build_opening_block",
 ]

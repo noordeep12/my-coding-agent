@@ -45,6 +45,8 @@ def _make_ctx(**kwargs) -> RunContext:
     ctx.tool_records = []
     ctx.tool_artifacts = {}
     ctx.recorder = mock.Mock()
+    ctx.skills = {}
+    ctx.loaded_skills = set()
     for k, v in kwargs.items():
         setattr(ctx, k, v)
     return ctx

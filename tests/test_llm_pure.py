@@ -188,7 +188,11 @@ def test_route_tools_keyword_match_selects_baseline_plus_matched(bare_router):
     selected, phase = bare_router.route_tools("please fetch this url", tools)
     names = {t["function"]["name"] for t in selected}
     assert "read_article" in names
-    assert _BASELINE_TOOLS <= names
+    # Effective baseline is _BASELINE_TOOLS intersected with the provided tools:
+    # use_skill is baseline only when registered (absent here), so it is not
+    # expected in the selection (tool-routing).
+    baseline_in_tools = _BASELINE_TOOLS & {t["function"]["name"] for t in tools}
+    assert baseline_in_tools <= names
     assert phase == "phase1_keyword"
 
 

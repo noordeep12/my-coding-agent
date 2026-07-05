@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..engine.llm import LLM
+    from ..engine.tool_registry.skills import Skill
     from ..observability import Recorder
 
 
@@ -39,6 +40,12 @@ class RunContext:
     tool_records: list[dict[str, Any]] = field(default_factory=list)
     tool_artifacts: dict[str, Any] = field(default_factory=dict)
     handoff_records: list[dict[str, Any]] = field(default_factory=list)
+    # Discovered-skill snapshot for this run (name → Skill) and the set of skill
+    # names loaded so far. The snapshot is stable within a run (D2); the loaded-
+    # set is a shared mutable object so `use_skill` dedup persists across steps
+    # and rides into a continuation on reset (D5/D6). Both empty when no skills.
+    skills: dict[str, Skill] = field(default_factory=dict)
+    loaded_skills: set[str] = field(default_factory=set)
 
     # --- per-step transient state (LLMCallNode writes, downstream nodes read) ---
     last_response: Any = None

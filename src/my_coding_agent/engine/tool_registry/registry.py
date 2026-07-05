@@ -38,6 +38,7 @@ from ..tool_execution.schema import (
 
 if TYPE_CHECKING:
     from ..llm import LLM
+    from .skills import Skill
 
 logger = get_logger(__name__)
 
@@ -167,6 +168,8 @@ class ToolRegistry:
         tools: list | None = None,
         base_dir: str | None = None,
         llm: "LLM | None" = None,
+        skills: "dict[str, Skill] | None" = None,
+        loaded_skills: set[str] | None = None,
     ):
         self._artifacts = artifacts if artifacts is not None else {}
         self._tools = tools if tools is not None else []
@@ -181,6 +184,14 @@ class ToolRegistry:
         # an agent run (unit tests, standalone registry) — extraction then
         # degrades to a bounded head excerpt.
         self._llm = llm
+        # Discovered-skill snapshot for this run (name → Skill), and the set of
+        # skill names already loaded in this conversation. Both are injected by
+        # ToolExecutor from RunContext so `use_skill` can lazily load a body and
+        # dedup repeats, and `delegate` can pass the same snapshot to a child.
+        # The loaded-set is shared by reference across the run's per-message
+        # registries so a load in one step is remembered in the next (D5/D6).
+        self._skills = skills if skills is not None else {}
+        self._loaded_skills = loaded_skills if loaded_skills is not None else set()
 
     def _resolve_in_base(self, file_path: str) -> Path:
         """Resolve file_path against the workspace base, rejecting any escape.
@@ -518,6 +529,40 @@ class ToolRegistry:
             return None, False
         return _THINK_RE.sub("", content).strip(), cut
 
+    def use_skill(self, name: str) -> "str | tuple[None, dict]":
+        """Load a skill's full instructions by name into the conversation.
+
+        A skill bundles procedural knowledge for a specific task. The available
+        skills (with a one-line description each) are listed in the index at the
+        end of the opening message; call this to pull the named skill's full body
+        into context before doing that task. Load a skill once — a repeat load
+        returns a short pointer instead of re-injecting the body.
+
+        Tags:
+            skill, use_skill, load, knowledge, procedure, howto, guide
+
+        Args:
+            name: The exact skill name from the index. Example: 'commit-and-push'
+        """
+        skill = self._skills.get(name)
+        if skill is None:
+            available = ", ".join(sorted(self._skills)) or "(none available)"
+            return f"Error: unknown skill '{name}'. Available skills: {available}."
+        if name in self._loaded_skills:
+            return (
+                f"Skill '{name}' was already loaded earlier in this "
+                "conversation; its full content is above. Not re-injected to "
+                "conserve context."
+            )
+        self._loaded_skills.add(name)
+        body = f"Skill: {name}\n\n{skill.body}"
+        if len(body) > ARTIFACT_THRESHOLD:
+            # Reuse the existing artifact machinery: an oversized skill body is
+            # offloaded to a per-stream file with a bounded preview, exactly like
+            # a large file read.
+            return None, {"stdout": body, "ok": True}
+        return body
+
     def delegate(self, task: str, known_facts: str = "") -> str:
         """Delegate a focused exploration or research task to a subagent.
         The subagent starts fresh with only the task (and any known_facts),
@@ -576,6 +621,12 @@ class ToolRegistry:
             tools=subagent_tools,
             label="SubAgent",
             needs_handback=True,
+            # Subagent parity (D7): the child gets the same discovered-skill
+            # snapshot (no disk re-scan — same run) so its opening message is
+            # offered the same index and `use_skill` works. The child keeps its
+            # OWN empty loaded-set — a skill the parent loaded is not implicitly
+            # in the child's context; the child must load it itself.
+            skills=self._skills,
         )
         agent.execute(max_steps=DEFAULT_MAX_STEPS)
         # Link this subagent to the delegate tool call in the parent's trace tree.

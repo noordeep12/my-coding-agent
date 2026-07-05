@@ -211,7 +211,7 @@ def load_session(
     _assign_ctx_state(
         graph.nodes, graph.order, start_ev.get("context_window"), session_id
     )
-    analytics = _compute_analytics(graph.nodes, model, end_ev)
+    analytics = _compute_analytics(graph.nodes, model, end_ev, events)
     resource_rollup = _read_resource_rollup(session_dir)
     if resource_rollup is not None:
         analytics["resource_rollup"] = resource_rollup
@@ -1021,6 +1021,7 @@ def _compute_analytics(
     nodes: dict[str, TraceNode],
     model: str,
     end_ev: dict[str, Any] | None,
+    events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Aggregate token totals, cost, and event counts across all nodes.
 
@@ -1028,13 +1029,18 @@ def _compute_analytics(
         nodes: All trace nodes.
         model: Model name used for cost estimation.
         end_ev: Raw ``session_end`` event dict, or ``None``.
+        events: Raw event rows, used to count ``skill_index`` (offered) events.
+            When any exist, ``skill_offered_count`` / ``skill_loaded_count`` are
+            added; absent skill activity leaves analytics byte-identical to a
+            pre-skill trace (skill-event-capture).
 
     Returns:
         Dict with ``total_tokens``, ``total_prompt_tokens``,
         ``total_completion_tokens``, ``cost_usd``, ``elapsed_s``,
         ``llm_call_count``, ``tool_call_count``, ``loop_count``,
         ``anomaly_count``, ``by_kind`` (tokens per call kind) and ``by_agent``
-        (per session id: tokens, wall time, call count).
+        (per session id: tokens, wall time, call count), plus
+        ``skill_offered_count`` / ``skill_loaded_count`` when skill events exist.
 
     Token totals cover every call kind (``main``, ``report``, ``handoff``,
     ``tool_router``, ``tool_arg_correction``, ``artifact_query``) across the
@@ -1043,11 +1049,14 @@ def _compute_analytics(
     """
     prompt_total = completion_total = 0
     llm_count = tool_count = loop_count = anomaly_count = 0
+    skill_loaded = 0
     by_kind: dict[str, dict[str, int]] = {}
     by_agent: dict[str, dict[str, Any]] = {}
     for node in nodes.values():
         if node.type == "anomaly":
             anomaly_count += 1
+        if node.type == "tool_call" and node.attributes.get("name") == "use_skill":
+            skill_loaded += 1
         if node.type == "llm_call":
             kind = node.attributes.get("kind") or "main"
             prompt = node.attributes.get("prompt_tokens") or 0
@@ -1076,7 +1085,7 @@ def _compute_analytics(
                 node.agent, {"tokens": 0, "call_count": 0, "elapsed_s": None}
             )
             agent_agg["elapsed_s"] = node.attributes.get("elapsed_s")
-    return {
+    analytics: dict[str, Any] = {
         "total_prompt_tokens": prompt_total,
         "total_completion_tokens": completion_total,
         "total_tokens": prompt_total + completion_total,
@@ -1089,6 +1098,13 @@ def _compute_analytics(
         "by_kind": by_kind,
         "by_agent": by_agent,
     }
+    # Skill offered/loaded counts, only when the run had skill activity — a
+    # skill-free trace's analytics stay byte-identical to today (D9).
+    skill_offered = sum(1 for ev in (events or []) if ev.get("type") == "skill_index")
+    if skill_offered or skill_loaded:
+        analytics["skill_offered_count"] = skill_offered
+        analytics["skill_loaded_count"] = skill_loaded
+    return analytics
 
 
 def _read_resource_rollup(session_dir: Path) -> dict[str, Any] | None:

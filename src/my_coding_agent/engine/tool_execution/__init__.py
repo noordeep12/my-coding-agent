@@ -222,6 +222,8 @@ class ToolExecutor:
         message: dict[str, Any],
         llm: "LLM",
         tools: list[dict[str, Any]] | None = None,
+        skills: dict[str, Any] | None = None,
+        loaded_skills: set[str] | None = None,
     ) -> None:
         # Imported lazily (not at module level) to avoid a circular import:
         # tool_registry reads its size-threshold constants from
@@ -235,8 +237,15 @@ class ToolExecutor:
         self.tool_artifacts: dict = {}
         self.llm = llm
         self.logger = get_logger(self.__class__.__name__)
+        # ``skills``/``loaded_skills`` flow from RunContext so ``use_skill`` can
+        # lazily load a body and dedup repeats; the loaded-set is shared by
+        # reference across the run's per-message registries so dedup persists.
         self.registry = ToolRegistry(
-            artifacts=self.tool_artifacts, tools=tools or [], llm=llm
+            artifacts=self.tool_artifacts,
+            tools=tools or [],
+            llm=llm,
+            skills=skills,
+            loaded_skills=loaded_skills,
         )
 
     def run(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

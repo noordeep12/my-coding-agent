@@ -36,6 +36,7 @@ TOKEN_TRACKING = "token_tracking"
 FINISH_CHECK = "finish_check"
 SUMMARIZER = "summarizer"
 ANOMALY = "anomaly"
+SKILL_INDEX = "skill_index"
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -519,6 +520,34 @@ class Recorder:
                 "streak_len": streak_len,
                 "tokens_spent": tokens_spent,
                 "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_skill_index(self, names: list[str], chars: int, tier: str) -> None:
+        """Record that a skill index was placed into an opening user message.
+
+        Emitted once at session start and once per continuation when the index
+        is placed (skill-knowledge-delivery D9) — the *offered* record. Purely
+        passive: it captures what the run offered, and never influences
+        execution. Absent entirely from a skill-free run's ``events.jsonl`` (the
+        caller only records when skills exist), so pre-skill traces parse
+        identically to today.
+
+        Args:
+            names: Skill names listed in the placed index.
+            chars: Size in characters of the block actually placed (including any
+                re-injected loaded-skill bodies on a continuation).
+            tier: Degradation tier applied to fit the budget
+                (``full`` / ``truncated`` / ``names_only``).
+        """
+        self._emit(
+            {
+                "type": SKILL_INDEX,
+                "names": names,
+                "count": len(names),
+                "chars": chars,
+                "tier": tier,
                 "started_at": _now(),
             }
         )
