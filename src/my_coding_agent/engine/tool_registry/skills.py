@@ -121,7 +121,7 @@ def _build_skill(md_path: Path) -> Skill | None:
     """
     try:
         text = md_path.read_text()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Skipping unreadable skill file %s: %s", md_path, exc)
         return None
     parsed = _parse_frontmatter(text)
