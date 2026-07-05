@@ -43,6 +43,10 @@ Tool execution
    :members:
    :show-inheritance:
 
+.. automodule:: my_coding_agent.engine.tool_execution.concurrency
+   :members:
+   :show-inheritance:
+
 
 Tool routing
 ------------

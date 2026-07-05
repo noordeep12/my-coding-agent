@@ -209,7 +209,15 @@ def test_route_tools_baseline_tag_match_skips_phase2(bare_router):
 # --- word-boundary tag matching -----------------------------------------------
 
 
-def test_route_tools_substring_inside_word_does_not_match(bare_router):
+def test_route_tools_substring_inside_word_does_not_match(bare_router, mocker):
+    # No tag match anywhere sends routing to the phase-2 LLM call, so stub it to
+    # return no tools -- otherwise a missing LLM server (e.g. CI) makes the call
+    # fail and fall back to *all* tools, leaking read_article regardless of the
+    # word-boundary behaviour under test.
+    chat = mocker.patch.object(bare_router.client, "chat_completion")
+    chat.return_value = mocker.Mock(
+        json=lambda: {"choices": [{"message": {"role": "assistant", "content": "[]"}}]}
+    )
     tools = [_tool_def("read_article", tags=["file"])]
     selected, phase = bare_router.route_tools("check the profile", tools)
     names = {t["function"]["name"] for t in selected}

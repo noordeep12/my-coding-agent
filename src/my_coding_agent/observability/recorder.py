@@ -317,6 +317,7 @@ class Recorder:
         result: str,
         ok: bool,
         error: str | None,
+        timing: tuple[float, float, str] | None = None,
     ) -> str:
         """Post-dispatch hook: emit the tool event with full I/O. Result unchanged.
 
@@ -326,17 +327,30 @@ class Recorder:
         ``result``. On failure, ``error_class`` is computed via the shared
         classification helper so it agrees with the anomaly detector's
         failure signature.
+
+        ``timing`` is passed only by the concurrent dispatch path: a
+        ``(start_mono, end_mono, started_at)`` bracket the executor captured
+        around this exact call. When present it drives latency/resources
+        directly and the single-slot ``_pending`` state is left untouched, so
+        overlapping calls (whose before/after can no longer be strictly paired)
+        never race it. Concurrent read-only calls make no nested LLM calls, so
+        no ``child_llm_calls`` are attached on this path.
         """
-        if self._pending is not None and self._pending[1] == name:
+        if timing is not None:
+            start_mono, end_mono, started_at = timing
+            latency = end_mono - start_mono
+            resources = self.resource_window(start_mono, end_mono)
+        elif self._pending is not None and self._pending[1] == name:
             pending_start = self._pending[0]
             latency = time.monotonic() - pending_start
             started_at = self._pending[2]
             resources = self.resource_window(pending_start, time.monotonic())
+            self._pending = None
         else:
             latency = 0.0
             started_at = _now()
             resources = None
-        self._pending = None
+            self._pending = None
         event: dict[str, Any] = {
             "type": TOOL_CALL,
             "name": name,
@@ -359,7 +373,9 @@ class Recorder:
             self._pending_delegate_child = None
         # Attach any LLM calls this tool made internally (e.g. read_tool_artifact's
         # artifact_query extraction) so the tree nests them under this tool call.
-        if self._pending_child_llm_calls:
+        # The concurrent path (timing given) tracks no such nested calls and must
+        # not consume the shared pending list.
+        if timing is None and self._pending_child_llm_calls:
             event["child_llm_calls"] = self._pending_child_llm_calls
             self._pending_child_llm_calls = []
         self._emit(event)
