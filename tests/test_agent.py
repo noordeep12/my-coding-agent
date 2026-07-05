@@ -88,33 +88,43 @@ class _Resp:
 # --- _routing_signal (now in pipeline.nodes.tool_routing) --------------------
 
 
-def test_routing_signal_joins_last_user_and_assistant():
-    messages = [
-        {"role": "user", "content": "first task"},
-        {"role": "assistant", "content": "doing it"},
-    ]
-    assert _routing_signal(messages) == "first task doing it"
-
-
-def test_routing_signal_uses_most_recent_of_each_role():
+def test_routing_signal_bootstraps_from_last_user_message_only():
     messages = [
         {"role": "user", "content": "old"},
-        {"role": "user", "content": "new user"},
-        {"role": "assistant", "content": "new assistant"},
+        {"role": "user", "content": "first task"},
     ]
-    assert _routing_signal(messages) == "new user new assistant"
+    assert _routing_signal(messages) == "first task"
 
 
 def test_routing_signal_empty_when_no_messages():
     assert _routing_signal([]) == ""
 
 
+def test_routing_signal_task_text_leaves_signal_once_assistant_exists():
+    messages = [
+        {"role": "user", "content": "first task"},
+        {"role": "assistant", "content": "doing it"},
+    ]
+    signal = _routing_signal(messages)
+    assert signal == "doing it"
+    assert "first task" not in signal
+
+
+def test_routing_signal_uses_most_recent_assistant_message():
+    messages = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "old assistant"},
+        {"role": "assistant", "content": "new assistant"},
+    ]
+    assert _routing_signal(messages) == "new assistant"
+
+
 def test_routing_signal_skips_none_content():
     messages = [
         {"role": "user", "content": None},
-        {"role": "assistant", "content": "only this"},
+        {"role": "assistant", "content": None},
     ]
-    assert _routing_signal(messages) == "only this"
+    assert _routing_signal(messages) == ""
 
 
 def test_routing_signal_tool_call_only_turn_contributes_names():
@@ -126,7 +136,7 @@ def test_routing_signal_tool_call_only_turn_contributes_names():
             "tool_calls": [{"function": {"name": "bash"}}],
         },
     ]
-    assert _routing_signal(messages) == "first task bash"
+    assert _routing_signal(messages) == "bash"
 
 
 def test_routing_signal_changes_with_new_tool_results():
@@ -405,7 +415,7 @@ def _stub_run_internals(agent, mocker):
     # class level so every instance's route_tools passes all tools through.
     mocker.patch(
         "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
-        return_value=[],
+        return_value=([], "empty"),
     )
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")

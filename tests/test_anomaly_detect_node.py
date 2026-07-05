@@ -225,7 +225,7 @@ def _run_streak_agent(monkeypatch, mocker, tmp_path, needs_handback=False):
     monkeypatch.chdir(tmp_path)
     mocker.patch(
         "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
-        return_value=[BASH_TOOL_SCHEMA],
+        return_value=([BASH_TOOL_SCHEMA], "phase1_keyword"),
     )
     agent = AgentNode(
         messages=[
@@ -319,7 +319,7 @@ class TestAnomalyDetectNodeEndToEnd:
         monkeypatch.chdir(tmp_path)
         mocker.patch(
             "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
-            return_value=[BASH_TOOL_SCHEMA],
+            return_value=([BASH_TOOL_SCHEMA], "phase1_keyword"),
         )
         agent = AgentNode(
             messages=[
