@@ -66,10 +66,11 @@ _UNSAFE_SHELL_CHARS = (">", "<", ";", "&", "`", "$(", "\n", "\r")
 
 # Command basenames that cannot write local state or reach the network under
 # *any* flag set — verified individually. Commands with an output-file flag
-# (``sort -o``, ``uniq out``, ``tree -o``), a command-runner form (``env VAR=x
-# cmd``), a clock-set side effect (``date -s``), or network reach (``curl``,
-# ``wget``) are deliberately excluded, as are the in-place editors ``sed``/
-# ``awk`` and ``find`` (``-exec``/``-delete``).
+# (``sort -o``, ``uniq out``, ``tree -o``), an output-file positional (``xxd
+# infile outfile``, ``xxd -r dump out.bin``), a command-runner form (``env
+# VAR=x cmd``), a clock-set side effect (``date -s``), or network reach
+# (``curl``, ``wget``) are deliberately excluded, as are the in-place editors
+# ``sed``/``awk`` and ``find`` (``-exec``/``-delete``).
 _READ_ONLY_COMMANDS = frozenset(
     {
         "cat", "head", "tail", "grep", "egrep", "fgrep", "rg",
@@ -77,7 +78,7 @@ _READ_ONLY_COMMANDS = frozenset(
         "basename", "dirname", "realpath", "readlink",
         "stat", "file", "du", "df",
         "whoami", "uname", "id", "which", "type",
-        "xxd", "hexdump", "od", "strings", "jq",
+        "hexdump", "od", "strings", "jq",
         "sha256sum", "shasum", "md5sum", "cksum",
     }
 )  # fmt: skip
