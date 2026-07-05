@@ -157,7 +157,7 @@ def test_chat_completion_captures_tools_on_event(bare_llm, mocker, tmp_path):
     req = mocker.patch.object(
         bare_llm,
         "_request_with_retry",
-        return_value=_Resp({"choices": [], "usage": {}}),
+        return_value=_Resp({"choices": [{"message": {"content": "ok"}}], "usage": {}}),
     )
     bare_llm.chat_completion(
         [{"role": "user", "content": "q"}], tools=tools, kind="main"
@@ -179,7 +179,7 @@ def test_chat_completion_passes_max_tokens(bare_llm, mocker):
     req = mocker.patch.object(
         bare_llm,
         "_request_with_retry",
-        return_value=_Resp({"choices": [], "usage": {}}),
+        return_value=_Resp({"choices": [{"message": {"content": "ok"}}], "usage": {}}),
     )
     bare_llm.chat_completion([{"role": "user", "content": "q"}], max_tokens=128)
     assert req.call_args.kwargs["json"]["max_tokens"] == 128
@@ -191,13 +191,16 @@ def test_chat_completion_omits_max_tokens_when_none(bare_llm, mocker):
     req = mocker.patch.object(
         bare_llm,
         "_request_with_retry",
-        return_value=_Resp({"choices": [], "usage": {}}),
+        return_value=_Resp({"choices": [{"message": {"content": "ok"}}], "usage": {}}),
     )
     bare_llm.chat_completion([{"role": "user", "content": "q"}])
     assert "max_tokens" not in req.call_args.kwargs["json"]
 
 
 def test_chat_completion_non_json_body_raises_value_error(bare_llm, mocker):
+    # A 2xx body that fails to parse as JSON classifies as malformed-body (a
+    # ValueError via APIResponseError), immediately — status is 2xx so this is
+    # not an http-status failure.
     bare_llm.api_url = "http://x/v1"
     bare_llm.model = "m"
 
@@ -208,7 +211,7 @@ def test_chat_completion_non_json_body_raises_value_error(bare_llm, mocker):
     mocker.patch.object(
         bare_llm,
         "_request_with_retry",
-        return_value=_BadResp(None, content=b"<html>", status_code=500),
+        return_value=_BadResp(None, content=b"<html>", status_code=200),
     )
     with pytest.raises(ValueError, match="non-JSON response"):
         bare_llm.chat_completion([{"role": "user", "content": "q"}])

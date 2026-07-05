@@ -172,6 +172,7 @@ def load_session(
                 "context_window": start_ev.get("context_window"),
                 "started_at": start_ev.get("started_at", ""),
                 "parent_session_id": start_ev.get("parent_session_id"),
+                "resumed_from": start_ev.get("resumed_from"),
             },
         )
     )

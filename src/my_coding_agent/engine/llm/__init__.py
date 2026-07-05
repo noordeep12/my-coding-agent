@@ -18,7 +18,12 @@ from dotenv import load_dotenv
 from httpx import Response
 
 from ...utils import get_logger
-from ...utils.exceptions import APIResponseError
+from .errors import LLMHTTPStatusError, LLMMalformedBodyError, LLMTransportError
+from .schema import (
+    DEFAULT_OUTAGE_TOLERANCE_S,
+    OUTAGE_TOLERANCE_ENV,
+    PATIENT_BACKOFF_CAP_S,
+)
 
 load_dotenv()
 OMLX_API_URL = os.environ.get("OMLX_API_URL", "http://127.0.0.1:8321/v1")
@@ -161,6 +166,159 @@ class LLM:
         assert last_exc is not None
         raise last_exc
 
+    @staticmethod
+    def _outage_tolerance_s() -> float:
+        """Patient-phase ceiling (seconds) from ``MCA_LLM_OUTAGE_TOLERANCE_S``.
+
+        Falls back to ``DEFAULT_OUTAGE_TOLERANCE_S`` when the env var is unset or
+        unparseable, so a bad value never crashes a run — it just uses the default.
+        """
+        raw = os.environ.get(OUTAGE_TOLERANCE_ENV)
+        if raw is None:
+            return DEFAULT_OUTAGE_TOLERANCE_S
+        try:
+            return float(raw)
+        except ValueError:
+            return DEFAULT_OUTAGE_TOLERANCE_S
+
+    @staticmethod
+    def _validate_response(resp: Response) -> dict:
+        """Classify a chat-completion response, returning parsed JSON on success.
+
+        Raises a classified error (never returns a failed response as success):
+        - ``LLMHTTPStatusError`` for any non-2xx status (retryable for 5xx/429);
+        - ``LLMMalformedBodyError`` for a non-JSON body, or JSON with a
+          missing/empty ``choices`` list (an empty turn is a failure, not a
+          silent success).
+        """
+        status = resp.status_code
+        if not 200 <= status < 300:
+            retryable = status == 429 or 500 <= status < 600
+            raise LLMHTTPStatusError(
+                f"LLM API returned HTTP {status}. Body prefix: {resp.text[:200]!r}",
+                status_code=status,
+                retryable=retryable,
+                hint="A 5xx/429 is transient (server restarting or overloaded); "
+                "other 4xx indicate a malformed request or auth problem.",
+            )
+        try:
+            data: dict = resp.json()
+        except Exception as exc:
+            raise LLMMalformedBodyError(
+                f"API returned non-JSON response (HTTP {status}): {exc}. "
+                f"Body prefix: {resp.text[:200]!r}",
+                hint="Check that api_url points at an OpenAI-compatible endpoint "
+                "and the server is healthy.",
+            ) from exc
+        if not data.get("choices"):
+            raise LLMMalformedBodyError(
+                f"API returned HTTP {status} with missing/empty 'choices'. "
+                f"Body prefix: {resp.text[:200]!r}",
+                hint="The server accepted the request but produced no completion; "
+                "it may have crashed or swapped models mid-response.",
+            )
+        return data
+
+    def _post_chat_with_recovery(
+        self, body: dict, kind: str, call_num: int
+    ) -> tuple[Response, dict]:
+        """POST one chat completion, absorbing a transient outage (D2).
+
+        Two-phase recovery: the fast transport retries inside
+        ``_request_with_retry`` run per probe, then — for retryable
+        classifications (transport, HTTP 5xx/429) — this loop keeps probing with
+        capped exponential backoff until the server answers or the outage
+        tolerance (``MCA_LLM_OUTAGE_TOLERANCE_S``) is exhausted. Non-retryable
+        classifications (malformed body, other 4xx) fail immediately without
+        consuming the window. Returns the validated response and its parsed JSON.
+
+        Raises:
+            LLMTransportError | LLMHTTPStatusError | LLMMalformedBodyError:
+                The classified failure when unrecoverable (tolerance exceeded, or
+                a non-retryable class).
+        """
+        tolerance = self._outage_tolerance_s()
+        url = self.api_url + "/chat/completions"
+        start = time.monotonic()
+        attempt = 0
+        while True:
+            attempt += 1
+            err: Exception
+            classification: str
+            try:
+                resp = self._request_with_retry("POST", url, json=body)
+                data = self._validate_response(resp)
+                if attempt > 1:
+                    stalled = time.monotonic() - start
+                    self.logger.warning(
+                        "LLM recovered after %.1fs stall (%d attempts) "
+                        "[call #%d, kind=%s]",
+                        stalled,
+                        attempt,
+                        call_num,
+                        kind,
+                    )
+                    if self._recorder is not None:
+                        self._recorder.record_llm_recovery(
+                            kind=kind,
+                            call=call_num,
+                            attempts=attempt,
+                            stalled_s=round(stalled, 3),
+                        )
+                return resp, data
+            except _TRANSIENT_HTTP_ERRORS as exc:
+                classification = LLMTransportError.classification
+                err = LLMTransportError(str(exc))
+            except (LLMHTTPStatusError, LLMMalformedBodyError) as exc:
+                classification = exc.classification
+                err = exc
+                if not exc.retryable:
+                    raise
+
+            elapsed = time.monotonic() - start
+            if elapsed >= tolerance:
+                self.logger.error(
+                    "LLM outage exceeded tolerance %.0fs (%s) — giving up after "
+                    "%d attempts [call #%d, kind=%s]",
+                    tolerance,
+                    classification,
+                    attempt,
+                    call_num,
+                    kind,
+                )
+                if self._recorder is not None:
+                    self._recorder.record_llm_failure(
+                        kind=kind,
+                        call=call_num,
+                        classification=classification,
+                        attempts=attempt,
+                        elapsed_s=round(elapsed, 3),
+                    )
+                raise err
+            delay = min(PATIENT_BACKOFF_CAP_S, _HTTP_BACKOFF * (2 ** (attempt - 1)))
+            delay = min(delay, tolerance - elapsed)  # never oversleep the deadline
+            self.logger.warning(
+                "LLM %s failure (attempt %d) — waiting %.1fs before retry "
+                "(%.0fs/%.0fs tolerance used) [call #%d, kind=%s]",
+                classification,
+                attempt,
+                delay,
+                elapsed,
+                tolerance,
+                call_num,
+                kind,
+            )
+            if self._recorder is not None:
+                self._recorder.record_llm_wait(
+                    kind=kind,
+                    call=call_num,
+                    classification=classification,
+                    attempt=attempt,
+                    delay_s=round(delay, 3),
+                    elapsed_s=round(elapsed, 3),
+                )
+            time.sleep(delay)
+
     def available_models(self) -> list[str]:
         """Fetch the server's model list and cache ``self.context_window``.
 
@@ -221,9 +379,12 @@ class LLM:
             The raw ``httpx.Response`` from the completions endpoint.
 
         Raises:
-            APIResponseError: If the server returns a non-JSON body.
-            httpx.HTTPError: If the request cannot reach the server after the
-                transient-failure retries are exhausted.
+            LLMMalformedBodyError: Non-JSON body, or JSON with missing/empty
+                ``choices`` (never surfaced as an empty assistant turn).
+            LLMHTTPStatusError: Non-2xx status; unrecoverable after the patient
+                retry phase for 5xx/429, or immediately for other 4xx.
+            LLMTransportError: Connection/timeout that outlasts the outage
+                tolerance (``MCA_LLM_OUTAGE_TOLERANCE_S``).
         """
         call_num = len(self.llm_calls) + 1
         self.logger.api(
@@ -245,11 +406,7 @@ class LLM:
             body["max_tokens"] = max_tokens
         _started_at = datetime.now().astimezone().isoformat(timespec="milliseconds")
         _t0 = time.monotonic()
-        resp = self._request_with_retry(
-            "POST",
-            self.api_url + "/chat/completions",
-            json=body,
-        )
+        resp, data = self._post_chat_with_recovery(body, kind, call_num)
         _latency = time.monotonic() - _t0
         self.logger.api(
             "← %d (%d bytes)  [call #%d, kind=%s]",
@@ -258,15 +415,6 @@ class LLM:
             call_num,
             kind,
         )
-        try:
-            data = resp.json()
-        except Exception as exc:
-            raise APIResponseError(
-                f"API returned non-JSON response (HTTP {resp.status_code}): {exc}. "
-                f"Body prefix: {resp.text[:200]!r}",
-                hint="Check that api_url points at an OpenAI-compatible endpoint "
-                "and the server is healthy.",
-            ) from exc
         self.logger.debug("Response body: %s", json.dumps(data, indent=4))
 
         usage = data.get("usage", {})

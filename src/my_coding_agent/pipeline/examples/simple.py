@@ -10,6 +10,7 @@ Run::
 import inspect
 import os
 import platform
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -28,12 +29,20 @@ from my_coding_agent import (
     tool,
 )
 from my_coding_agent.engine import OMLX_MODEL
+from my_coding_agent.engine.checkpoint import (
+    CheckpointError,
+    find_last_resumable,
+    load_checkpoint,
+)
 from my_coding_agent.engine.tool_registry import discover_skills
 
 # ``use_skill`` is registered conditionally — only when skills are discovered —
 # so tool schemas stay byte-identical to today for a skill-free run (D5). It is
 # therefore excluded from the automatic public-method scan in ``_all_tools``.
 _SPECIAL_TOOLS = {"use_skill"}
+
+# Root under which each run's session directory (and its checkpoint) lives.
+_SESSIONS_DIR = Path(".my_coding_agent")
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -158,8 +167,27 @@ def _read_interactive_prompt() -> str:
     type=click.IntRange(1, 100),
     help="Maximum agent loop steps.",
 )
+@click.option(
+    "--resume",
+    "resume_id",
+    default=None,
+    metavar="SESSION_ID",
+    help="Resume a dead session from its last checkpoint (new linked session).",
+)
+@click.option(
+    "--resume-last",
+    is_flag=True,
+    default=False,
+    help="Resume the most recently checkpointed session.",
+)
 @click.version_option(version=__version__, prog_name="my-coding-agent")
-def main(prompt: str | None, interactive: bool, max_steps: int) -> None:
+def main(
+    prompt: str | None,
+    interactive: bool,
+    max_steps: int,
+    resume_id: str | None,
+    resume_last: bool,
+) -> None:
     """Run the coding-agent pipeline.
 
     \b
@@ -167,7 +195,20 @@ def main(prompt: str | None, interactive: bool, max_steps: int) -> None:
       uv run my-coding-agent
       uv run my-coding-agent -p "write tests for llm.py"
       uv run my-coding-agent -i
+      uv run my-coding-agent --resume 3f9a1c2b4d5e
+      uv run my-coding-agent --resume-last
     """
+    if resume_id or resume_last:
+        agent = _build_resumed_agent(resume_id, resume_last)
+    else:
+        agent = _build_fresh_agent(prompt, interactive)
+
+    agent.execute(max_steps=max_steps)
+    _exit_on_failure(agent)
+
+
+def _build_fresh_agent(prompt: str | None, interactive: bool) -> AgentNode:
+    """Construct a new run's agent from the prompt (interactive/flag/default)."""
     if interactive:
         user_prompt = _read_interactive_prompt()
         if not user_prompt:
@@ -182,17 +223,67 @@ def main(prompt: str | None, interactive: bool, max_steps: int) -> None:
     # index is placed into the opening user message by AgentNode; the system
     # prompt is untouched so the #75 prefix-cache invariant holds.
     skills = discover_skills()
-    tools = _build_tools(skills)
-    agent = AgentNode(
+    return AgentNode(
         messages=[
             {"role": "system", "content": _system_prompt()},
             {"role": "user", "content": user_prompt},
         ],
-        tools=tools,
+        tools=_build_tools(skills),
         label="Main Agent",
         skills=skills,
     )
-    agent.execute(max_steps=max_steps)
+
+
+def _build_resumed_agent(resume_id: str | None, resume_last: bool) -> AgentNode:
+    """Load a checkpoint and build a fresh linked agent, or refuse and exit (D5).
+
+    Refuses cleanly (exit 2, touching nothing) when no session id is given, none
+    is resumable, or the checkpoint is missing/unreadable.
+    """
+    session_id = resume_id
+    if resume_last:
+        session_id = find_last_resumable(_SESSIONS_DIR)
+        if session_id is None:
+            click.secho(
+                f"No resumable session with a checkpoint found under {_SESSIONS_DIR}/.",
+                fg="red",
+                err=True,
+            )
+            sys.exit(2)
+    assert session_id is not None  # one of the two branches set it
+    try:
+        checkpoint = load_checkpoint(_SESSIONS_DIR / session_id)
+    except CheckpointError as exc:
+        click.secho(f"Cannot resume: {exc}", fg="red", err=True)
+        sys.exit(2)
+    click.secho(
+        f"Resuming session {session_id} from step {checkpoint.step_num} "
+        f"({len(checkpoint.messages)} messages).",
+        fg="cyan",
+        err=True,
+    )
+    # The checkpointed conversation already carries any skill index in its
+    # messages, so we don't re-place it; but keep ``use_skill`` registered when
+    # skills exist so a resumed run can still load skill bodies on demand.
+    return AgentNode.from_checkpoint(
+        checkpoint,
+        tools=_build_tools(discover_skills()),
+        label="Main Agent (resumed)",
+    )
+
+
+def _exit_on_failure(agent: AgentNode) -> None:
+    """Exit non-zero with a one-line resume hint when the run failed (D6)."""
+    if agent.failure_error is None:
+        return
+    click.secho(
+        f"Run stopped: unrecoverable LLM failure "
+        f"({agent.failure_error.classification}). "
+        f"Resume with: uv run my-coding-agent --resume {agent.session_id}",
+        fg="red",
+        err=True,
+    )
+    sys.exit(1)
 
 
 if __name__ == "__main__":

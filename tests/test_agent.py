@@ -10,11 +10,14 @@ exposing the client state the loop reads (``model``, ``context_window``,
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from my_coding_agent.engine.agent import AgentNode as Agent
+from my_coding_agent.engine.checkpoint import Checkpoint, load_checkpoint
 from my_coding_agent.engine.llm import LLM
+from my_coding_agent.engine.llm.errors import LLMHTTPStatusError, LLMTransportError
 from my_coding_agent.engine.schema import REPORT_SOURCE_FALLBACK
 from my_coding_agent.pipeline.context import RunContext
 from my_coding_agent.pipeline.nodes.context_guard import ContextGuardNode
@@ -55,6 +58,12 @@ def _make_agent(silent_logger, **overrides):
     agent.skills = {}
     agent.loaded_skills = set()
     agent._rendered_index = None
+    # Resume/resilience state (run-resilience) normally set by __init__.
+    agent.resumed_from = None
+    agent._resume_step = 0
+    agent._resume_prompt_tokens = 0
+    agent.failure_error = None
+    agent._session_dir = Path(".my_coding_agent") / "testsession"
     # Held LLM client (composition). LLM.__init__ is network-free; swap in the
     # silent logger and set the state the agent loop reads off the client.
     agent.llm = LLM()
@@ -422,6 +431,9 @@ def _stub_run_internals(agent, mocker):
     )
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
+    # The per-step checkpoint write (run-resilience D3) touches disk; neutralize
+    # it so the loop logic is exercised without writing a checkpoint file.
+    mocker.patch.object(agent, "_write_checkpoint")
     # Banner is emitted at the start of run() (not __init__) — stub its output.
     mocker.patch("my_coding_agent.engine.agent.print_banner")
     mocker.patch("my_coding_agent.engine.agent.detach_session_log")
@@ -593,6 +605,134 @@ def test_run_returns_continuation_result_on_reset(silent_logger, mocker):
     result = agent.execute(max_steps=5)
     assert result == cont
     agent.llm.chat_completion.assert_not_called()
+
+
+# --- run-level failure handling (run-resilience D6) --------------------------
+
+
+def test_execute_unrecoverable_llm_failure_sets_classified_stop_reason(
+    silent_logger, mocker
+):
+    """An unrecoverable LLM error ends the run as a first-class stop (no crash):
+    a classified stop_reason and the error stashed for the CLI resume hint."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        side_effect=LLMHTTPStatusError("HTTP 400", status_code=400, retryable=False),
+    )
+
+    result = agent.execute(max_steps=5)  # returns, does not raise
+    assert agent.stop_reason == "llm_failure_http_status"
+    assert agent.failure_error is not None
+    assert agent.failure_error.classification == "http-status"
+    assert result == agent.messages  # state preserved for resume
+
+
+def test_execute_checkpoints_each_completed_step(silent_logger, mocker):
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)  # stubs _write_checkpoint as a Mock
+    resp = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "working"},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
+    mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
+
+    agent.execute(max_steps=3)
+    # One checkpoint write per completed step.
+    assert agent._write_checkpoint.call_count == 3
+
+
+def test_partial_step_not_checkpointed_on_failure(silent_logger, mocker):
+    """A step that raises mid-flight is discarded (D4): no checkpoint for it."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        side_effect=LLMTransportError("down"),
+    )
+    agent.execute(max_steps=5)
+    agent._write_checkpoint.assert_not_called()  # step never completed
+
+
+# --- resume (run-resilience D5) ----------------------------------------------
+
+
+def _checkpoint(step=4):
+    return Checkpoint(
+        session_id="deadbeef1234",
+        step_num=step,
+        last_prompt_tokens=555,
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "resume me"},
+            {"role": "assistant", "content": "progress so far"},
+        ],
+    )
+
+
+def test_from_checkpoint_seeds_resume_state(
+    silent_logger, mocker, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)  # keep .my_coding_agent inside the tmp dir
+    cp = _checkpoint(step=4)
+    agent = Agent.from_checkpoint(cp, label="Main Agent (resumed)")
+    assert agent.resumed_from == "deadbeef1234"
+    assert agent._resume_step == 4
+    assert agent._resume_prompt_tokens == 555
+    assert agent.messages == cp.messages
+    assert agent.messages is not cp.messages  # a copy, not the same list
+    assert agent.recorder.resumed_from == "deadbeef1234"
+    # A brand-new session id, distinct from the dead one it links to.
+    assert agent.session_id != "deadbeef1234"
+
+
+def test_resumed_run_continues_from_next_step(
+    silent_logger, mocker, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    cp = _checkpoint(step=4)
+    agent = Agent.from_checkpoint(cp, label="Main Agent (resumed)")
+    agent.llm.logger = silent_logger
+    agent.llm.context_window = 8192  # avoid the lazy network probe
+    stop = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "done"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
+        }
+    )
+    chat = mocker.patch.object(agent.llm, "chat_completion", return_value=stop)
+
+    agent.execute(max_steps=50)
+    # First (and only) call continued the counter: step 5, not step 1.
+    assert chat.call_count == 1
+    assert agent.step_num == 5
+    # The resumed session persisted its lineage and a checkpoint at step 5.
+    data = json.loads(
+        (Path(".my_coding_agent") / agent.session_id / "session_data.json").read_text()
+    )
+    assert data["resumed_from"] == "deadbeef1234"
+    resumed_cp = load_checkpoint(Path(".my_coding_agent") / agent.session_id)
+    assert resumed_cp.step_num == 5
 
 
 # --- _generate_handoff -------------------------------------------------------

@@ -276,7 +276,7 @@ class TestAnomalyDetectNodeEndToEnd:
         agent_with = _run_streak_agent(monkeypatch, mocker, tmp_path / "with")
 
         # Run again with AnomalyDetectNode removed from the pipeline.
-        def _build_without_anomaly(spawn_fn=None):
+        def _build_without_anomaly(spawn_fn=None, checkpoint_fn=None):
             from my_coding_agent.pipeline.dag import Pipeline
             from my_coding_agent.pipeline.nodes import (
                 ContextGuardNode,
@@ -293,7 +293,8 @@ class TestAnomalyDetectNodeEndToEnd:
                     LLMCallNode(),
                     ToolDispatchNode(),
                     FinalizeStepNode(),
-                ]
+                ],
+                checkpoint_fn=checkpoint_fn,
             )
 
         mocker.patch(

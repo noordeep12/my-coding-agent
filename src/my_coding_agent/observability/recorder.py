@@ -37,6 +37,10 @@ FINISH_CHECK = "finish_check"
 SUMMARIZER = "summarizer"
 ANOMALY = "anomaly"
 SKILL_INDEX = "skill_index"
+# Run-resilience (D2): additive events for the LLM outage-recovery loop.
+LLM_WAIT = "llm_wait"  # one patient-phase wait before a retry
+LLM_RECOVERY = "llm_recovery"  # server answered after a stall
+LLM_FAILURE = "llm_failure"  # unrecoverable — tolerance exceeded / non-retryable
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -90,6 +94,7 @@ class Recorder:
         session_id: str,
         session_dir: Path,
         parent_session_id: str | None = None,
+        resumed_from: str | None = None,
     ) -> None:
         """Initialize a recorder for one session (no file I/O until first emit).
 
@@ -99,9 +104,13 @@ class Recorder:
                 is written, alongside the existing session artifacts.
             parent_session_id: Session id of the spawning agent, or ``None`` for a
                 top-level run. Used to rebuild the agent/subagent tree.
+            resumed_from: Session id this run resumed from a checkpoint (D5), or
+                ``None`` for a fresh run. Recorded on ``session_start`` as the
+                lineage link, mirroring ``parent_session_id`` for delegation.
         """
         self.session_id = session_id
         self.parent_session_id = parent_session_id
+        self.resumed_from = resumed_from
         self.path = Path(session_dir) / "events.jsonl"
         # Process-wide machine-wide resource sampler (node-resource-monitoring),
         # shared by the main agent and any in-process subagents; start/stop are
@@ -157,6 +166,7 @@ class Recorder:
                 "type": SESSION_START,
                 "session_id": self.session_id,
                 "parent_session_id": self.parent_session_id,
+                "resumed_from": self.resumed_from,
                 "label": label,
                 "model": model,
                 "context_window": context_window,
@@ -548,6 +558,66 @@ class Recorder:
                 "count": len(names),
                 "chars": chars,
                 "tier": tier,
+                "started_at": _now(),
+            }
+        )
+
+    # ── LLM outage recovery (run-resilience D2) ─────────────────────────────────
+    def record_llm_wait(
+        self,
+        kind: str,
+        call: int,
+        classification: str,
+        attempt: int,
+        delay_s: float,
+        elapsed_s: float,
+    ) -> None:
+        """Record one patient-phase wait before an outage retry (passive)."""
+        self._emit(
+            {
+                "type": LLM_WAIT,
+                "kind": kind,
+                "call": call,
+                "classification": classification,
+                "attempt": attempt,
+                "delay_s": delay_s,
+                "elapsed_s": elapsed_s,
+                "started_at": _now(),
+            }
+        )
+
+    def record_llm_recovery(
+        self, kind: str, call: int, attempts: int, stalled_s: float
+    ) -> None:
+        """Record that the server answered after an absorbed outage (passive)."""
+        self._emit(
+            {
+                "type": LLM_RECOVERY,
+                "kind": kind,
+                "call": call,
+                "attempts": attempts,
+                "stalled_s": stalled_s,
+                "started_at": _now(),
+            }
+        )
+
+    def record_llm_failure(
+        self,
+        kind: str,
+        call: int,
+        classification: str,
+        attempts: int,
+        elapsed_s: float,
+    ) -> None:
+        """Record an unrecoverable LLM failure that ends the run (passive)."""
+        self._emit(
+            {
+                "type": LLM_FAILURE,
+                "kind": kind,
+                "call": call,
+                "classification": classification,
+                "attempts": attempts,
+                "elapsed_s": elapsed_s,
                 "started_at": _now(),
             }
         )

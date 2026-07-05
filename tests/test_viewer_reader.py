@@ -473,6 +473,30 @@ class TestLoadSession:
         assert session.analytics["tool_call_count"] == 1
         assert session.analytics["total_tokens"] == 380  # 150 + 230
 
+    def test_resumed_from_surfaces_on_session_root(self, tmp_path):
+        # A resumed run's session_start carries resumed_from (run-resilience D5);
+        # the reader surfaces it on the session root so the viewer can show it.
+        sid = "aabbccdd1234"
+        events = _minimal_events(sid)
+        events[0]["resumed_from"] = "deadbeef0000"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        session = load_session(ep)
+        root = session.nodes[f"{sid}::session"]
+        assert root.attributes["resumed_from"] == "deadbeef0000"
+
+    def test_resumed_from_absent_on_fresh_run(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))
+        session = load_session(ep)
+        root = session.nodes[f"{sid}::session"]
+        assert root.attributes["resumed_from"] is None
+
     def test_finalize_step_merges_token_tracking_and_finish_check(self, tmp_path):
         # FinalizeStepNode emits token_tracking + finish_check as two events;
         # the trace must render them as a single finalize_step node with the
