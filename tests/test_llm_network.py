@@ -234,9 +234,11 @@ def test_route_tools_phase2_selects_llm_choice_plus_baseline(bare_router, mocker
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": '["read_article"]'}}]}),
     )
-    selected = {t["function"]["name"] for t in bare_router.route_tools("xyzzy", tools)}
-    assert "read_article" in selected
-    assert {"bash", "read_file", "read_tool_artifact"} <= selected
+    selected, phase = bare_router.route_tools("xyzzy", tools)
+    names = {t["function"]["name"] for t in selected}
+    assert "read_article" in names
+    assert {"bash", "read_file", "read_tool_artifact"} <= names
+    assert phase == "phase2_llm"
 
 
 def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_router, mocker):
@@ -251,8 +253,9 @@ def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_router, mocker):
         "chat_completion",
         return_value=_Resp({"choices": [{"message": {"content": "not an array"}}]}),
     )
-    selected = bare_router.route_tools("xyzzy", tools)
+    selected, phase = bare_router.route_tools("xyzzy", tools)
     assert selected == tools  # unparseable → keep all tools
+    assert phase == "phase2_llm"
 
 
 def test_route_tools_phase2_extracts_array_from_prose(bare_router, mocker):
@@ -277,8 +280,9 @@ def test_route_tools_phase2_extracts_array_from_prose(bare_router, mocker):
             }
         ),
     )
-    selected = {t["function"]["name"] for t in bare_router.route_tools("xyzzy", tools)}
-    assert "read_article" in selected
+    selected, _phase = bare_router.route_tools("xyzzy", tools)
+    names = {t["function"]["name"] for t in selected}
+    assert "read_article" in names
 
 
 # --- validate_tool_output ----------------------------------------------------
