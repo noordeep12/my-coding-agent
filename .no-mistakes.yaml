@@ -1,0 +1,8 @@
+# Per-repo no-mistakes gate config.
+# Pins the test and lint steps to the project's Makefile/CI commands so
+# validation runs deterministically instead of being agent-guessed. The full
+# CI suite (bandit, detect-secrets, pip-audit, sphinx -W) remains the final
+# gate on the PR.
+commands:
+  test: 'uv sync --all-groups && uv run pytest'
+  lint: 'uv run ruff check src && uv run ruff format --check src && uv run mypy src'
