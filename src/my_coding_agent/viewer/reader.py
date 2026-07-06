@@ -235,27 +235,46 @@ def load_session(
 # ── Step grouping ─────────────────────────────────────────────────────────────
 
 
-def _group_into_steps(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Split *events* into step buckets, one per ``router`` event.
+def _is_main_llm_call(ev: dict[str, Any]) -> bool:
+    """True if *ev* is the per-step main ``llm_call`` (not a nested/ancillary one)."""
+    return ev.get("type") == "llm_call" and ev.get("kind", "main") == "main"
 
-    Events that appear before the first ``router`` are discarded (they belong
+
+def _group_into_steps(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Split *events* into step buckets, one per step.
+
+    New sessions no longer emit ``router`` events (tool routing is unwired
+    from the pipeline — #114), so a step boundary is the main ``llm_call``
+    event instead. Legacy (archived) sessions still lead each step with a
+    ``router`` event immediately followed by the main ``llm_call``; treating
+    either as a boundary — while not double-splitting when both are present
+    consecutively — keeps their grouping byte-identical to before.
+
+    Events that appear before the first boundary are discarded (they belong
     to session-level setup already captured in ``session_start``).
 
     Args:
         events: Raw list of JSONL event dicts.
 
     Returns:
-        List of groups; each group starts with a ``router`` event.
+        List of groups; each group starts with a ``router`` event (legacy)
+        or a main ``llm_call`` event (new).
     """
     groups: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
+    prev_was_router = False
     for ev in events:
-        if ev.get("type") == "router":
+        is_router = ev.get("type") == "router"
+        starts_new = is_router or (
+            _is_main_llm_call(ev) and not (prev_was_router and current)
+        )
+        if starts_new:
             if current:
                 groups.append(current)
             current = [ev]
         elif current:
             current.append(ev)
+        prev_was_router = is_router
     if current:
         groups.append(current)
     return groups

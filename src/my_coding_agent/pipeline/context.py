@@ -49,7 +49,6 @@ class RunContext:
 
     # --- per-step transient state (LLMCallNode writes, downstream nodes read) ---
     last_response: Any = None
-    routed_tools: list[dict[str, Any]] = field(default_factory=list)
 
     # --- control signals written by nodes, read by the pipeline engine ---
     signal: str = "CONTINUE"  # CONTINUE | STOP | RESET
