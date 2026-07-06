@@ -104,6 +104,8 @@ def test_http_200_empty_choices_classified_malformed_not_empty_turn(bare_llm, mo
 
 def test_http_400_fails_fast_no_patient_phase(bare_llm, mocker):
     # 400 is a protocol bug: fail at once as http-status, never sleep/probe.
+    recorder = mocker.Mock()
+    bare_llm._recorder = recorder
     sleep = mocker.patch("my_coding_agent.engine.llm.time.sleep")
     req = mocker.patch.object(
         bare_llm,
@@ -118,6 +120,12 @@ def test_http_400_fails_fast_no_patient_phase(bare_llm, mocker):
     assert exc.value.retryable is False
     assert req.call_count == 1  # one attempt, no retry
     sleep.assert_not_called()
+    # The fail-fast case still emits the failure event (documented "non-retryable"
+    # purpose), exactly like the tolerance-exceeded branch.
+    recorder.record_llm_failure.assert_called_once()
+    _, kwargs = recorder.record_llm_failure.call_args
+    assert kwargs["classification"] == CLASSIFICATION_HTTP_STATUS
+    assert bare_llm.llm_calls == []
 
 
 # ── outage absorption (D2) ────────────────────────────────────────────────────

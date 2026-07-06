@@ -273,6 +273,14 @@ class LLM:
                 classification = exc.classification
                 err = exc
                 if not exc.retryable:
+                    if self._recorder is not None:
+                        self._recorder.record_llm_failure(
+                            kind=kind,
+                            call=call_num,
+                            classification=classification,
+                            attempts=attempt,
+                            elapsed_s=round(time.monotonic() - start, 3),
+                        )
                     raise
 
             elapsed = time.monotonic() - start

@@ -62,6 +62,7 @@ class AgentNode(BaseNode):
         needs_handback: bool = False,
         skills: dict[str, Skill] | None = None,
         loaded_skills: set[str] | None = None,
+        place_skill_index: bool = True,
         resumed_from: str | None = None,
         resume_step: int = 0,
         resume_prompt_tokens: int = 0,
@@ -76,7 +77,10 @@ class AgentNode(BaseNode):
         ``use_skill`` tool. ``loaded_skills`` seeds the set of already-loaded
         skills — empty for a fresh run, or the pre-reset run's loaded names for a
         continuation, whose full bodies are re-injected into the opening message
-        so knowledge survives a handoff (D6).
+        so knowledge survives a handoff (D6). ``place_skill_index`` is ``False``
+        for a resumed run whose checkpointed opening message already carries the
+        index, so ``self.skills`` still services ``use_skill`` without the index
+        being placed (or its event emitted) a second time.
 
         ``resumed_from`` links this run to the dead session whose checkpoint
         seeded it (D5); ``resume_step``/``resume_prompt_tokens`` continue the step
@@ -126,7 +130,8 @@ class AgentNode(BaseNode):
         self.skills = skills or {}
         self.loaded_skills = loaded_skills if loaded_skills is not None else set()
         self._rendered_index: RenderedIndex | None = None
-        self._place_skill_index()
+        if place_skill_index:
+            self._place_skill_index()
         # Usage summaries of delegated subagents spawned by this agent, handed
         # up via ``current_agent_node`` as each ``delegate`` call returns (D3).
         # Each entry already carries its own nested descendants, so a child's
@@ -525,6 +530,7 @@ class AgentNode(BaseNode):
         tools: list[dict[str, Any]] | None = None,
         label: str = "Agent",
         context_reset_threshold: float = 0.75,
+        skills: dict[str, Skill] | None = None,
     ) -> AgentNode:
         """Build a fresh AgentNode seeded from a dead session's checkpoint (D5).
 
@@ -532,6 +538,10 @@ class AgentNode(BaseNode):
         the exact checkpointed conversation and continues the step counter so its
         first LLM call is step N+1. ``checkpoint.session_id`` is recorded as
         ``resumed_from`` — the dead session's files stay immutable.
+
+        ``skills`` is the discovered-skill snapshot so the resumed run's registry
+        can service ``use_skill``; its index is *not* re-placed (the checkpointed
+        opening message already carries it) via ``place_skill_index=False``.
         """
         return cls(
             api_url=api_url,
@@ -541,6 +551,8 @@ class AgentNode(BaseNode):
             tools=tools,
             label=label,
             context_reset_threshold=context_reset_threshold,
+            skills=skills,
+            place_skill_index=False,
             resumed_from=checkpoint.session_id,
             resume_step=checkpoint.step_num,
             resume_prompt_tokens=checkpoint.last_prompt_tokens,

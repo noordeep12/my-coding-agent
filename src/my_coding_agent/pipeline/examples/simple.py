@@ -263,11 +263,14 @@ def _build_resumed_agent(resume_id: str | None, resume_last: bool) -> AgentNode:
         err=True,
     )
     # The checkpointed conversation already carries any skill index in its
-    # messages, so we don't re-place it; but keep ``use_skill`` registered when
-    # skills exist so a resumed run can still load skill bodies on demand.
+    # messages, so ``from_checkpoint`` does not re-place it; but the discovered
+    # skills still populate the registry so a resumed run can service
+    # ``use_skill`` and load skill bodies on demand.
+    skills = discover_skills()
     return AgentNode.from_checkpoint(
         checkpoint,
-        tools=_build_tools(discover_skills()),
+        tools=_build_tools(skills),
+        skills=skills,
         label="Main Agent (resumed)",
     )
 
