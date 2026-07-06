@@ -852,13 +852,19 @@ def _first_input_split(nodes: list[TraceNode]) -> dict[str, int] | None:
 
 def _node_added(
     node: TraceNode, comp: dict[str, int], first_snap: dict[str, int] | None, tpc: float
-) -> tuple[dict[str, int], int, bool]:
-    """Return what *node* appends to the context window.
+) -> tuple[dict[str, int], int, dict[str, int], bool]:
+    """Return what *node* appends to (and retires from) the context window.
 
     Each pipeline node may push one kind of message onto the running window: the
     session seeds it with the system prompt and opening user message, an LLM call
     appends its assistant reply, a tool dispatch appends its result.  Nodes that
-    add nothing (router, finalize_step, …) return an empty delta.
+    add nothing (router, finalize_step, …) return an empty delta. A ``main``-kind
+    LLM call re-anchors every role to the real snapshot of what it actually sent
+    (``inputs.messages``); when a role's token count *drops* on re-anchor — the
+    window-side signature of a supersession retirement (issue #121) replacing an
+    older tool result with a short stub — that drop is surfaced as ``removed``,
+    broken down by role, the same way a context-reset ``handoff`` already
+    reports its compaction.
 
     Args:
         node: The node being placed.
@@ -867,45 +873,67 @@ def _node_added(
         tpc: Tokens-per-character ratio for estimating uncounted text.
 
     Returns:
-        ``(added, removed, estimated)`` — the per-role tokens this node added,
-        tokens it compacted away, and whether any added figure is an estimate.
+        ``(added, removed, removed_by_role, estimated)`` — the per-role tokens
+        this node added, the total it retired/compacted away, that same total
+        broken down by role, and whether any added figure is an estimate.
     """
     if node.type == "session":
         if first_snap:
             return (
                 {r: first_snap[r] for r in ("system", "user") if first_snap.get(r)},
                 0,
+                {},
                 False,
             )
-        return {}, 0, False
+        return {}, 0, {}, False
     if node.type == "llm_call" and node.attributes.get("kind") == "main":
         snap = _role_split(
             node.inputs.get("messages") or [], node.attributes.get("prompt_tokens")
         )
+        removed_by_role: dict[str, int] = {}
         if snap:
             # Re-anchor the input roles to the real snapshot; the call's own new
-            # output is layered on top below.
+            # output is layered on top below. Only "tool" is checked for
+            # shrinkage: it is the sole role a supersession retirement
+            # (issue #121) can ever reduce (a stub replacing a tool result).
+            # system/user can differ slightly between calls purely from
+            # _role_split's char-share estimate disagreeing across two
+            # different prompt_tokens totals — never a real retirement, so
+            # reporting a "removed" figure for them would be false-positive
+            # noise.
+            old_tool, new_tool = comp.get("tool", 0), snap.get("tool", 0)
+            if new_tool < old_tool:
+                removed_by_role["tool"] = old_tool - new_tool
             for r in ("system", "user", "tool"):
                 comp[r] = snap.get(r, 0)
             comp["assistant"] = snap.get("assistant", 0)
         completion = node.attributes.get("completion_tokens") or 0
-        return ({"assistant": completion} if completion else {}), 0, False
+        return (
+            ({"assistant": completion} if completion else {}),
+            sum(removed_by_role.values()),
+            removed_by_role,
+            False,
+        )
     if node.type == "tool_call":
         tok = round(_content_len(node.outputs.get("result")) * tpc)
-        return ({"tool": tok} if tok else {}), 0, bool(tok)
+        return ({"tool": tok} if tok else {}), 0, {}, bool(tok)
     if node.type == "handoff":
         ctx_tokens = node.attributes.get("ctx_tokens")
         old_total = sum(comp.values())
         if ctx_tokens is not None and old_total > ctx_tokens:
             sys_t = comp["system"]
+            prev_comp = dict(comp)
             comp.update(
                 system=sys_t,
                 user=max(0, ctx_tokens - sys_t),
                 assistant=0,
                 tool=0,
             )
-            return {}, old_total - ctx_tokens, False
-    return {}, 0, False
+            removed_by_role = {
+                r: prev_comp[r] - comp[r] for r in _ROLES if prev_comp[r] > comp[r]
+            }
+            return {}, old_total - ctx_tokens, removed_by_role, False
+    return {}, 0, {}, False
 
 
 def _assign_ctx_state(
@@ -939,7 +967,9 @@ def _assign_ctx_state(
         if own_window:
             window = own_window
 
-        added, removed, estimated = _node_added(node, comp, first_snap, tpc)
+        added, removed, removed_by_role, estimated = _node_added(
+            node, comp, first_snap, tpc
+        )
         for role, tok in added.items():
             comp[role] = comp.get(role, 0) + tok
 
@@ -953,6 +983,7 @@ def _assign_ctx_state(
             "added": added,
             "added_total": sum(added.values()),
             "removed": removed,
+            "removed_by_role": removed_by_role,
             "estimated": estimated,
         }
 

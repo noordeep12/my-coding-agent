@@ -752,6 +752,115 @@ class TestLoadSession:
         assert router2.ctx_state["added_total"] == 0
         assert router2.ctx_state["removed"] == 0
 
+    def test_ctx_state_surfaces_supersession_retirement_as_removed(self, tmp_path):
+        """A later main llm_call whose real message snapshot shows a shrunken
+        tool role (issue #121: a superseded tool result replaced by a short
+        stub) reports that shrinkage as `removed`/`removed_by_role`, the same
+        way a context-reset handoff already reports its compaction."""
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        big_tool_msg = {"role": "tool", "content": "X" * 4000}
+        stub_tool_msg = {"role": "tool", "content": "[Superseded]"}
+        events = [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="Test",
+                model="gpt-4o-mini",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _ev(
+                "llm_call",
+                call=1,
+                kind="main",
+                latency_s=1.0,
+                prompt=100,
+                completion=50,
+                total=150,
+                context_window=8192,
+                messages=[
+                    {"role": "system", "content": "s" * 80},
+                    {"role": "user", "content": "u" * 20},
+                ],
+                response={
+                    "content": "ok",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+                started_at="2026-01-01T10:00:01",
+            ),
+            _ev(
+                "tool_call",
+                name="bash",
+                args={"command": "echo big"},
+                result="X" * 4000,
+                latency_s=0.1,
+                started_at="2026-01-01T10:00:02",
+            ),
+            _ev(
+                "llm_call",
+                call=2,
+                kind="main",
+                latency_s=0.8,
+                prompt=1000,
+                completion=30,
+                total=1030,
+                context_window=8192,
+                messages=[
+                    {"role": "system", "content": "s" * 80},
+                    {"role": "user", "content": "u" * 20},
+                    big_tool_msg,
+                ],
+                response={
+                    "content": "ok2",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+                started_at="2026-01-01T10:00:03",
+            ),
+            _ev(
+                "llm_call",
+                call=3,
+                kind="main",
+                latency_s=0.5,
+                prompt=110,
+                completion=10,
+                total=120,
+                context_window=8192,
+                messages=[
+                    {"role": "system", "content": "s" * 80},
+                    {"role": "user", "content": "u" * 20},
+                    stub_tool_msg,
+                ],
+                response={
+                    "content": "done",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+                started_at="2026-01-01T10:00:04",
+            ),
+            _ev(
+                "session_end",
+                stop_reason="stop",
+                steps=3,
+                elapsed_s=5.0,
+                ended_at="2026-01-01T10:00:05",
+            ),
+        ]
+        _write_events(ep, events)
+        session = load_session(ep)
+
+        llm3 = session.nodes[f"{sid}::step3::llm::1"]
+        assert llm3.ctx_state["removed"] > 0
+        assert llm3.ctx_state["removed_by_role"].get("tool", 0) > 0
+
     def test_circular_delegate_guard(self, tmp_path):
         sid = "aabbccdd1234"
         sdir = tmp_path / sid

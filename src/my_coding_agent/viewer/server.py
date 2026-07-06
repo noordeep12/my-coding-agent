@@ -181,6 +181,9 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .ctx-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px}
 .bd-li{display:flex;align-items:center;gap:6px;font-size:11px}
 .bd-sw{width:9px;height:9px;border-radius:3px;display:inline-block}
+.ctx-delta{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:11px}
+.ctx-delta-add{color:var(--pos)}
+.ctx-delta-rem{color:var(--neg)}
 
 /* ── sections ── */
 .section{border-bottom:1px solid var(--line)}
@@ -582,13 +585,24 @@ const PHASE_LABELS = {
 };
 const phaseLabel = p => PHASE_LABELS[p] || p;
 
-// Short "+N role" summary of what a node added to the context window.
+// Short "+N role" / "−N role" summary of what a node added to (and retired
+// from) the context window — right-aligned in the tree row.
 function addedText(cs){
   if(!cs) return '';
-  if(cs.removed) return '−'+fmtNum(cs.removed);
+  const parts = [];
   const a = cs.added||{};
-  const roles = ROLE_ORDER.filter(r=>a[r]);
-  return roles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  ');
+  const addedRoles = ROLE_ORDER.filter(r=>a[r]);
+  if(addedRoles.length){
+    parts.push(addedRoles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  '));
+  }
+  if(cs.removed){
+    const rem = cs.removed_by_role||{};
+    const remRoles = ROLE_ORDER.filter(r=>rem[r]);
+    parts.push(remRoles.length
+      ? remRoles.map(r=>'−'+fmtNum(rem[r])+' '+ROLE_META[r].label).join('  ')
+      : '−'+fmtNum(cs.removed));
+  }
+  return parts.join('  ');
 }
 
 // ISO timestamp → HH:MM:SS (best-effort; falls back to the raw value).
@@ -961,6 +975,10 @@ function CtxCard({cs,agent}){
   const comp = cs.composition || {};
   const total = cs.tokens || 0;
   const segs = ROLE_ORDER.filter(r=>comp[r]);
+  const added = cs.added || {};
+  const addedRoles = ROLE_ORDER.filter(r=>added[r]);
+  const removedByRole = cs.removed_by_role || {};
+  const removedRoles = ROLE_ORDER.filter(r=>removedByRole[r]);
   return html`<div class=${'ctxcard'+(agent?' sub':'')}>
     <div class="ctx-top">
       <span class="ctx-label">Context window${agent ? html` <span class="ctx-sub">· subagent ${agent.slice(0,8)}</span>` : null}</span>
@@ -977,6 +995,16 @@ function CtxCard({cs,agent}){
         <span class="bd-sw" style=${{background:ROLE_META[r].color}}></span>
         ${ROLE_META[r].label} <span class="muted">${fmtNum(comp[r])}</span>
       </span>`)}
+    </div>` : null}
+    ${(addedRoles.length || removedRoles.length) ? html`<div class="ctx-delta">
+      ${addedRoles.length ? html`<span class="ctx-delta-add">
+        +${fmtNum(cs.added_total)} added
+        <span class="muted">(${addedRoles.map(r=>ROLE_META[r].label+' '+fmtNum(added[r])).join(', ')})</span>
+      </span>` : null}
+      ${removedRoles.length ? html`<span class="ctx-delta-rem">
+        −${fmtNum(cs.removed)} retired
+        <span class="muted">(${removedRoles.map(r=>ROLE_META[r].label+' '+fmtNum(removedByRole[r])).join(', ')})</span>
+      </span>` : null}
     </div>` : null}
   </div>`;
 }
