@@ -742,6 +742,64 @@ def test_execute_drops_own_checkpoint_after_context_reset(silent_logger, mocker)
     remove.assert_called_once_with(agent._session_dir)
 
 
+def test_resumed_run_context_reset_clean_finish_clears_source(silent_logger, mocker):
+    """A resumed run that hits a context reset with a cleanly-finishing
+    continuation drops BOTH its own and the SOURCE checkpoint, so the superseded
+    source stops being a --resume-last magnet."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    agent.resumed_from = "sourcesess"
+
+    class _FakePipeline:
+        def execute(self, ctx):
+            # A context reset whose continuation finished cleanly (no failure).
+            agent._did_context_reset = True
+            ctx.stop_reason = "stop"
+            return ctx.messages
+
+    mocker.patch(
+        "my_coding_agent.pipeline.build_default_pipeline",
+        return_value=_FakePipeline(),
+    )
+    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+
+    agent.execute(max_steps=5)
+
+    assert agent.failure_error is None
+    remove.assert_any_call(agent._session_dir)
+    remove.assert_any_call(Path(".my_coding_agent") / "sourcesess")
+    assert remove.call_count == 2
+
+
+def test_handoff_summary_failure_keeps_main_checkpoint(silent_logger, mocker):
+    """A handoff-summary LLM failure BEFORE a continuation is spawned stays a
+    normal main-session failure: the reset flag is never set, the own checkpoint
+    is kept, and the resume hint points at the main session."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    agent.llm.context_window = 10000
+    err = LLMHTTPStatusError("HTTP 400", status_code=400, retryable=False)
+    mocker.patch.object(agent, "_generate_handoff", side_effect=err)
+
+    class _FakePipeline:
+        def execute(self, ctx):
+            # The handoff summary fails before the flag is set or a continuation runs.
+            return agent._handle_context_reset(ctx, max_steps=5, t_start=0.0)
+
+    mocker.patch(
+        "my_coding_agent.pipeline.build_default_pipeline",
+        return_value=_FakePipeline(),
+    )
+    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+
+    agent.execute(max_steps=5)
+
+    assert agent._did_context_reset is False
+    assert agent.failure_error is err
+    assert agent.failure_session_id == agent.session_id
+    remove.assert_not_called()  # own checkpoint kept (D6 resumable failure)
+
+
 def test_execute_checkpoints_each_completed_step(silent_logger, mocker):
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)  # stubs _write_checkpoint as a Mock

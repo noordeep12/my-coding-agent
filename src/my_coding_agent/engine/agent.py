@@ -279,7 +279,9 @@ class AgentNode(BaseNode):
             #   1. A context reset happened → the continuation chain supersedes
             #      this pre-reset run and owns the resumable checkpoint, so drop
             #      ours regardless of stop_reason (a propagated continuation
-            #      failure sets failure_error/stop but ours must still go).
+            #      failure sets failure_error/stop but ours must still go). If we
+            #      are a resumed run whose continuation completed (no propagated
+            #      failure), the SOURCE is superseded too → clear it as well.
             #   2. Unrecoverable LLM failure → keep ours (D6 resumable failure);
             #      a crash never reaches this finally, so its checkpoint persists.
             #   3. Clean finish → task done; drop ours, and a resumed run also
@@ -293,6 +295,8 @@ class AgentNode(BaseNode):
             )
             if self._did_context_reset:
                 remove_checkpoint(self._session_dir)
+                if self.resumed_from is not None and self.failure_error is None:
+                    remove_checkpoint(Path(".my_coding_agent") / self.resumed_from)
             elif clean_finish:
                 remove_checkpoint(self._session_dir)
                 if self.resumed_from is not None:
@@ -602,13 +606,16 @@ class AgentNode(BaseNode):
         t_start: float,
     ) -> list[dict[str, Any]]:
         """Generate a handoff, finalize this run, spawn and return the continuation."""
-        self._did_context_reset = True
         ctx_tokens = ctx.last_prompt_tokens or len(json.dumps(ctx.messages)) // 2
         ctx_pct = ctx_tokens / ctx.llm.context_window if ctx.llm.context_window else 0.0
 
         handoff = self._generate_handoff(
             ctx.step_num, ctx_tokens, ctx.handoff_content or ""
         )
+        # Set only once the handoff summary is secured: a pre-spawn summary
+        # failure must stay a normal main-session failure that keeps its own
+        # checkpoint, not a reset that drops it.
+        self._did_context_reset = True
         ctx.handoff_records.append(
             {
                 "step": ctx.step_num,
