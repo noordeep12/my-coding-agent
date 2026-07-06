@@ -565,7 +565,9 @@ class ToolRegistry:
             return None, {"stdout": body, "ok": True}
         return body
 
-    def delegate(self, task: str, known_facts: str = "") -> str:
+    def delegate(
+        self, task: str, known_facts: str = "", expected_report: str = ""
+    ) -> str:
         """Delegate a focused exploration or research task to a subagent.
         The subagent starts fresh with only the task (and any known_facts),
         reads files, runs targeted bash commands, and returns a structured
@@ -583,6 +585,12 @@ class ToolRegistry:
                 constraints, the nature of the resource being worked on. Do NOT
                 restate or summarize the task here. Omit when you have nothing
                 to add. Example: 'Relevant files: agent.py, llm.py at /abs/path/'
+            expected_report: Optional shape, size, and content of the report you
+                need back — not facts about the input, but the shape of the
+                output. Ask for something you can drop directly into your own
+                answer rather than re-synthesize. Omit when the task's natural
+                report is fine as-is. Example: 'A markdown table with columns
+                file/line/issue, max 10 rows, plus a 3-line summary'
         """
         # Lazy import — avoids a circular dependency (agent → tools → registry).
         from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS, AgentNode
@@ -591,11 +599,16 @@ class ToolRegistry:
 
         subagent_tools = [t for t in self._tools if t["function"]["name"] != "delegate"]
         facts = strip_task_restatements(task, known_facts) if known_facts else ""
-        opening_message = (
-            f"Task:\n{task}\n\nKnown facts from the main agent:\n{facts}"
-            if facts
-            else task
-        )
+        if not facts and not expected_report:
+            opening_message = task
+        else:
+            opening_message = f"Task:\n{task}"
+            if facts:
+                opening_message += f"\n\nKnown facts from the main agent:\n{facts}"
+            if expected_report:
+                opening_message += (
+                    f"\n\nReport expectations from the main agent:\n{expected_report}"
+                )
         now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%Z)")
         system_prompt = (
             "You are a focused subagent working for a main coding assistant. "
@@ -604,7 +617,11 @@ class ToolRegistry:
             "commands, fetch URLs for web/research, and gather context — then "
             "write a clear, structured report. The task may be code or file "
             "exploration, web research, or context gathering. Do NOT modify any "
-            "files. Be concise — the main agent only needs the key findings.\n\n"
+            "files. Be concise — the main agent only needs the key findings. "
+            "Your final message is returned verbatim to the delegating agent as "
+            "your report — when the opening message states report expectations, "
+            "your final message must follow them (shape, not omission of "
+            "findings).\n\n"
             "Every tool returns JSON: "
             '{"schema_version", "tool", "ok", "output", "error", "metadata"}. '
             "When `ok` is true read `output`; when false read `error` (and "
