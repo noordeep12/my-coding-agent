@@ -44,6 +44,9 @@ class TraceNode:
         anomaly_flag: ``True`` when this tool_call is a member of a detected
             same-class failure streak (``runtime-anomaly-detection``) — distinct
             from and unrelated to ``loop_flag``.
+        refusal_flag: ``True`` when this tool_call was refused by the
+            dangerous-command policy gate (``dangerous-command-refusal``) —
+            distinct from and unrelated to ``loop_flag``/``anomaly_flag``.
         ctx_state: Per-node snapshot of the session context window after this
             node ran. Keys: ``tokens`` (current fill), ``window`` (max size),
             ``pct`` (fill percentage), ``composition`` (cumulative tokens per
@@ -64,6 +67,7 @@ class TraceNode:
     depth: int = 0
     loop_flag: bool = False
     anomaly_flag: bool = False
+    refusal_flag: bool = False
     ctx_state: dict[str, Any] = field(default_factory=dict)
 
 

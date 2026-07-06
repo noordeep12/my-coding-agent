@@ -109,6 +109,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .row-dot.sm{width:8px;height:8px}
 .loop-tag{font-size:10px;font-weight:600;color:var(--amber);background:#fff3e6;border-radius:5px;padding:1px 6px}
 .anomaly-tag{font-size:10px;font-weight:600;color:var(--neg);background:var(--neg-bg);border-radius:5px;padding:1px 6px}
+.refusal-tag{font-size:10px;font-weight:600;color:#fff;background:var(--neg);border-radius:5px;padding:1px 6px}
 
 /* ── tree ── */
 .tree{display:flex;flex-direction:column;gap:1px}
@@ -235,6 +236,9 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tr-block.muted{font-size:12px}
 .tr-label{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:lowercase}
 .tr-label.err{color:var(--neg)}
+.refusal-refs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.refusal-refs a{color:var(--accent);font-size:12px;text-decoration:none}
+.refusal-refs a:hover{text-decoration:underline}
 
 /* scrollbars */
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -535,6 +539,7 @@ function Stats({data}){
       <span><b>${cost}</b></span>
       ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
       ${a.anomaly_count ? html`<span class="warn">⚠ ${a.anomaly_count} anomaly(s)</span>` : null}
+      ${a.refusal_count ? html`<span class="warn">🛑 ${a.refusal_count} refused</span>` : null}
       ${a.skill_offered_count!=null ? html`<span class="muted">🧠 ${a.skill_offered_count} offered · ${a.skill_loaded_count} loaded</span>` : null}
       ${data.stop_reason ? html`<span class="muted">stop: ${data.stop_reason}</span>` : null}
       ${hasBreakdown ? html`<button class="filter-btn" onClick=${()=>setOpen(!open)}>
@@ -771,6 +776,7 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
         ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge sm '+x.c}>${x.t}</span>`)}
       </span>` : null}
       ${isSubagentRoot ? html`<span class="sub-tag">subagent</span>` : null}
+      ${node.refusal_flag ? html`<span class="refusal-tag">refused</span>` : null}
       ${summary ? html`<span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary}</span>` : null}
     </div>
     ${open ? html`<div class="agroup-body">
@@ -791,6 +797,7 @@ function TreeLeaf({node,sel,onSel}){
     ${badges.length ? html`<span class="tleaf-badges">
       ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge sm '+x.c}>${x.t}</span>`)}
     </span>` : null}
+    ${node.refusal_flag ? html`<span class="refusal-tag">refused</span>` : null}
     <span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary || '—'}</span>
   </div>`;
 }
@@ -815,6 +822,7 @@ function Detail({node,mainAgent}){
         ${subAgent ? html`<span class="sub-tag">subagent ${subAgent.slice(0,8)}</span>` : null}
         ${node.loop_flag ? html`<span class="loop-tag">loop</span>` : null}
         ${node.anomaly_flag ? html`<span class="anomaly-tag">anomaly</span>` : null}
+        ${node.refusal_flag ? html`<span class="refusal-tag">refused</span>` : null}
       </div>
       ${badges.length ? html`<div class="badge-row">
         ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge '+x.c}>${x.t}</span>`)}
@@ -862,12 +870,33 @@ function cmdText(args){
   return args==null ? '' : String(args);
 }
 
+// Dedicated, readable rendering of a refusal's full explanation (what/why/
+// how-to-fix) so it never requires opening raw_envelope: reason, matched
+// rule id, standard reference(s) as clickable links, and the safer
+// alternative. Absent entirely on a non-refused tool_call (r.metadata has no
+// `refusal` key), including every pre-change trace.
+function RefusalDetail({refusal}){
+  if(!refusal) return null;
+  const refs = refusal.references || [];
+  return html`<div class="tr-block">
+    <div class="tr-label err">refused — ${refusal.rule_id}</div>
+    <div>${refusal.reason}</div>
+    ${refs.length ? html`<ul class="refusal-refs">
+      ${refs.map((r,i)=>html`<li key=${i}>
+        <a href=${r.url} target="_blank" rel="noopener noreferrer">${r.standard_id}</a>
+      </li>`)}
+    </ul>` : null}
+    ${refusal.safer_alternative ? html`<div><b>Safer alternative:</b> ${refusal.safer_alternative}</div>` : null}
+  </div>`;
+}
+
 function ToolResult({node}){
   const raw = node.outputs && node.outputs.result;
   const r = parseToolResult(raw) || {};
   const cmd = cmdText(node.inputs && node.inputs.args);
   const lang = (r.metadata || {}).lang || {};
   const hasResult = raw!=null && raw!=='';
+  const refusal = (r.metadata || {}).refusal;
   // Split the envelope into labelled, language-highlighted boxes (command /
   // output / error) and always keep raw_envelope so nothing is hidden — an empty
   // `output` with the real signal in `error` would otherwise look like "no
@@ -880,6 +909,7 @@ function ToolResult({node}){
       <${ContentBox} value=${r.output} lang=${lang.output}/></div>` : null}
     ${r.error ? html`<div class="tr-block"><div class="tr-label err">error</div>
       <${ContentBox} value=${r.error} lang=${lang.error}/></div>` : null}
+    <${RefusalDetail} refusal=${refusal}/>
     ${hasResult ? html`<div class="tr-block"><div class="tr-label">raw_envelope</div>
       <${CodeBox} value=${r}/></div>`
       : html`<div class="tr-block muted">No result recorded.</div>`}
