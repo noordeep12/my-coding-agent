@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from my_coding_agent.engine.agent import AgentNode
+from my_coding_agent.engine.checkpoint import Checkpoint
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 from my_coding_agent.engine.tool_registry.skills import Skill
 from my_coding_agent.utils import detach_session_log
@@ -133,6 +134,48 @@ def test_skill_free_delegate_child_byte_identical(mocker):
     # message is the task only, byte-identical to a pre-skills delegate.
     assert captured["skills"] == {}
     assert captured["messages"][1]["content"] == "do X"
+
+
+# ── resume seeding (D5): skills service use_skill without re-placing index ─────
+
+
+def test_resumed_agent_has_skills_but_does_not_replace_index(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    skills = {"a": Skill("a", "does a", "body a")}
+    # The dead session's opening message already carried the index; the resumed
+    # conversation must not gain a second copy of it.
+    checkpoint = Checkpoint(
+        session_id="deadbeef1234",
+        step_num=4,
+        last_prompt_tokens=42,
+        messages=[dict(_SYSTEM), {"role": "user", "content": "Do the task."}],
+    )
+    agent = AgentNode.from_checkpoint(checkpoint, tools=[], skills=skills)
+    try:
+        # Registry can service use_skill on a resumed run.
+        assert agent.skills == skills
+        # Index NOT re-placed: opening message unchanged, no offered event queued.
+        assert agent.messages[1]["content"] == "Do the task."
+        assert agent._rendered_index is None
+    finally:
+        _cleanup(agent)
+
+
+def test_resumed_agent_emits_no_second_skill_index_event(monkeypatch, tmp_path, mocker):
+    monkeypatch.chdir(tmp_path)
+    skills = {"a": Skill("a", "does a", "body a")}
+    checkpoint = Checkpoint(
+        session_id="deadbeef1234",
+        step_num=1,
+        last_prompt_tokens=0,
+        messages=[dict(_SYSTEM), {"role": "user", "content": "Do the task."}],
+    )
+    agent = AgentNode.from_checkpoint(checkpoint, tools=[], skills=skills)
+    _stub_execute(agent, mocker)
+    agent.execute(max_steps=2)
+    events_path = Path(".my_coding_agent") / agent.session_id / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert not any(e["type"] == "skill_index" for e in events)
 
 
 # ── session-start event via real execute ──────────────────────────────────────

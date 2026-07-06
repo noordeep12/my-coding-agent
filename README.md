@@ -13,6 +13,7 @@ Key ideas:
 - **Decorator-based tools**: plain Python functions become LLM-callable tools
 - **Skills**: steer the agent's tool usage with plain-Markdown `SKILL.md` files, loaded on demand via `use_skill` — no Python edits, no system-prompt changes
 - **Context handoff**: when the context window fills up, the agent writes a structured summary of progress and spawns a fresh continuation — so long-running tasks don't get silently truncated
+- **Run resilience & resume**: a mid-run LLM failure is classified at the client and, when transient (server restart, model reload, Mac sleep), absorbed by a patient bounded retry; each completed step is checkpointed, so a dead run can be continued from exactly where it left off with `--resume`
 - **Session persistence**: each run saves token usage, tool calls, and a final summary to `.my_coding_agent/<session_id>/`
 
 ## Quick Start
@@ -65,9 +66,27 @@ uv run my-coding-agent --prompt "Your task here"
 # Interactive paste mode (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel)
 uv run my-coding-agent --interactive
 
+# Resume a dead run from its last checkpoint (new session, linked to the dead one)
+uv run my-coding-agent --resume <session_id>
+uv run my-coding-agent --resume-last
+
 # Help
 uv run my-coding-agent --help
 ```
+
+### Run Resilience & Resume
+
+Local model time is the run's real cost, so a transient LLM failure must not throw it away. Two mechanisms cover the two faces of that:
+
+- **Live resilience.** Every failure is classified at the LLM client (the single choke point every call kind funnels through): *transport* (connection/timeout), *http-status* (non-2xx), or *malformed-body* (non-JSON, or JSON with missing/empty `choices`). A failed response never becomes an empty assistant turn. Retryable classes (transport, HTTP 5xx/429) get the existing fast retries and then a **patient bounded wait** — capped-backoff probing until the server answers or `MCA_LLM_OUTAGE_TOLERANCE_S` (default 300s) is exhausted — so a server restart, model swap, or brief Mac sleep is absorbed unattended. Non-retryable classes (other 4xx) fail immediately. Every wait, recovery, and unrecoverable failure is logged (`stderr.log`) and recorded (`events.jsonl`).
+- **Resume.** After each *completed* step the engine writes `checkpoint.json` (the exact conversation plus step/token counters) atomically. If a run dies — outage beyond tolerance, `kill -9`, crash — `--resume <session_id>` (or `--resume-last`) loads that checkpoint into a **new** session linked back to the dead one (`resumed_from`); the dead session's files stay immutable and the resumed run continues from step N+1, not step 0.
+
+**Partial-step caveat (by design):** the checkpoint granularity is a completed step. A run killed mid-step resumes from the end of the last *completed* step; the partial step is discarded. Any tool side effects from that partial step may already exist on disk — the resumed conversation simply doesn't know about them (the same risk class as re-running a command after a crash). There is no step-level journaling.
+
+**Known limitations (by design):**
+
+- **Multi-hop resume chains.** The automatic source-checkpoint cleanup clears only the *immediate* source, and only on a clean finish; a `max_steps` hop deliberately keeps its checkpoint (still resumable with a larger budget). So a completed resume chain of 3+ hops that includes a `max_steps` middle hop (e.g. `W` dies → `X` resumes `W` and hits `max_steps` → `Z` resumes `X` and finishes) can leave an earlier ancestor's checkpoint (`W`) behind, which `--resume-last` may then target and re-run an already-finished task. No progress is lost and the conversation is intact. Workaround: pass `--resume <id>` explicitly, or delete the stale `.my_coding_agent/<id>/checkpoint.json`.
+- **Propagated continuation-failure trace artifacts.** When a post-context-reset continuation fails unrecoverably and the failure is propagated to the main run, the main session's `session_data.json` (written at reset time with `stop_reason=context_reset`) and its `session_end` event (`stop_reason=llm_failure_*`) can disagree — a cosmetic trace-observability inconsistency only. The authoritative failure and resume state lives in the continuation session, which holds the resumable checkpoint and is named by the CLI resume hint.
 
 ### CLI Options
 
@@ -76,6 +95,8 @@ uv run my-coding-agent --help
 | `--prompt`, `-p` | default commit-and-push task | Task for the agent |
 | `--interactive`, `-i` | `False` | Read the task prompt interactively (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel) |
 | `--max-steps` | `50` | Maximum pipeline step iterations |
+| `--resume` | — | Resume a dead session from its last checkpoint (`--resume <session_id>`); starts a new session linked back to the dead one |
+| `--resume-last` | `False` | Resume the most recently checkpointed session |
 
 ## Configuration
 
@@ -85,6 +106,7 @@ uv run my-coding-agent --help
 | `OMLX_API_KEY` | `changeme` | API key (usually ignored by local servers) |
 | `OMLX_MODEL` | `Qwen3.6-35B-A3B-6bit` | Model ID to use |
 | `MCA_TOOL_MAX_CONCURRENCY` | `4` | Max read-only tool calls overlapped per assistant message (`1` disables overlap) |
+| `MCA_LLM_OUTAGE_TOLERANCE_S` | `300` | Seconds the client keeps probing a stalled/restarting LLM server (transport / HTTP 5xx / 429) before giving up with a classified, resumable stop; other 4xx fail fast |
 
 
 ## Skills
@@ -122,7 +144,8 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 |---|---|
 | `stderr.log` | Plain-text log of the full run |
 | `session_data.json` | Metrics, tool records, LLM call log, stop reason, usage rollup (own + delegated subagents, per call kind) |
-| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs, skill-index offers) |
+| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs, skill-index offers, outage waits/recovery) |
+| `checkpoint.json` | Engine-owned per-step resume checkpoint (exact `messages` + step/token counters), written atomically after each completed step; consumed by `--resume` |
 | `artifacts/<tool_call_id>.<stream>.txt` | Full content of each offloaded large output stream (`stdout`/`stderr`), written at creation so bash can skim it during the run |
 | `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
 

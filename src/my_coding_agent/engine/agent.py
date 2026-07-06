@@ -19,7 +19,7 @@ from ..pipeline.nodes.context_summarizer import (
     REPORT_PROMPT,
     summarize_conversation,
 )
-from ..pipeline.schema import ContextHandoff
+from ..pipeline.schema import CLEAN_FINISH_REASONS, ContextHandoff
 from ..utils import (
     attach_session_log,
     detach_session_log,
@@ -27,9 +27,11 @@ from ..utils import (
     print_banner,
     print_run_summary,
 )
+from .checkpoint import Checkpoint, remove_checkpoint, save_checkpoint
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
+from .llm.errors import LLMCallError
 from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
-from .schema import REPORT_SOURCE_FALLBACK
+from .schema import REPORT_SOURCE_FALLBACK, llm_failure_stop_reason
 from .tool_registry.skills import RenderedIndex, Skill, build_opening_block
 
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
@@ -60,6 +62,10 @@ class AgentNode(BaseNode):
         needs_handback: bool = False,
         skills: dict[str, Skill] | None = None,
         loaded_skills: set[str] | None = None,
+        place_skill_index: bool = True,
+        resumed_from: str | None = None,
+        resume_step: int = 0,
+        resume_prompt_tokens: int = 0,
     ) -> None:
         """Initialize the agent, open a session log, and build the LLM client.
 
@@ -71,13 +77,44 @@ class AgentNode(BaseNode):
         ``use_skill`` tool. ``loaded_skills`` seeds the set of already-loaded
         skills — empty for a fresh run, or the pre-reset run's loaded names for a
         continuation, whose full bodies are re-injected into the opening message
-        so knowledge survives a handoff (D6).
+        so knowledge survives a handoff (D6). ``place_skill_index`` is ``False``
+        for a resumed run whose checkpointed opening message already carries the
+        index, so ``self.skills`` still services ``use_skill`` without the index
+        being placed (or its event emitted) a second time.
+
+        ``resumed_from`` links this run to the dead session whose checkpoint
+        seeded it (D5); ``resume_step``/``resume_prompt_tokens`` continue the step
+        counter so the first LLM call is step N+1, not step 0. Defaults keep a
+        fresh run unchanged. Prefer ``AgentNode.from_checkpoint`` over passing
+        these directly.
         """
         self.session_id = uuid.uuid4().hex[:12]
         self.started_at = datetime.now().isoformat(timespec="seconds")
-        _session_dir = Path(".my_coding_agent") / self.session_id
+        self._session_dir = Path(".my_coding_agent") / self.session_id
+        _session_dir = self._session_dir
+        self.resumed_from = resumed_from
+        self._resume_step = resume_step
+        self._resume_prompt_tokens = resume_prompt_tokens
+        # Set to the classified error when a run ends on an unrecoverable LLM
+        # failure (D6), so the CLI can print a one-line resume hint. None → OK.
+        self.failure_error: LLMCallError | None = None
+        # The session whose checkpoint the CLI resume hint should name. Usually
+        # this run's own id, but a failure propagated up from a post-reset
+        # continuation names the continuation's session (its checkpoint is the
+        # resumable one). None until a failure is recorded.
+        self.failure_session_id: str | None = None
+        # The continuation spawned on a context reset, kept so its own
+        # unrecoverable failure can be surfaced to the top-level run (D6).
+        self._continuation: AgentNode | None = None
+        # True once a context reset happened this run: the continuation chain
+        # then owns the resumable checkpoint, so this pre-reset run drops its own
+        # at the end (otherwise its newer mtime mistargets --resume-last).
+        self._did_context_reset = False
         self.recorder = Recorder(
-            self.session_id, _session_dir, parent_session_id=current_session_id.get()
+            self.session_id,
+            _session_dir,
+            parent_session_id=current_session_id.get(),
+            resumed_from=resumed_from,
         )
         self.llm = LLM(api_url, api_key, model)
         self.llm._recorder = self.recorder
@@ -105,7 +142,8 @@ class AgentNode(BaseNode):
         self.skills = skills or {}
         self.loaded_skills = loaded_skills if loaded_skills is not None else set()
         self._rendered_index: RenderedIndex | None = None
-        self._place_skill_index()
+        if place_skill_index:
+            self._place_skill_index()
         # Usage summaries of delegated subagents spawned by this agent, handed
         # up via ``current_agent_node`` as each ``delegate`` call returns (D3).
         # Each entry already carries its own nested descendants, so a child's
@@ -154,13 +192,14 @@ class AgentNode(BaseNode):
         """Drive the agentic pipeline and return the final message list."""
         from ..pipeline import build_default_pipeline
 
-        self.step_num = 0
+        self.step_num = self._resume_step
         self.stop_reason = "max_steps"
         self.tool_records = []
         self.handoff_records = []
         self.llm.llm_calls = []
-        self.last_prompt_tokens = 0
+        self.last_prompt_tokens = self._resume_prompt_tokens
         self.handback_report = None
+        self.failure_error = None
 
         t_start = time.monotonic()
         self.recorder.start(self.label, self.llm.model, self.llm.context_window)
@@ -196,6 +235,7 @@ class AgentNode(BaseNode):
             llm=self.llm,
             recorder=self.recorder,
             messages=self.messages,
+            step_num=self.step_num,
             last_prompt_tokens=self.last_prompt_tokens,
             needs_handback=self.needs_handback,
             skills=self.skills,
@@ -205,7 +245,9 @@ class AgentNode(BaseNode):
         def _spawn_fn() -> list[dict[str, Any]]:
             return self._handle_context_reset(ctx, max_steps, t_start)
 
-        pipeline = build_default_pipeline(spawn_fn=_spawn_fn)
+        pipeline = build_default_pipeline(
+            spawn_fn=_spawn_fn, checkpoint_fn=self._write_checkpoint
+        )
 
         result: list[dict[str, Any]] = []
         try:
@@ -213,6 +255,18 @@ class AgentNode(BaseNode):
         except KeyboardInterrupt:
             ctx.stop_reason = "aborted"
             self.logger.warning("Agent run aborted by user (KeyboardInterrupt)")
+        except LLMCallError as exc:
+            # Unrecoverable LLM failure (D6): a first-class stop, not a crash.
+            # The last completed step's checkpoint is already on disk (D4), so
+            # the run is resumable; the finally block persists session_data.
+            ctx.stop_reason = llm_failure_stop_reason(exc.classification)
+            self.failure_error = exc
+            self.failure_session_id = self.session_id
+            self.logger.error(
+                "Agent run stopped — unrecoverable LLM failure (%s): %s",
+                exc.classification,
+                exc,
+            )
         finally:
             self._sync_from_ctx(ctx, t_start)
             out = Path(".my_coding_agent") / self.session_id / "session_data.json"
@@ -220,6 +274,33 @@ class AgentNode(BaseNode):
                 self._save_session_data(max_steps)
                 self._print_summary(max_steps)
                 detach_session_log(self._session_log_handler)
+            # The checkpoint exists iff the run is genuinely resumable, at the
+            # right session. Ordered because the cases overlap:
+            #   1. A context reset happened → the continuation chain supersedes
+            #      this pre-reset run and owns the resumable checkpoint, so drop
+            #      ours regardless of stop_reason (a propagated continuation
+            #      failure sets failure_error/stop but ours must still go). If we
+            #      are a resumed run whose continuation completed (no propagated
+            #      failure), the SOURCE is superseded too → clear it as well.
+            #   2. Unrecoverable LLM failure → keep ours (D6 resumable failure);
+            #      a crash never reaches this finally, so its checkpoint persists.
+            #   3. Clean finish → task done; drop ours, and a resumed run also
+            #      clears the SOURCE checkpoint so it stops being a --resume-last
+            #      magnet (source's auditable session files stay byte-identical).
+            #   4. max_steps / aborted / other → keep ours (still resumable with a
+            #      bigger budget) and never touch the source; a zero-step
+            #      past-budget resume lands here and deletes nothing.
+            clean_finish = (
+                self.failure_error is None and self.stop_reason in CLEAN_FINISH_REASONS
+            )
+            if self._did_context_reset:
+                remove_checkpoint(self._session_dir)
+                if self.resumed_from is not None and self.failure_error is None:
+                    remove_checkpoint(Path(".my_coding_agent") / self.resumed_from)
+            elif clean_finish:
+                remove_checkpoint(self._session_dir)
+                if self.resumed_from is not None:
+                    remove_checkpoint(Path(".my_coding_agent") / self.resumed_from)
             self.recorder.finish(
                 self.stop_reason, self.step_num, round(self.elapsed_seconds, 3)
             )
@@ -320,6 +401,7 @@ class AgentNode(BaseNode):
             skills=self.skills,
             loaded_skills=set(self.loaded_skills),
         )
+        self._continuation = continuation
         remaining_steps = max_steps - self.step_num
         return continuation.execute(max_steps=max(remaining_steps, 1))
 
@@ -450,6 +532,8 @@ class AgentNode(BaseNode):
         resource_rollup = self.recorder.resource_rollup()
         if resource_rollup is not None:
             data["resource_rollup"] = resource_rollup
+        if self.resumed_from is not None:
+            data["resumed_from"] = self.resumed_from
         out = Path(".my_coding_agent") / self.session_id / "session_data.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, indent=2))
@@ -458,6 +542,62 @@ class AgentNode(BaseNode):
             artifacts_out = out.parent / "tool_artifacts.json"
             artifacts_out.write_text(json.dumps(self.tool_artifacts, indent=2))
             self.logger.info("Tool artifacts saved → %s", artifacts_out)
+
+    def _write_checkpoint(self, ctx: RunContext) -> None:
+        """Persist the resume checkpoint at the end of a completed step (D3).
+
+        Passed to the pipeline as ``checkpoint_fn``; the pipeline calls it only
+        after a step completes without raising, so a partial step is discarded
+        (D4). The write itself is atomic (write-temp + ``os.replace``).
+        """
+        save_checkpoint(
+            self._session_dir,
+            Checkpoint(
+                session_id=self.session_id,
+                step_num=ctx.step_num,
+                last_prompt_tokens=ctx.last_prompt_tokens,
+                messages=ctx.messages,
+            ),
+        )
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint: Checkpoint,
+        *,
+        api_url: str = OMLX_API_URL,
+        api_key: str = OMLX_API_KEY,
+        model: str = OMLX_MODEL,
+        tools: list[dict[str, Any]] | None = None,
+        label: str = "Agent",
+        context_reset_threshold: float = 0.75,
+        skills: dict[str, Skill] | None = None,
+    ) -> AgentNode:
+        """Build a fresh AgentNode seeded from a dead session's checkpoint (D5).
+
+        The new node has a brand-new session id and its own clean trace; it loads
+        the exact checkpointed conversation and continues the step counter so its
+        first LLM call is step N+1. ``checkpoint.session_id`` is recorded as
+        ``resumed_from`` — the dead session's files stay immutable.
+
+        ``skills`` is the discovered-skill snapshot so the resumed run's registry
+        can service ``use_skill``; its index is *not* re-placed (the checkpointed
+        opening message already carries it) via ``place_skill_index=False``.
+        """
+        return cls(
+            api_url=api_url,
+            api_key=api_key,
+            model=model,
+            messages=list(checkpoint.messages),
+            tools=tools,
+            label=label,
+            context_reset_threshold=context_reset_threshold,
+            skills=skills,
+            place_skill_index=False,
+            resumed_from=checkpoint.session_id,
+            resume_step=checkpoint.step_num,
+            resume_prompt_tokens=checkpoint.last_prompt_tokens,
+        )
 
     def _handle_context_reset(
         self,
@@ -472,6 +612,10 @@ class AgentNode(BaseNode):
         handoff = self._generate_handoff(
             ctx.step_num, ctx_tokens, ctx.handoff_content or ""
         )
+        # Set only once the handoff summary is secured: a pre-spawn summary
+        # failure must stay a normal main-session failure that keeps its own
+        # checkpoint, not a reset that drops it.
+        self._did_context_reset = True
         ctx.handoff_records.append(
             {
                 "step": ctx.step_num,
@@ -498,4 +642,14 @@ class AgentNode(BaseNode):
         self._save_session_data(max_steps)
         self._print_summary(max_steps)
         detach_session_log(self._session_log_handler)
-        return self._spawn_continuation(handoff, max_steps)
+        result = self._spawn_continuation(handoff, max_steps)
+        # Surface an unrecoverable failure that happened in the continuation so
+        # the top-level run stops as an llm_failure_* (not context_reset) and the
+        # CLI points at the continuation's resumable checkpoint (D6). Set the
+        # stop reason on ctx so execute()'s finally carries it via _sync_from_ctx.
+        cont = self._continuation
+        if cont is not None and cont.failure_error is not None:
+            self.failure_error = cont.failure_error
+            self.failure_session_id = cont.failure_session_id or cont.session_id
+            ctx.stop_reason = cont.stop_reason
+        return result

@@ -38,6 +38,7 @@ __all__ = [
 
 def build_default_pipeline(
     spawn_fn: Callable[[], list[dict]] | None = None,
+    checkpoint_fn: Callable[[RunContext], None] | None = None,
 ) -> Pipeline:
     """Return a Pipeline with the standard 6-node agentic loop.
 
@@ -46,6 +47,9 @@ def build_default_pipeline(
             spawning continuation agents on context reset.  ``Agent`` passes
             ``self._spawn_continuation`` here to avoid a circular import between
             this package and ``agent.py``.
+        checkpoint_fn: Optional callable invoked after each completed step to
+            persist the resume checkpoint (run-resilience D3).  ``AgentNode``
+            passes its own atomic checkpoint writer here.
     """
     return Pipeline(
         [
@@ -55,5 +59,6 @@ def build_default_pipeline(
             ToolDispatchNode(),
             AnomalyDetectNode(),
             FinalizeStepNode(),
-        ]
+        ],
+        checkpoint_fn=checkpoint_fn,
     )

@@ -19,6 +19,14 @@ Engine
    :members:
    :show-inheritance:
 
+.. automodule:: my_coding_agent.engine.llm.errors
+   :members:
+   :show-inheritance:
+
+.. automodule:: my_coding_agent.engine.checkpoint
+   :members:
+   :show-inheritance:
+
 
 Tool registry
 -------------
