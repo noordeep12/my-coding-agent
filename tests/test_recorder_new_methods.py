@@ -329,9 +329,7 @@ class TestRecordLlmCallMessageDeltas:
         assert ev["messages"] == m2
         assert "messages_base_call" not in ev
 
-    def test_mid_history_supersession_stub_falls_back_to_full_snapshot(
-        self, tmp_path
-    ):
+    def test_mid_history_supersession_stub_falls_back_to_full_snapshot(self, tmp_path):
         """A retiring step (issue #121) replaces one message object in place
         of a mutation — the identity check for that index fails, so the whole
         step's recorded messages are a full snapshot (what the model actually

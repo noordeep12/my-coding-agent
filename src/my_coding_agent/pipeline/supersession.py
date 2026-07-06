@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 from ..engine.tool_execution.schema import (
     EXTRACTION_INCOMPLETE_MARKER,
@@ -82,6 +82,80 @@ def _args_signature(args: Any) -> str:
     return json.dumps(args, sort_keys=True, default=str)
 
 
+# A case finder calls this with (tool_call_id, tool_name, superseding_tool_call_id)
+# for each candidate; the case itself is already bound into the callback.
+_Consider = Callable[[str, str, str], None]
+
+
+def _find_identical_call_retirements(
+    tool_records: list[dict[str, Any]], consider: _Consider
+) -> None:
+    """Case C — retire every older invocation of a byte-identical ``(name,
+    args)`` call once its newest invocation succeeded."""
+    by_signature: dict[str, list[dict[str, Any]]] = {}
+    for record in tool_records:
+        sig = f"{record.get('name')}|{_args_signature(record.get('args'))}"
+        by_signature.setdefault(sig, []).append(record)
+    for records in by_signature.values():
+        if len(records) < 2:
+            continue
+        newest = records[-1]
+        if not newest.get("ok"):
+            continue
+        newest_id = newest.get("tool_call_id", "")
+        for older in records[:-1]:
+            call_id = older.get("tool_call_id", "")
+            if call_id != newest_id:
+                consider(call_id, older.get("name", ""), newest_id)
+
+
+def _find_incomplete_extract_retirements(
+    tool_records: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+    index: dict[str, int],
+    consider: _Consider,
+) -> None:
+    """Case A — retire a marked-incomplete extract of artifact X once a later
+    successful call reads that same artifact X."""
+    for i, record in enumerate(tool_records):
+        if record.get("name") != "read_tool_artifact":
+            continue
+        call_id = record.get("tool_call_id", "")
+        text = _content_text(messages, index.get(call_id))
+        if EXTRACTION_INCOMPLETE_MARKER not in text:
+            continue
+        target = (record.get("args") or {}).get("tool_call_id")
+        if not target:
+            continue
+        for later in tool_records[i + 1 :]:
+            later_target = (later.get("args") or {}).get("tool_call_id")
+            if later.get("ok") and later_target == target:
+                consider(call_id, record.get("name", ""), later.get("tool_call_id", ""))
+                break
+
+
+def _find_containment_retirements(
+    tool_records: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+    index: dict[str, int],
+    consider: _Consider,
+) -> None:
+    """Case B — retire an earlier successful result whose full text is a
+    contiguous substring of a later successful result's text."""
+    successes = [r for r in tool_records if r.get("ok")]
+    for i, earlier in enumerate(successes):
+        earlier_id = earlier.get("tool_call_id", "")
+        earlier_text = _content_text(messages, index.get(earlier_id))
+        if not earlier_text:
+            continue
+        for later in successes[i + 1 :]:
+            later_id = later.get("tool_call_id", "")
+            later_text = _content_text(messages, index.get(later_id))
+            if len(later_text) >= len(earlier_text) and earlier_text in later_text:
+                consider(earlier_id, earlier.get("name", ""), later_id)
+                break
+
+
 def find_retirements(
     tool_records: list[dict[str, Any]],
     messages: list[dict[str, Any]],
@@ -111,94 +185,27 @@ def find_retirements(
     index = _tool_message_index(messages)
     retirements: dict[int, Retirement] = {}
 
-    def _consider(
-        msg_index: int | None,
-        tool_call_id: str,
-        tool_name: str,
-        case: str,
-        superseding_id: str,
-    ) -> None:
-        if msg_index is None or msg_index in retirements:
-            return
-        text = _content_text(messages, msg_index)
-        if text.startswith(STUB_PREFIX) or len(text) < size_floor:
-            return
-        retirements[msg_index] = Retirement(
-            msg_index, tool_call_id, tool_name, case, superseding_id, len(text)
-        )
-
-    # Case C — byte-identical repeated calls: retire every older invocation
-    # once the newest invocation of the same (name, args) succeeded.
-    by_signature: dict[str, list[dict[str, Any]]] = {}
-    for record in tool_records:
-        sig = f"{record.get('name')}|{_args_signature(record.get('args'))}"
-        by_signature.setdefault(sig, []).append(record)
-    for records in by_signature.values():
-        if len(records) < 2:
-            continue
-        newest = records[-1]
-        if not newest.get("ok"):
-            continue
-        newest_id = newest.get("tool_call_id")
-        for older in records[:-1]:
-            call_id = older.get("tool_call_id")
-            if call_id == newest_id:
-                continue
-            _consider(
-                index.get(call_id),
-                call_id,
-                older.get("name", ""),
-                CASE_IDENTICAL_CALL,
-                newest_id,
+    def _consider_for(case: str) -> _Consider:
+        def consider(tool_call_id: str, tool_name: str, superseding_id: str) -> None:
+            msg_index = index.get(tool_call_id)
+            if msg_index is None or msg_index in retirements:
+                return
+            text = _content_text(messages, msg_index)
+            if text.startswith(STUB_PREFIX) or len(text) < size_floor:
+                return
+            retirements[msg_index] = Retirement(
+                msg_index, tool_call_id, tool_name, case, superseding_id, len(text)
             )
 
-    # Case A — a marked-incomplete extract of artifact X, superseded by a
-    # later successful call that reads the same artifact X.
-    for i, record in enumerate(tool_records):
-        if record.get("name") != "read_tool_artifact":
-            continue
-        call_id = record.get("tool_call_id")
-        text = _content_text(messages, index.get(call_id))
-        if EXTRACTION_INCOMPLETE_MARKER not in text:
-            continue
-        target = (record.get("args") or {}).get("tool_call_id")
-        if not target:
-            continue
-        for later in tool_records[i + 1 :]:
-            if not later.get("ok"):
-                continue
-            if (later.get("args") or {}).get("tool_call_id") == target:
-                _consider(
-                    index.get(call_id),
-                    call_id,
-                    record.get("name", ""),
-                    CASE_INCOMPLETE_EXTRACT,
-                    later.get("tool_call_id", ""),
-                )
-                break
+        return consider
 
-    # Case B — an earlier successful result's full text is a contiguous
-    # substring of a later successful result's text.
-    successes = [r for r in tool_records if r.get("ok")]
-    for i, earlier in enumerate(successes):
-        earlier_id = earlier.get("tool_call_id")
-        earlier_index = index.get(earlier_id)
-        earlier_text = _content_text(messages, earlier_index)
-        if not earlier_text:
-            continue
-        for later in successes[i + 1 :]:
-            later_text = _content_text(messages, index.get(later.get("tool_call_id")))
-            if len(later_text) < len(earlier_text):
-                continue
-            if earlier_text in later_text:
-                _consider(
-                    earlier_index,
-                    earlier_id,
-                    earlier.get("name", ""),
-                    CASE_CONTAINMENT,
-                    later.get("tool_call_id", ""),
-                )
-                break
+    _find_identical_call_retirements(tool_records, _consider_for(CASE_IDENTICAL_CALL))
+    _find_incomplete_extract_retirements(
+        tool_records, messages, index, _consider_for(CASE_INCOMPLETE_EXTRACT)
+    )
+    _find_containment_retirements(
+        tool_records, messages, index, _consider_for(CASE_CONTAINMENT)
+    )
 
     return sorted(retirements.values(), key=lambda r: r.message_index)
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from my_coding_agent.engine.tool_execution.schema import (
@@ -226,11 +224,15 @@ class TestGate:
         ]
         assert find_retirements(records, messages) == []
 
-    def test_supersession_enabled_default_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_supersession_enabled_default_true(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("MCA_SUPERSESSION", raising=False)
         assert supersession_enabled() is True
 
-    def test_supersession_disabled_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_supersession_disabled_via_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("MCA_SUPERSESSION", "0")
         assert supersession_enabled() is False
 
@@ -271,5 +273,7 @@ class TestBuildStub:
                 _tool_message("call_2", "prefix-" + _BIG + "-suffix"),
             ],
         )
-        stub = build_stub(retirements[0], artifact_path="/tmp/session/artifacts/call_1.stdout.txt")
+        stub = build_stub(
+            retirements[0], artifact_path="/tmp/session/artifacts/call_1.stdout.txt"
+        )
         assert "/tmp/session/artifacts/call_1.stdout.txt" in stub
