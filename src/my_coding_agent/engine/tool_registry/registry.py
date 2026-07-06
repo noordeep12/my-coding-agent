@@ -539,7 +539,7 @@ class ToolRegistry:
         returns a short pointer instead of re-injecting the body.
 
         Tags:
-            skill, use_skill, load, knowledge, procedure, howto, guide
+            skill, use_skill
 
         Args:
             name: The exact skill name from the index. Example: 'commit-and-push'
