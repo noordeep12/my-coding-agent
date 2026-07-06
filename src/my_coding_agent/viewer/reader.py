@@ -184,6 +184,7 @@ def load_session(
     for step_idx, group in enumerate(steps_groups):
         _build_step_nodes(group, graph, session_id, step_idx, seen, session_dir)
 
+    _seed_session_inputs(graph.nodes[root_id], graph.nodes, graph.order, session_id)
     _add_anomaly_nodes(events, graph, session_id)
     _flag_anomalies(graph.nodes, graph.order, events)
 
@@ -261,6 +262,48 @@ def _group_into_steps(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]
 
 
 # ── Node building ─────────────────────────────────────────────────────────────
+
+
+def _seed_session_inputs(
+    root: TraceNode,
+    nodes: dict[str, TraceNode],
+    order: list[str],
+    session_id: str,
+) -> None:
+    """Surface the Main Agent node's opening prompts under its Inputs.
+
+    The session root has no inputs of its own; the context it seeds is the system
+    prompt plus the opening user message that feed the first main LLM call. Copy
+    those two texts onto the root so the viewer renders them as two boxes (system
+    + user) under the node's Inputs section.
+
+    Args:
+        root: The session root node to populate (mutated in place).
+        nodes: All trace nodes for this session, keyed by id.
+        order: Node IDs in execution order.
+        session_id: Owning session id — only this agent's own LLM calls seed it.
+    """
+    for nid in order:
+        node = nodes.get(nid)
+        if (
+            node is None
+            or node.agent != session_id
+            or node.type != "llm_call"
+            or node.attributes.get("kind") != "main"
+        ):
+            continue
+        msgs = node.inputs.get("messages") or []
+        system = next(
+            (m.get("content") for m in msgs if m.get("role") == "system"), None
+        )
+        user = next((m.get("content") for m in msgs if m.get("role") == "user"), None)
+        seeded: dict[str, Any] = {}
+        if system is not None:
+            seeded["system_prompt"] = system
+        if user is not None:
+            seeded["user_prompt"] = user
+        root.inputs = seeded
+        return
 
 
 def _merge_finalize_events(

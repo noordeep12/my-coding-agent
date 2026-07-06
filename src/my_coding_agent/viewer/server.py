@@ -525,6 +525,8 @@ function nodeBadges(node){
   if(node.type==='tool_call' && a.name==='bash' && isMultilineBashCall(node)) b.push({t:'📜 multi-line', c:'art'});
   if(node.type==='tool_call' && a.name==='use_skill') b.push({t:'🧠 skill', c:'skill'});
   if(node.type==='router' && a.phase) b.push({t:'🧭 '+phaseLabel(a.phase), c:'phase'});
+  if(node.type==='finalize_step' && a.finish_reason) b.push({t:'finish: '+a.finish_reason, c:'phase'});
+  if(node.type==='finalize_step' && a.signal) b.push({t:'signal: '+a.signal, c:'phase'});
   if(node.type==='report'){
     if(a.source==='verbatim') b.push({t:'🆓 free', c:'ok'});
     else if(a.source==='summarizer'||a.source==='fallback') b.push({t:'💰 paid', c:'trunc'});

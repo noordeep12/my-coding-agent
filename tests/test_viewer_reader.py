@@ -497,6 +497,32 @@ class TestLoadSession:
         root = session.nodes[f"{sid}::session"]
         assert root.attributes["resumed_from"] is None
 
+    def test_session_root_seeds_system_and_user_prompts(self, tmp_path):
+        # The Main Agent (session root) has no inputs of its own; the reader
+        # surfaces the first main LLM call's system prompt and opening user
+        # message so the viewer can render them as two boxes under Inputs.
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _composition_events(sid))
+        session = load_session(ep)
+        root = session.nodes[f"{sid}::session"]
+        assert root.inputs["system_prompt"] == "s" * 80
+        assert root.inputs["user_prompt"] == "u" * 20
+
+    def test_session_root_inputs_empty_without_message_snapshot(self, tmp_path):
+        # When the first LLM call carries no message snapshot (messages=None),
+        # there is nothing to seed, so the root's inputs stay empty.
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))
+        session = load_session(ep)
+        root = session.nodes[f"{sid}::session"]
+        assert root.inputs == {}
+
     def test_finalize_step_merges_token_tracking_and_finish_check(self, tmp_path):
         # FinalizeStepNode emits token_tracking + finish_check as two events;
         # the trace must render them as a single finalize_step node with the
