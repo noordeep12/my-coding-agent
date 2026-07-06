@@ -522,7 +522,8 @@ function Stats({data}){
   const byKind = a.by_kind || {};
   const byAgent = a.by_agent || {};
   const rr = a.resource_rollup;
-  const hasBreakdown = Object.keys(byKind).length>0 || Object.keys(byAgent).length>0 || !!rr;
+  const projectedCosts = a.projected_costs || {};
+  const hasBreakdown = Object.keys(byKind).length>0 || Object.keys(byAgent).length>0 || !!rr || Object.keys(projectedCosts).length>0;
   return html`<div>
     <div class="stats">
       <span><b>${data.model||'?'}</b></span>
@@ -547,6 +548,11 @@ function Stats({data}){
         ${Object.entries(byAgent).map(([sid,v])=>html`<span key=${sid} class="chip">
           ${sid.slice(0,8)}: ${fmtNum(v.tokens)} tok · ${v.call_count} calls${
             v.elapsed_s!=null ? ' · '+Number(v.elapsed_s).toFixed(1)+'s' : ''}</span>`)}
+      </div>` : null}
+      ${Object.keys(projectedCosts).length ? html`<div class="bd-row">
+        <span class="muted">projected on:</span>
+        ${Object.entries(projectedCosts).map(([m,v])=>html`<span key=${m} class="chip">
+          ${m}: $${Number(v).toFixed(4)}</span>`)}
       </div>` : null}
       ${rr ? html`<div class="bd-row">
         <span class="muted">machine (run):</span>
@@ -868,7 +874,9 @@ function ToolResult({node}){
 
 function LlmOutputs({node}){
   const o = node.outputs || {};
+  const a = node.attributes || {};
   const calls = o.tool_calls || [];
+  const projectedCosts = a.projected_costs || {};
   return html`<div class="toolres">
     ${o.content ? html`<div class="tr-block"><div class="tr-label">response</div>
       <${ContentBox} value=${o.content}/></div>` : null}
@@ -876,6 +884,10 @@ function LlmOutputs({node}){
       <${ContentBox} value=${o.reasoning}/></div>` : null}
     ${calls.length ? html`<div class="tr-block"><div class="tr-label">tool calls · ${calls.length}</div>
       <${CodeBox} value=${calls}/></div>` : null}
+    ${Object.keys(projectedCosts).length ? html`<div class="tr-block"><div class="tr-label">projected cost (${fmtNum(a.prompt_tokens||0)} prompt / ${fmtNum(a.completion_tokens||0)} completion tokens)</div>
+      <div class="bd-row">
+        ${Object.entries(projectedCosts).map(([m,v])=>html`<span key=${m} class="chip">${m}: $${Number(v).toFixed(4)}</span>`)}
+      </div></div>` : null}
     ${(!o.content && !o.reasoning && !calls.length) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
   </div>`;
 }

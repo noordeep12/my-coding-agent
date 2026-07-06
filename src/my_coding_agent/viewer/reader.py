@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .pricing import compute_cost
+from .pricing import compute_cost, project_costs
 from .schema import EventBuilder, TraceNode, TraceSession
 
 logger = logging.getLogger(__name__)
@@ -521,6 +521,7 @@ def _build_llm_node(
             "max_tokens": max_tokens,
             "capped": capped,
             "resources": ev.get("resources"),
+            "projected_costs": project_costs(ev.get("prompt"), completion_tokens),
         },
     )
 
@@ -1134,6 +1135,7 @@ def _compute_analytics(
         "total_completion_tokens": completion_total,
         "total_tokens": prompt_total + completion_total,
         "cost_usd": compute_cost(model, prompt_total, completion_total),
+        "projected_costs": project_costs(prompt_total, completion_total),
         "elapsed_s": end_ev.get("elapsed_s", 0.0) if end_ev else 0.0,
         "llm_call_count": llm_count,
         "tool_call_count": tool_count,
