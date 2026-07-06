@@ -473,6 +473,22 @@ class TestLoadSession:
         assert session.analytics["tool_call_count"] == 1
         assert session.analytics["total_tokens"] == 380  # 150 + 230
 
+    def test_projected_costs_computed_from_totals(self, tmp_path):
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, _minimal_events(sid))
+        session = load_session(ep)
+        projected = session.analytics["projected_costs"]
+        assert "gpt-4o-mini" in projected
+        assert projected["gpt-4o-mini"] > 0
+        assert "Qwen3.6-35B-A3B-6bit" not in projected
+        llm_nodes = [n for n in session.nodes.values() if n.type == "llm_call"]
+        assert all("projected_costs" in n.attributes for n in llm_nodes)
+        summed = sum(n.attributes["projected_costs"]["gpt-4o-mini"] for n in llm_nodes)
+        assert abs(summed - projected["gpt-4o-mini"]) < 1e-9
+
     def test_resumed_from_surfaces_on_session_root(self, tmp_path):
         # A resumed run's session_start carries resumed_from (run-resilience D5);
         # the reader surfaces it on the session root so the viewer can show it.
@@ -813,6 +829,18 @@ class TestAnalyticsAllKindsAcrossTree:
         assert by_agent["child0000002"]["tokens"] == 140  # 90 + 50
         assert by_agent["child0000002"]["call_count"] == 2
         assert by_agent["child0000002"]["elapsed_s"] == 1.0
+
+    def test_projected_costs_cover_whole_delegated_tree(self, tmp_path):
+        # Parent + child tokens (290 total) must project the same as calling
+        # project_costs directly on the rolled-up total (whole-tree coverage).
+        from my_coding_agent.viewer.pricing import project_costs
+
+        session = self._setup(tmp_path)
+        expected = project_costs(
+            session.analytics["total_prompt_tokens"],
+            session.analytics["total_completion_tokens"],
+        )
+        assert session.analytics["projected_costs"] == expected
 
 
 class TestAnalyticsBackwardCompat:

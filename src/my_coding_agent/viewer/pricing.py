@@ -43,6 +43,29 @@ def get_price(model: str) -> dict[str, float]:
     return PRICING.get(model, _UNKNOWN)
 
 
+def project_costs(
+    prompt_tokens: int | None, completion_tokens: int | None
+) -> dict[str, float]:
+    """Return projected USD cost on every hosted model for the given tokens.
+
+    Args:
+        prompt_tokens: Recorded prompt tokens; ``None`` is treated as ``0``.
+        completion_tokens: Recorded completion tokens; ``None`` is treated as ``0``.
+
+    Returns:
+        Dict mapping model name to projected USD cost, one entry per
+        non-zero-priced row in ``PRICING``. Zero-priced (local) and unknown
+        models are excluded.
+    """
+    prompt = prompt_tokens or 0
+    completion = completion_tokens or 0
+    return {
+        model: (prompt * price["prompt"] + completion * price["completion"]) / 1_000_000
+        for model, price in PRICING.items()
+        if price["prompt"] or price["completion"]
+    }
+
+
 def compute_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     """Return the estimated cost in USD for one LLM call.
 
