@@ -874,9 +874,7 @@ function ToolResult({node}){
 
 function LlmOutputs({node}){
   const o = node.outputs || {};
-  const a = node.attributes || {};
   const calls = o.tool_calls || [];
-  const projectedCosts = a.projected_costs || {};
   return html`<div class="toolres">
     ${o.content ? html`<div class="tr-block"><div class="tr-label">response</div>
       <${ContentBox} value=${o.content}/></div>` : null}
@@ -884,10 +882,6 @@ function LlmOutputs({node}){
       <${ContentBox} value=${o.reasoning}/></div>` : null}
     ${calls.length ? html`<div class="tr-block"><div class="tr-label">tool calls · ${calls.length}</div>
       <${CodeBox} value=${calls}/></div>` : null}
-    ${Object.keys(projectedCosts).length ? html`<div class="tr-block"><div class="tr-label">projected cost (${fmtNum(a.prompt_tokens||0)} prompt / ${fmtNum(a.completion_tokens||0)} completion tokens)</div>
-      <div class="bd-row">
-        ${Object.entries(projectedCosts).map(([m,v])=>html`<span key=${m} class="chip">${m}: $${Number(v).toFixed(4)}</span>`)}
-      </div></div>` : null}
     ${(!o.content && !o.reasoning && !calls.length) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
   </div>`;
 }
