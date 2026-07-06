@@ -827,6 +827,18 @@ def test_delegate_schema_known_facts_not_required_task_is():
     assert "known_facts" not in required
 
 
+def test_delegate_schema_expected_report_present_and_not_required():
+    from my_coding_agent.engine.tool_registry import function_to_json
+
+    schema = function_to_json(ToolsRegistry.delegate)
+    props = schema["function"]["parameters"]["properties"]
+    required = schema["function"]["parameters"]["required"]
+    assert "expected_report" in props
+    assert "expected_report" not in required
+    description = props["expected_report"]["description"].lower()
+    assert "shape" in description
+
+
 def test_delegate_opening_message_task_only_when_known_facts_omitted(mocker):
     fake_agent = _make_fake_agent(mocker)
     captured = {}
@@ -869,6 +881,56 @@ def test_delegate_opening_message_presents_facts_distinctly_from_task(mocker):
     assert opening.count("do X") == 1
     assert "file at /abs/path/repo" in opening
     assert opening.index("do X") < opening.index("file at /abs/path/repo")
+
+
+def test_delegate_opening_message_task_and_expected_report(mocker):
+    fake_agent = _make_fake_agent(mocker)
+    captured = {}
+
+    def _fake_agent_node(*args, **kwargs):
+        captured["messages"] = kwargs["messages"]
+        return fake_agent
+
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    ToolsRegistry().delegate(task="do X", expected_report="a table")
+    opening = captured["messages"][1]["content"]
+    assert opening.count("do X") == 1
+    assert "Report expectations from the main agent:\na table" in opening
+    assert "Known facts from the main agent:" not in opening
+
+
+def test_delegate_opening_message_task_facts_and_expected_report(mocker):
+    fake_agent = _make_fake_agent(mocker)
+    captured = {}
+
+    def _fake_agent_node(*args, **kwargs):
+        captured["messages"] = kwargs["messages"]
+        return fake_agent
+
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    ToolsRegistry().delegate(
+        task="do X", known_facts="file at /abs/path/repo", expected_report="a table"
+    )
+    opening = captured["messages"][1]["content"]
+    assert opening.index("do X") < opening.index("file at /abs/path/repo")
+    assert opening.index("file at /abs/path/repo") < opening.index("a table")
+
+
+def test_delegate_opening_message_unaffected_when_expected_report_omitted(mocker):
+    """Pre-change opening-message strings stay byte-identical."""
+    fake_agent = _make_fake_agent(mocker)
+    captured = {}
+
+    def _fake_agent_node(*args, **kwargs):
+        captured["messages"] = kwargs["messages"]
+        return fake_agent
+
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    ToolsRegistry().delegate(task="do X", known_facts="file at /abs/path/repo")
+    opening = captured["messages"][1]["content"]
+    assert opening == (
+        "Task:\ndo X\n\nKnown facts from the main agent:\nfile at /abs/path/repo"
+    )
 
 
 # --- delegate ----------------------------------------------------------------

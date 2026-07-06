@@ -85,6 +85,20 @@ def test_subagent_prompt_timestamp_is_final_line(mocker):
     assert _TIMESTAMP_RE.match(last_line)
 
 
+def test_subagent_prompt_states_handback_is_verbatim(mocker):
+    prompt = _delegate_system_prompt(mocker)
+    assert "returned verbatim to the delegating agent" in prompt
+    assert "report expectations" in prompt
+
+
+def test_subagent_prompt_byte_stable_before_timestamp(mocker):
+    p1 = _delegate_system_prompt(mocker)
+    p2 = _delegate_system_prompt(mocker)
+    prefix1, _, _ = p1.rpartition("\n")
+    prefix2, _, _ = p2.rpartition("\n")
+    assert prefix1 == prefix2
+
+
 def test_roles_have_distinct_identities(mocker):
     main_prompt = _system_prompt()
     sub_prompt = _delegate_system_prompt(mocker)
