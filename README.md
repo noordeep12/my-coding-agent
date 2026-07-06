@@ -11,6 +11,7 @@ Key ideas:
 - **Node-based pipeline**: the agentic loop is a DAG of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them
 - **Runtime anomaly detection**: while the run is live, a same-class tool-failure streak (e.g. the same tool failing 3+ times in a row with the same error class, regardless of args) is flagged the moment it happens — logged as a warning and recorded in the session's event stream, in main agents and subagents alike
 - **Decorator-based tools**: plain Python functions become LLM-callable tools
+- **Skills**: steer the agent's tool usage with plain-Markdown `SKILL.md` files, loaded on demand via `use_skill` — no Python edits, no system-prompt changes
 - **Context handoff**: when the context window fills up, the agent writes a structured summary of progress and spawns a fresh continuation — so long-running tasks don't get silently truncated
 - **Session persistence**: each run saves token usage, tool calls, and a final summary to `.my_coding_agent/<session_id>/`
 
