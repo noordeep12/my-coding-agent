@@ -107,6 +107,7 @@ Local model time is the run's real cost, so a transient LLM failure must not thr
 | `OMLX_MODEL` | `Qwen3.6-35B-A3B-6bit` | Model ID to use |
 | `MCA_TOOL_MAX_CONCURRENCY` | `4` | Max read-only tool calls overlapped per assistant message (`1` disables overlap) |
 | `MCA_LLM_OUTAGE_TOLERANCE_S` | `300` | Seconds the client keeps probing a stalled/restarting LLM server (transport / HTTP 5xx / 429) before giving up with a classified, resumable stop; other 4xx fail fast |
+| `MCA_SUPERSESSION` | `1` | Set to `0` to disable retiring provably-superseded tool results (restores append-only conversation behavior byte-for-byte) |
 
 
 ## Skills

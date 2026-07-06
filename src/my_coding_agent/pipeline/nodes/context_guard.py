@@ -6,9 +6,11 @@ import json
 from typing import Any, Callable
 
 from ...engine.llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
+from ...engine.tool_registry import artifact_file_path
 from ...utils import get_logger
 from ..context import RunContext
 from ..node import BaseNode
+from ..supersession import build_stub, find_retirements, supersession_enabled
 from .context_summarizer import ContextSummarizerNode
 
 _logger = get_logger(__name__)
@@ -50,6 +52,8 @@ class ContextGuardNode(BaseNode):
         )
 
     def run(self, ctx: RunContext) -> None:
+        self._retire_superseded_results(ctx)
+
         if not ctx.llm.context_window:
             ctx.signal = "CONTINUE"
             return
@@ -99,3 +103,39 @@ class ContextGuardNode(BaseNode):
             )
 
         ctx.signal = "CONTINUE"
+
+    def _retire_superseded_results(self, ctx: RunContext) -> None:
+        """Retire every provably-superseded tool result before the budget check.
+
+        Deterministic, no-LLM pass (issue #121): replaces each retired tool
+        message with a new stub message object (append-or-replace, never an
+        in-place mutation) and records one passive ``supersession`` event per
+        retirement. A no-op when the kill switch is set or no result
+        qualifies.
+        """
+        if not supersession_enabled():
+            return
+        for retirement in find_retirements(ctx.tool_records, ctx.messages):
+            artifact_path = self._artifact_path_hint(ctx, retirement.tool_call_id)
+            old_message = ctx.messages[retirement.message_index]
+            ctx.messages[retirement.message_index] = {
+                **old_message,
+                "content": build_stub(retirement, artifact_path),
+            }
+            ctx.recorder.record_supersession(
+                tool_call_id=retirement.tool_call_id,
+                tool_name=retirement.tool_name,
+                case=retirement.case,
+                superseding_tool_call_id=retirement.superseding_tool_call_id,
+                retired_size=retirement.retired_size,
+                step=ctx.step_num,
+            )
+
+    @staticmethod
+    def _artifact_path_hint(ctx: RunContext, tool_call_id: str) -> str | None:
+        """Return the on-disk artifact path for tool_call_id, if one exists."""
+        for stream in ("stdout", "stderr"):
+            path = artifact_file_path(ctx.session_id, tool_call_id, stream)
+            if path is not None and path.exists():
+                return str(path)
+        return None

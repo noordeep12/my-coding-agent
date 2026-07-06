@@ -752,6 +752,115 @@ class TestLoadSession:
         assert router2.ctx_state["added_total"] == 0
         assert router2.ctx_state["removed"] == 0
 
+    def test_ctx_state_surfaces_supersession_retirement_as_removed(self, tmp_path):
+        """A later main llm_call whose real message snapshot shows a shrunken
+        tool role (issue #121: a superseded tool result replaced by a short
+        stub) reports that shrinkage as `removed`/`removed_by_role`, the same
+        way a context-reset handoff already reports its compaction."""
+        sid = "aabbccdd1234"
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        big_tool_msg = {"role": "tool", "content": "X" * 4000}
+        stub_tool_msg = {"role": "tool", "content": "[Superseded]"}
+        events = [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="Test",
+                model="gpt-4o-mini",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _ev(
+                "llm_call",
+                call=1,
+                kind="main",
+                latency_s=1.0,
+                prompt=100,
+                completion=50,
+                total=150,
+                context_window=8192,
+                messages=[
+                    {"role": "system", "content": "s" * 80},
+                    {"role": "user", "content": "u" * 20},
+                ],
+                response={
+                    "content": "ok",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+                started_at="2026-01-01T10:00:01",
+            ),
+            _ev(
+                "tool_call",
+                name="bash",
+                args={"command": "echo big"},
+                result="X" * 4000,
+                latency_s=0.1,
+                started_at="2026-01-01T10:00:02",
+            ),
+            _ev(
+                "llm_call",
+                call=2,
+                kind="main",
+                latency_s=0.8,
+                prompt=1000,
+                completion=30,
+                total=1030,
+                context_window=8192,
+                messages=[
+                    {"role": "system", "content": "s" * 80},
+                    {"role": "user", "content": "u" * 20},
+                    big_tool_msg,
+                ],
+                response={
+                    "content": "ok2",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+                started_at="2026-01-01T10:00:03",
+            ),
+            _ev(
+                "llm_call",
+                call=3,
+                kind="main",
+                latency_s=0.5,
+                prompt=110,
+                completion=10,
+                total=120,
+                context_window=8192,
+                messages=[
+                    {"role": "system", "content": "s" * 80},
+                    {"role": "user", "content": "u" * 20},
+                    stub_tool_msg,
+                ],
+                response={
+                    "content": "done",
+                    "reasoning": "",
+                    "tool_calls": [],
+                    "raw": {},
+                },
+                started_at="2026-01-01T10:00:04",
+            ),
+            _ev(
+                "session_end",
+                stop_reason="stop",
+                steps=3,
+                elapsed_s=5.0,
+                ended_at="2026-01-01T10:00:05",
+            ),
+        ]
+        _write_events(ep, events)
+        session = load_session(ep)
+
+        llm3 = session.nodes[f"{sid}::step3::llm::1"]
+        assert llm3.ctx_state["removed"] > 0
+        assert llm3.ctx_state["removed_by_role"].get("tool", 0) > 0
+
     def test_circular_delegate_guard(self, tmp_path):
         sid = "aabbccdd1234"
         sdir = tmp_path / sid
@@ -1083,6 +1192,40 @@ class TestReportNode:
         reports = [n for n in session.nodes.values() if n.type == "report"]
         assert len(reports) == 1
         assert reports[0].attributes["source"] == "unknown"
+
+
+class TestSupersessionEventSkipped:
+    """A `supersession` event (issue #121) is an unrecognized type to today's
+    node builders — it must load without error, per the old-readers-skip-new-
+    event-types contract (same as an old pre-provenance report event, D3)."""
+
+    def _load_with(self, tmp_path, sid, extra):
+        events = _minimal_events(sid) + extra
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        return load_session(ep)
+
+    def test_session_with_supersession_event_loads_without_error(self, tmp_path):
+        session = self._load_with(
+            tmp_path,
+            "supersession",
+            [
+                _ev(
+                    "supersession",
+                    tool_call_id="call_1",
+                    tool_name="bash",
+                    case="containment",
+                    superseding_tool_call_id="call_2",
+                    retired_size=3200,
+                    step=1,
+                    started_at="2026-01-01T10:00:10",
+                )
+            ],
+        )
+        assert session is not None
+        assert not any(n.type == "supersession" for n in session.nodes.values())
 
 
 class TestLlmToolDefinitions:
