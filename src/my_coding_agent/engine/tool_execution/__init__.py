@@ -21,8 +21,17 @@ from typing import TYPE_CHECKING, Any
 
 from ...observability import current_session_id
 from ...observability.recorder import _now
+from ...observability.schema import (
+    REFUSAL_REASON,
+    REFUSAL_REFERENCE_STANDARD_ID,
+    REFUSAL_REFERENCE_URL,
+    REFUSAL_REFERENCES,
+    REFUSAL_RULE_ID,
+    REFUSAL_SAFER_ALTERNATIVE,
+)
 from ...utils import get_logger
 from . import args as arg_prep
+from . import policy
 from .concurrency import is_parallel_safe, max_tool_concurrency
 from .envelope import (
     build_tool_result,
@@ -224,6 +233,7 @@ class ToolExecutor:
         tools: list[dict[str, Any]] | None = None,
         skills: dict[str, Any] | None = None,
         loaded_skills: set[str] | None = None,
+        step_num: int = 0,
     ) -> None:
         # Imported lazily (not at module level) to avoid a circular import:
         # tool_registry reads its size-threshold constants from
@@ -236,6 +246,10 @@ class ToolExecutor:
         self.tool_records: list[dict[str, Any]] = []
         self.tool_artifacts: dict = {}
         self.llm = llm
+        # Current pipeline step number, carried only to attribute a refusal
+        # event (record_refusal) to the step it happened in; defaults to 0 for
+        # callers (mostly tests) that construct an executor outside a run.
+        self.step_num = step_num
         self.logger = get_logger(self.__class__.__name__)
         # ``skills``/``loaded_skills`` flow from RunContext so ``use_skill`` can
         # lazily load a body and dedup repeats; the loaded-set is shared by
@@ -410,7 +424,21 @@ class ToolExecutor:
         LLM: a wrong-argument call fails directly. Non-recoverable exceptions
         re-raise. Turning the raw result into the envelope is
         :meth:`after_tool_call`'s job.
+
+        Evaluated first, before any dispatch: a dangerous ``bash`` command line
+        matching :mod:`policy` never reaches ``getattr(self.registry, ...)`` or
+        ``subprocess.run`` — it short-circuits to a ``reason: "refused"``
+        descriptor, the fourth no-execution failure kind alongside
+        ``not_found``/``wrong_args``/``raised``. This is the single dispatch
+        choke point both the sequential and concurrent paths funnel through, so
+        the gate covers both by construction (and subagents, which share the
+        same executor). The gate itself makes no recorder call — that happens
+        in :meth:`after_tool_call`, on the main thread, in call order.
         """
+        refusal = policy.evaluate(func_name, args)
+        if refusal is not None:
+            return None, {"reason": "refused", "refusal": refusal}
+
         if not hasattr(self.registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
             valid = [n for n in dir(type(self.registry)) if not n.startswith("_")]
@@ -436,6 +464,61 @@ class ToolExecutor:
             self.logger.error("error %s → %s: %s", tool_call_id, func_name, exc)
             err = f"Error: tool '{func_name}' raised {type(exc).__name__}: {exc}"
             return None, {"reason": "raised", "error": err}
+
+    def _build_refusal_result(
+        self,
+        tool_call_id: str,
+        func_name: str,
+        args: dict,
+        refusal: policy.Refusal,
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Build the ``ok:false`` envelope for a policy refusal (returns ``env,
+        status, record``), and — since this runs from :meth:`after_tool_call`,
+        the executor's ordered main-thread recorder path — emit the WARNING log
+        line and the passive ``refusal`` event alongside it. The gate that made
+        the decision (:mod:`policy`) stays recorder-free.
+        """
+        command = args.get("command", "") if func_name == "bash" else str(args)
+        references = [
+            {
+                REFUSAL_REFERENCE_STANDARD_ID: ref.standard_id,
+                REFUSAL_REFERENCE_URL: ref.url,
+            }
+            for ref in refusal.references
+        ]
+        ref_text = "; ".join(f"{r['standard_id']} ({r['url']})" for r in references)
+        error_text = (
+            f"Refused (not a failure): {command!r} — {refusal.reason} "
+            f"Reference: {ref_text}. Safer alternative: {refusal.safer_alternative}"
+        )
+        metadata = {
+            "reason": "refused",
+            "refusal": {
+                REFUSAL_RULE_ID: refusal.rule_id,
+                REFUSAL_REASON: refusal.reason,
+                REFUSAL_REFERENCES: references,
+                REFUSAL_SAFER_ALTERNATIVE: refusal.safer_alternative,
+            },
+        }
+        env = build_tool_result(func_name, False, "", error_text, metadata)
+        status = "error"
+        record = error_record(func_name, args, tool_call_id, error_text)
+
+        self.logger.warning(
+            "refused %s → %s(%s): rule=%s", tool_call_id, func_name, command,
+            refusal.rule_id,
+        )
+        if self.llm._recorder is not None:
+            self.llm._recorder.record_refusal(
+                tool_name=func_name,
+                command=command,
+                rule_id=refusal.rule_id,
+                reason=refusal.reason,
+                references=references,
+                safer_alternative=refusal.safer_alternative,
+                step=self.step_num,
+            )
+        return env, status, record
 
     def after_tool_call(
         self,
@@ -469,7 +552,11 @@ class ToolExecutor:
                 )
             return content
 
-        if failure is not None:
+        if failure is not None and failure["reason"] == "refused":
+            env, status, record = self._build_refusal_result(
+                tool_call_id, func_name, args, failure["refusal"]
+            )
+        elif failure is not None:
             env = build_tool_result(
                 func_name, False, "", failure["error"], {"reason": failure["reason"]}
             )

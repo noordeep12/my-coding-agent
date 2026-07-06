@@ -28,6 +28,20 @@ ANOMALY_STEP = "step"
 # values without a schema change.
 ANOMALY_KIND_FAILURE_STREAK = "failure_streak"
 
+# Keys of a "refusal" row (``Recorder.record_refusal``) and of the
+# ``metadata.refusal`` structure carried on a refused tool call's envelope, kept
+# here so consumers (e.g. the viewer) can reference the contract without
+# importing the recorder or tool_execution modules directly.
+REFUSAL_RULE_ID = "rule_id"
+REFUSAL_REASON = "reason"
+REFUSAL_REFERENCES = "references"
+REFUSAL_REFERENCE_STANDARD_ID = "standard_id"
+REFUSAL_REFERENCE_URL = "url"
+REFUSAL_SAFER_ALTERNATIVE = "safer_alternative"
+REFUSAL_TOOL_NAME = "tool_name"
+REFUSAL_COMMAND = "command"
+REFUSAL_STEP = "step"
+
 # Keys of a "skill_index" row (``Recorder.record_skill_index``, issue #19),
 # emitted once per session start / continuation when a skill index is placed
 # into the opening user message. Absent entirely from a skill-free run.
