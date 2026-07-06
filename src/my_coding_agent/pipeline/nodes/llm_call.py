@@ -19,7 +19,7 @@ class LLMCallNode(BaseNode):
         ctx.step_num += 1
         _logger.info("--- step %d/%d ---", ctx.step_num, ctx.max_steps)
 
-        resp = ctx.llm.chat_completion(ctx.messages, tools=ctx.routed_tools)
+        resp = ctx.llm.chat_completion(ctx.messages, tools=ctx.all_tools)
         ctx.last_response = resp
 
         message = extract_message(resp)

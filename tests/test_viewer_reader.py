@@ -297,7 +297,35 @@ class TestGroupIntoSteps:
         ]
         groups = _group_into_steps(events)
         assert len(groups) == 1
-        assert groups[0][0]["type"] == "router"
+
+    def test_new_session_without_router_events_groups_on_main_llm_call(self):
+        """New runs (routing removed, #114) anchor steps on main llm_call."""
+        events = [
+            _ev("session_start"),
+            _ev("llm_call", call=1, kind="main"),
+            _ev("tool_call", name="bash"),
+            _ev("finish_check", step=1, signal="CONTINUE"),
+            _ev("llm_call", call=2, kind="main"),
+            _ev("tool_call", name="bash"),
+            _ev("finish_check", step=2, signal="STOP"),
+        ]
+        groups = _group_into_steps(events)
+        assert len(groups) == 2
+        assert all(
+            g[0]["type"] == "llm_call" and g[0]["kind"] == "main" for g in groups
+        )
+
+    def test_nested_llm_call_does_not_start_a_new_bucket(self):
+        """A non-main llm_call (e.g. tool_arg_correction) stays in its step."""
+        events = [
+            _ev("session_start"),
+            _ev("llm_call", call=1, kind="main"),
+            _ev("llm_call", call=2, kind="tool_arg_correction"),
+            _ev("tool_call", name="bash"),
+        ]
+        groups = _group_into_steps(events)
+        assert len(groups) == 1
+        assert len(groups[0]) == 3
 
 
 # ── _detect_loops ─────────────────────────────────────────────────────────────

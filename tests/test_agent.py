@@ -1415,9 +1415,7 @@ def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
         "HTTP 400", status_code=400, retryable=False
     )
     failed_cont.execute.return_value = [{"role": "assistant", "content": "partial"}]
-    mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode", return_value=failed_cont
-    )
+    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=failed_cont)
 
     ctx = _make_ctx(
         agent.llm,

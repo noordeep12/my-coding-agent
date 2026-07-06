@@ -14,7 +14,6 @@ from .nodes import (
     FinalizeStepNode,
     LLMCallNode,
     ToolDispatchNode,
-    ToolRoutingNode,
 )
 from .schema import ContextHandoff
 
@@ -31,7 +30,6 @@ __all__ = [
     "FinalizeStepNode",
     "LLMCallNode",
     "ToolDispatchNode",
-    "ToolRoutingNode",
     "build_default_pipeline",
 ]
 
@@ -40,7 +38,7 @@ def build_default_pipeline(
     spawn_fn: Callable[[], list[dict]] | None = None,
     checkpoint_fn: Callable[[RunContext], None] | None = None,
 ) -> Pipeline:
-    """Return a Pipeline with the standard 6-node agentic loop.
+    """Return a Pipeline with the standard 5-node agentic loop.
 
     Args:
         spawn_fn: Optional callable passed to ``ContextGuardNode`` for
@@ -54,7 +52,6 @@ def build_default_pipeline(
     return Pipeline(
         [
             ContextGuardNode(spawn_fn=spawn_fn),
-            ToolRoutingNode(),
             LLMCallNode(),
             ToolDispatchNode(),
             AnomalyDetectNode(),
