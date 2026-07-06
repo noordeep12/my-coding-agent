@@ -73,6 +73,17 @@ def save_checkpoint(session_dir: Path, checkpoint: Checkpoint) -> None:
     os.replace(tmp, final)
 
 
+def remove_checkpoint(session_dir: Path) -> None:
+    """Best-effort delete the checkpoint under *session_dir*.
+
+    Called at the end of a run that finished without a resumable failure, so a
+    cleanly finished (or ``max_steps``) session leaves no checkpoint and is never
+    targeted by ``find_last_resumable`` / ``--resume-last``. A no-op when absent
+    (e.g. a run that never completed a step).
+    """
+    checkpoint_path(Path(session_dir)).unlink(missing_ok=True)
+
+
 def load_checkpoint(session_dir: Path) -> Checkpoint:
     """Load a checkpoint from *session_dir*, or raise a clear ``CheckpointError``.
 

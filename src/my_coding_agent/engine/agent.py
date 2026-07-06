@@ -27,7 +27,7 @@ from ..utils import (
     print_banner,
     print_run_summary,
 )
-from .checkpoint import Checkpoint, save_checkpoint
+from .checkpoint import Checkpoint, remove_checkpoint, save_checkpoint
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 from .llm.errors import LLMCallError
 from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
@@ -261,6 +261,13 @@ class AgentNode(BaseNode):
                 self._save_session_data(max_steps)
                 self._print_summary(max_steps)
                 detach_session_log(self._session_log_handler)
+            # The checkpoint exists iff the run is genuinely resumable: keep it
+            # only for an unrecoverable LLM failure (D6) — a crash never reaches
+            # this finally, so its checkpoint persists naturally. A cleanly
+            # finished or max_steps run leaves none, so --resume-last never
+            # targets a done task.
+            if self.failure_error is None:
+                remove_checkpoint(self._session_dir)
             self.recorder.finish(
                 self.stop_reason, self.step_num, round(self.elapsed_seconds, 3)
             )

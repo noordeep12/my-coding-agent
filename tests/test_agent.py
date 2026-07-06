@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from my_coding_agent.engine.agent import AgentNode as Agent
-from my_coding_agent.engine.checkpoint import Checkpoint, load_checkpoint
+from my_coding_agent.engine.checkpoint import Checkpoint, checkpoint_path
 from my_coding_agent.engine.llm import LLM
 from my_coding_agent.engine.llm.errors import LLMHTTPStatusError, LLMTransportError
 from my_coding_agent.engine.schema import REPORT_SOURCE_FALLBACK
@@ -630,6 +630,50 @@ def test_execute_unrecoverable_llm_failure_sets_classified_stop_reason(
     assert result == agent.messages  # state preserved for resume
 
 
+def test_execute_removes_checkpoint_on_clean_finish(silent_logger, mocker):
+    """A cleanly finished run deletes its checkpoint (not resumable)."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    resp = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "all done"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
+    mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
+    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+
+    agent.execute(max_steps=5)
+    assert agent.failure_error is None
+    remove.assert_called_once_with(agent._session_dir)
+
+
+def test_execute_keeps_checkpoint_on_unrecoverable_failure(silent_logger, mocker):
+    """An unrecoverable LLM failure keeps the checkpoint so the run is resumable."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        side_effect=LLMHTTPStatusError("HTTP 400", status_code=400, retryable=False),
+    )
+    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+
+    agent.execute(max_steps=5)
+    assert agent.failure_error is not None
+    remove.assert_not_called()
+
+
 def test_execute_checkpoints_each_completed_step(silent_logger, mocker):
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)  # stubs _write_checkpoint as a Mock
@@ -726,13 +770,14 @@ def test_resumed_run_continues_from_next_step(
     # First (and only) call continued the counter: step 5, not step 1.
     assert chat.call_count == 1
     assert agent.step_num == 5
-    # The resumed session persisted its lineage and a checkpoint at step 5.
+    # The resumed session persisted its lineage in session_data.
     data = json.loads(
         (Path(".my_coding_agent") / agent.session_id / "session_data.json").read_text()
     )
     assert data["resumed_from"] == "deadbeef1234"
-    resumed_cp = load_checkpoint(Path(".my_coding_agent") / agent.session_id)
-    assert resumed_cp.step_num == 5
+    # A clean finish leaves no checkpoint, so --resume-last never targets a done
+    # run (resume-completed-run finding).
+    assert not checkpoint_path(Path(".my_coding_agent") / agent.session_id).exists()
 
 
 # --- _generate_handoff -------------------------------------------------------

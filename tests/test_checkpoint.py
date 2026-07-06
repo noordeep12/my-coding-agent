@@ -15,6 +15,7 @@ from my_coding_agent.engine.checkpoint import (
     checkpoint_path,
     find_last_resumable,
     load_checkpoint,
+    remove_checkpoint,
     save_checkpoint,
 )
 
@@ -108,3 +109,24 @@ def test_find_last_resumable_skips_dirs_without_checkpoint(tmp_path):
 def test_find_last_resumable_none_when_empty(tmp_path):
     assert find_last_resumable(tmp_path) is None
     assert find_last_resumable(tmp_path / "missing") is None
+
+
+def test_remove_checkpoint_deletes(tmp_path):
+    sdir = tmp_path / "s1"
+    save_checkpoint(sdir, _cp())
+    assert checkpoint_path(sdir).exists()
+    remove_checkpoint(sdir)
+    assert not checkpoint_path(sdir).exists()
+
+
+def test_remove_checkpoint_missing_is_noop(tmp_path):
+    remove_checkpoint(tmp_path / "never_ran")  # does not raise
+
+
+def test_find_last_resumable_targets_left_behind_checkpoint(tmp_path):
+    # A cleanly finished run removes its checkpoint; a crashed/failed run leaves
+    # one behind, so --resume-last targets only the still-resumable session.
+    save_checkpoint(tmp_path / "finished", _cp(session_id="finished"))
+    save_checkpoint(tmp_path / "crashed", _cp(session_id="crashed"))
+    remove_checkpoint(tmp_path / "finished")
+    assert find_last_resumable(tmp_path) == "crashed"
