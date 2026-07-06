@@ -15,7 +15,12 @@ from pathlib import Path
 import pytest
 
 from my_coding_agent.engine.agent import AgentNode as Agent
-from my_coding_agent.engine.checkpoint import Checkpoint, checkpoint_path
+from my_coding_agent.engine.checkpoint import (
+    Checkpoint,
+    checkpoint_path,
+    find_last_resumable,
+    save_checkpoint,
+)
 from my_coding_agent.engine.llm import LLM
 from my_coding_agent.engine.llm.errors import LLMHTTPStatusError, LLMTransportError
 from my_coding_agent.engine.schema import REPORT_SOURCE_FALLBACK
@@ -63,6 +68,8 @@ def _make_agent(silent_logger, **overrides):
     agent._resume_step = 0
     agent._resume_prompt_tokens = 0
     agent.failure_error = None
+    agent.failure_session_id = None
+    agent._continuation = None
     agent._session_dir = Path(".my_coding_agent") / "testsession"
     # Held LLM client (composition). LLM.__init__ is network-free; swap in the
     # silent logger and set the state the agent loop reads off the client.
@@ -780,6 +787,83 @@ def test_resumed_run_continues_from_next_step(
     assert not checkpoint_path(Path(".my_coding_agent") / agent.session_id).exists()
 
 
+def test_resumed_run_clears_source_checkpoint_on_clean_finish(
+    silent_logger, mocker, tmp_path, monkeypatch
+):
+    """A resumed run that finishes cleanly clears BOTH its own and the source
+    session's checkpoint, so --resume-last stops targeting the done source."""
+    monkeypatch.chdir(tmp_path)
+    cp = _checkpoint(step=4)
+    save_checkpoint(Path(".my_coding_agent") / cp.session_id, cp)
+    agent = Agent.from_checkpoint(cp, label="Main Agent (resumed)")
+    agent.llm.logger = silent_logger
+    agent.llm.context_window = 8192
+    stop = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "done"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
+        }
+    )
+    mocker.patch.object(agent.llm, "chat_completion", return_value=stop)
+
+    agent.execute(max_steps=50)
+
+    assert agent.failure_error is None
+    assert not checkpoint_path(Path(".my_coding_agent") / agent.session_id).exists()
+    assert not checkpoint_path(Path(".my_coding_agent") / cp.session_id).exists()
+    assert find_last_resumable(Path(".my_coding_agent")) is None
+
+
+def test_resumed_run_keeps_source_checkpoint_on_failure(
+    silent_logger, mocker, tmp_path, monkeypatch
+):
+    """A resumed run that itself fails keeps its own checkpoint and leaves the
+    source session's checkpoint in place (both stay resumable)."""
+    monkeypatch.chdir(tmp_path)
+    cp = _checkpoint(step=4)
+    save_checkpoint(Path(".my_coding_agent") / cp.session_id, cp)
+    agent = Agent.from_checkpoint(cp, label="Main Agent (resumed)")
+    agent.llm.logger = silent_logger
+    agent.llm.context_window = 8192
+    working = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "working"},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
+    mocker.patch.object(
+        agent.llm,
+        "chat_completion",
+        side_effect=[
+            working,
+            LLMHTTPStatusError("HTTP 400", status_code=400, retryable=False),
+        ],
+    )
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
+
+    agent.execute(max_steps=50)
+
+    assert agent.failure_error is not None
+    # The step that completed left an own checkpoint; the failure keeps it.
+    assert checkpoint_path(Path(".my_coding_agent") / agent.session_id).exists()
+    # The source checkpoint is left untouched (still resumable).
+    assert checkpoint_path(Path(".my_coding_agent") / cp.session_id).exists()
+
+
 # --- _generate_handoff -------------------------------------------------------
 
 
@@ -1149,6 +1233,66 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     seeded = cont_cls.call_args.kwargs["messages"]
     assert seeded[0] == {"role": "system", "content": "sys"}
     assert seeded[1] == {"role": "user", "content": "HANDOFF"}
+
+
+def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
+    """An unrecoverable failure inside a post-reset continuation is surfaced to
+    the top-level run: failure_error/stop_reason/failure_session_id name the
+    continuation's resumable session (D6 across the reset boundary)."""
+    agent = _make_agent(
+        silent_logger,
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "u"},
+        ],
+        context_window=10000,
+    )
+    agent.session_id = "toplevel"
+    agent.recorder = mocker.Mock()
+    agent._session_log_handler = (None, None, None)
+    mocker.patch.object(agent, "_save_session_data")
+    mocker.patch.object(agent, "_print_summary")
+    mocker.patch("my_coding_agent.engine.agent.detach_session_log")
+    mocker.patch.object(
+        agent,
+        "_generate_handoff",
+        return_value=mocker.Mock(path="/tmp/h.json", content="summary"),
+    )
+    mocker.patch(
+        "my_coding_agent.engine.agent.handoff_to_user_message",
+        return_value={"role": "user", "content": "H"},
+    )
+
+    failed_cont = mocker.Mock()
+    failed_cont.session_id = "contsession"
+    failed_cont.failure_session_id = "contsession"
+    failed_cont.stop_reason = "llm_failure_http_status"
+    failed_cont.failure_error = LLMHTTPStatusError(
+        "HTTP 400", status_code=400, retryable=False
+    )
+    failed_cont.execute.return_value = [{"role": "assistant", "content": "partial"}]
+    mocker.patch(
+        "my_coding_agent.engine.agent.AgentNode", return_value=failed_cont
+    )
+
+    ctx = _make_ctx(
+        agent.llm,
+        messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}],
+        step_num=3,
+        context_reset_threshold=0.75,
+        handoff_records=[],
+        tool_records=[],
+        tool_artifacts={},
+        handback_report=None,
+        handoff_content="summary",
+    )
+
+    result = agent._handle_context_reset(ctx, max_steps=50, t_start=0.0)
+
+    assert result == [{"role": "assistant", "content": "partial"}]
+    assert agent.failure_error is failed_cont.failure_error
+    assert ctx.stop_reason == "llm_failure_http_status"
+    assert agent.failure_session_id == "contsession"
 
 
 # --- composition contract (Phase 4) ------------------------------------------

@@ -279,10 +279,11 @@ def _exit_on_failure(agent: AgentNode) -> None:
     """Exit non-zero with a one-line resume hint when the run failed (D6)."""
     if agent.failure_error is None:
         return
+    resume_id = agent.failure_session_id or agent.session_id
     click.secho(
         f"Run stopped: unrecoverable LLM failure "
         f"({agent.failure_error.classification}). "
-        f"Resume with: uv run my-coding-agent --resume {agent.session_id}",
+        f"Resume with: uv run my-coding-agent --resume {resume_id}",
         fg="red",
         err=True,
     )

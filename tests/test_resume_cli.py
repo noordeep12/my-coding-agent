@@ -97,6 +97,7 @@ def test_resume_last_selects_newest(runner, mocker):
 def test_run_failure_exits_nonzero_with_resume_hint(runner, mocker):
     fake_agent = mocker.Mock()
     fake_agent.session_id = "abc123"
+    fake_agent.failure_session_id = None
     fake_agent.failure_error = LLMTransportError("down")
     mocker.patch.object(simple, "AgentNode")
     mocker.patch.object(simple, "_build_fresh_agent", return_value=fake_agent)

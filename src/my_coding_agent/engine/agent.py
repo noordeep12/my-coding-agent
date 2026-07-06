@@ -98,6 +98,14 @@ class AgentNode(BaseNode):
         # Set to the classified error when a run ends on an unrecoverable LLM
         # failure (D6), so the CLI can print a one-line resume hint. None → OK.
         self.failure_error: LLMCallError | None = None
+        # The session whose checkpoint the CLI resume hint should name. Usually
+        # this run's own id, but a failure propagated up from a post-reset
+        # continuation names the continuation's session (its checkpoint is the
+        # resumable one). None until a failure is recorded.
+        self.failure_session_id: str | None = None
+        # The continuation spawned on a context reset, kept so its own
+        # unrecoverable failure can be surfaced to the top-level run (D6).
+        self._continuation: AgentNode | None = None
         self.recorder = Recorder(
             self.session_id,
             _session_dir,
@@ -249,6 +257,7 @@ class AgentNode(BaseNode):
             # the run is resumable; the finally block persists session_data.
             ctx.stop_reason = llm_failure_stop_reason(exc.classification)
             self.failure_error = exc
+            self.failure_session_id = self.session_id
             self.logger.error(
                 "Agent run stopped — unrecoverable LLM failure (%s): %s",
                 exc.classification,
@@ -265,9 +274,13 @@ class AgentNode(BaseNode):
             # only for an unrecoverable LLM failure (D6) — a crash never reaches
             # this finally, so its checkpoint persists naturally. A cleanly
             # finished or max_steps run leaves none, so --resume-last never
-            # targets a done task.
+            # targets a done task. A successful resumed run also clears the
+            # SOURCE session's checkpoint so it stops being a --resume-last
+            # magnet; the source's auditable session files stay byte-identical.
             if self.failure_error is None:
                 remove_checkpoint(self._session_dir)
+                if self.resumed_from is not None:
+                    remove_checkpoint(Path(".my_coding_agent") / self.resumed_from)
             self.recorder.finish(
                 self.stop_reason, self.step_num, round(self.elapsed_seconds, 3)
             )
@@ -368,6 +381,7 @@ class AgentNode(BaseNode):
             skills=self.skills,
             loaded_skills=set(self.loaded_skills),
         )
+        self._continuation = continuation
         remaining_steps = max_steps - self.step_num
         return continuation.execute(max_steps=max(remaining_steps, 1))
 
@@ -604,4 +618,14 @@ class AgentNode(BaseNode):
         self._save_session_data(max_steps)
         self._print_summary(max_steps)
         detach_session_log(self._session_log_handler)
-        return self._spawn_continuation(handoff, max_steps)
+        result = self._spawn_continuation(handoff, max_steps)
+        # Surface an unrecoverable failure that happened in the continuation so
+        # the top-level run stops as an llm_failure_* (not context_reset) and the
+        # CLI points at the continuation's resumable checkpoint (D6). Set the
+        # stop reason on ctx so execute()'s finally carries it via _sync_from_ctx.
+        cont = self._continuation
+        if cont is not None and cont.failure_error is not None:
+            self.failure_error = cont.failure_error
+            self.failure_session_id = cont.failure_session_id or cont.session_id
+            ctx.stop_reason = cont.stop_reason
+        return result
