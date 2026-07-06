@@ -293,9 +293,7 @@ class LLM:
                     call_num,
                     kind,
                 )
-                self._record_failure(
-                    kind, call_num, classification, attempt, elapsed
-                )
+                self._record_failure(kind, call_num, classification, attempt, elapsed)
                 raise err
             delay = min(PATIENT_BACKOFF_CAP_S, _HTTP_BACKOFF * (2 ** (attempt - 1)))
             delay = min(delay, tolerance - elapsed)  # never oversleep the deadline
