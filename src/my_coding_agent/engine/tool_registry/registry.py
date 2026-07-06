@@ -32,6 +32,8 @@ from ..schema import (
 )
 from ..tool_execution.schema import (
     ARTIFACT_THRESHOLD,
+    EXTRACTION_OUTPUT_MAX_CHARS,
+    EXTRACTION_OUTPUT_TOKEN_BUDGET,
     PAGE_FETCH_MAX_CHARS,
     RANGE_MAX_CHARS,
 )
@@ -46,9 +48,9 @@ logger = get_logger(__name__)
 # sanity cap) are centrally configured in tool_execution.schema, imported above.
 
 # Extraction budgets for read_tool_artifact (chars, ~4 chars/token estimate).
-_CHARS_PER_TOKEN = 4
-EXTRACTION_OUTPUT_TOKEN_BUDGET = 800  # bounds a single read_tool_artifact return
-EXTRACTION_OUTPUT_MAX_CHARS = EXTRACTION_OUTPUT_TOKEN_BUDGET * _CHARS_PER_TOKEN
+# EXTRACTION_OUTPUT_TOKEN_BUDGET/EXTRACTION_OUTPUT_MAX_CHARS live in
+# tool_execution.schema (imported above) so the offload-preview guidance can
+# disclose the same cap this module enforces.
 EXTRACTION_CHUNK_MAX_CHARS = 16_000  # per-call input budget for one scan chunk
 
 _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)

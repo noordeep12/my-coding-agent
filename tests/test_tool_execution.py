@@ -22,6 +22,7 @@ from my_coding_agent.engine.tool_execution import (
 )
 from my_coding_agent.engine.tool_execution.envelope import result_envelope
 from my_coding_agent.engine.tool_execution.output import (
+    EXTRACTION_OUTPUT_TOKEN_BUDGET,
     PREVIEW_MAX_CHARS,
     build_stream_preview,
 )
@@ -450,6 +451,82 @@ def test_build_stream_preview_small_shown_in_full():
     output_text, preview = build_stream_preview("hello", None)
     assert output_text.startswith("hello")
     assert preview["shown_bytes"] == preview["total_bytes"] == 5
+
+
+# ── structure-aware guidance for JSON artifacts (issue #118) ──────────────────
+
+
+def test_skim_guidance_multiline_json_surfaces_mechanical_path_first():
+    body = '{"items": [' + ", ".join(f'{{"i": {i}}}' for i in range(20_000)) + "]}\n"
+    output_text, preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert preview["total_bytes"] == len(body)
+    mechanical_idx = output_text.index("jq")
+    query_idx = output_text.index("read_tool_artifact(tool_call_id=..., query=")
+    assert mechanical_idx < query_idx
+    assert "/s/artifacts/c1.stdout.txt" in output_text
+
+
+def test_skim_guidance_single_line_json_points_to_structured_path():
+    body = '{"a": ' + "[" * 0 + '"' + ("x" * (PREVIEW_MAX_CHARS + 500)) + '"}'
+    output_text, preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert preview["total_lines"] == 1
+    assert "jq" in output_text
+    assert "python" in output_text
+    # Must not be reduced to raw byte-range as the only option.
+    assert "cannot bound it" not in output_text
+
+
+def test_skim_guidance_single_line_non_json_still_warns_off_line_tools():
+    body = "x" * (PREVIEW_MAX_CHARS + 500)  # one line, not JSON
+    output_text, preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert preview["total_lines"] == 1
+    assert "single line" in output_text
+    assert "cannot bound it" in output_text
+    assert "read_tool_artifact(tool_call_id=..., start=" in output_text
+
+
+def test_skim_guidance_json_without_file_falls_back_to_bounded_paths():
+    body = '{"a": ' + ", ".join(f'"{i}"' for i in range(2_000)) + "}"
+    output_text, preview = build_stream_preview(body, None)
+    assert preview["full_output_path"] is None
+    assert "read_tool_artifact(tool_call_id=..., query=" in output_text
+    assert "read_tool_artifact(tool_call_id=..., start=" in output_text
+
+
+def test_skim_guidance_discloses_query_mode_cost_and_cap():
+    body = "line1\nline2\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nlineN"
+    output_text, _preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert "separate LLM call" in output_text
+    assert str(EXTRACTION_OUTPUT_TOKEN_BUDGET) in output_text
+    assert "only part" in output_text
+
+
+def test_skim_guidance_json_multiline_also_discloses_query_mode_cost():
+    body = '{"items": [' + ", ".join(f'{{"i": {i}}}' for i in range(20_000)) + "]}\n"
+    output_text, _preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert "separate LLM call" in output_text
+    assert str(EXTRACTION_OUTPUT_TOKEN_BUDGET) in output_text
+
+
+def test_looks_like_json_is_deterministic_and_makes_no_llm_call(mocker):
+    """Building the preview/guidance for JSON content makes no LLM call."""
+    spy = mocker.patch(
+        "my_coding_agent.engine.llm.LLM.chat_completion",
+        side_effect=AssertionError("must not call the LLM"),
+    )
+    body = '{"a": 1, "b": [1, 2, 3]}'
+    build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    spy.assert_not_called()
+
+
+def test_skim_guidance_non_json_multiline_unchanged_behavior():
+    body = "line1\nline2\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nlineN"
+    output_text, _preview = build_stream_preview(body, "/s/artifacts/c1.stdout.txt")
+    assert f"total {len(body)} bytes" in output_text
+    assert "read_tool_artifact(tool_call_id=..., query=" in output_text
+    assert "read_tool_artifact(tool_call_id=..., start=" in output_text
+    assert "cat " not in output_text
+    assert " head " not in output_text and "tail " not in output_text
 
 
 def test_executor_offloads_stdout_stream_and_omits_full_output(

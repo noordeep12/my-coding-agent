@@ -28,10 +28,18 @@ _EXT_LANG: dict[str, Lang] = {
 }
 
 
-def _looks_json(text: str) -> bool:
-    """Return True when ``text`` parses as a JSON object or array."""
+def looks_like_json(text: str, max_chars: int | None = None) -> bool:
+    """Return True when ``text`` parses as a JSON object or array.
+
+    ``max_chars``, when given, skips the confirmation parse (returning
+    ``False``) for text longer than the cap — guards a pathological input from
+    stalling a caller that must stay fast and deterministic (e.g. an offload
+    preview build).
+    """
     stripped = text.strip()
     if not stripped or stripped[0] not in "{[":
+        return False
+    if max_chars is not None and len(stripped) > max_chars:
         return False
     try:
         json.loads(stripped)
@@ -53,7 +61,7 @@ def _output_lang(tool: str, args: Any, output: str) -> Lang:
         file_path = args.get("file_path")
         if isinstance(file_path, str):
             return _EXT_LANG.get(PurePosixPath(file_path).suffix.lower(), "text")
-    if _looks_json(output):
+    if looks_like_json(output):
         return "json"
     return "text"
 

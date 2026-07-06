@@ -71,6 +71,14 @@ PREVIEW_MAX_CHARS = PREVIEW_TOKEN_BUDGET * _CHARS_PER_TOKEN
 # live, rather than introducing an independent budget.
 RANGE_MAX_CHARS = PREVIEW_MAX_CHARS
 
+# Output cap for a single `read_tool_artifact(query=...)` extraction call — the
+# separate LLM call that scans the artifact for a query-scoped answer. Lives
+# here (not tool_registry/registry.py, the caller) so the offload-preview
+# guidance in tool_execution/output.py can disclose the same number the tool
+# actually enforces, without duplicating or drifting from it.
+EXTRACTION_OUTPUT_TOKEN_BUDGET = 800  # bounds a single read_tool_artifact return
+EXTRACTION_OUTPUT_MAX_CHARS = EXTRACTION_OUTPUT_TOKEN_BUDGET * _CHARS_PER_TOKEN
+
 # ── Skill-index budget (skill-knowledge-delivery, issue #19) ───────────────────
 # The skill index is appended to the session's opening user message (never the
 # system prompt, so the #75 prefix-cache invariant holds). These fixed character

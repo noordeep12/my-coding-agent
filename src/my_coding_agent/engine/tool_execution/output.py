@@ -7,9 +7,19 @@ execution state.
 import json
 
 from ...utils import get_logger
-from .schema import MAX_TOOL_OUTPUT_CHARS, PREVIEW_MAX_CHARS
+from .lang import looks_like_json
+from .schema import (
+    EXTRACTION_OUTPUT_TOKEN_BUDGET,
+    MAX_TOOL_OUTPUT_CHARS,
+    PREVIEW_MAX_CHARS,
+)
 
 logger = get_logger(__name__)
+
+# Bounds the confirmation json.loads() in looks_like_json so a pathological
+# multi-megabyte single-line artifact can't stall the (otherwise sub-ms) preview
+# build. Comfortably above real-world artifact sizes seen in practice.
+_JSON_SNIFF_MAX_CHARS = 2_000_000
 
 
 def validate_tool_output(
@@ -47,18 +57,29 @@ def validate_tool_output(
     return result
 
 
-def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str:
+_DISCLOSURE = (
+    "Note: read_tool_artifact(query=...) is a separate LLM call, bounded by "
+    f"an output cap of ~{EXTRACTION_OUTPUT_TOKEN_BUDGET} tokens, and may scan "
+    "only part of a large artifact — weigh that before choosing it over a "
+    "mechanical read."
+)
+
+
+def _skim_guidance(
+    full_output_path: str | None, preview: dict[str, int], is_json: bool
+) -> str:
     """Build the inline guidance that steers the model to bounded access paths.
 
     States the artifact's shape (total bytes/lines) so the model can judge which
-    access path is viable, then names the two bounded, deterministic retrieval
-    modes: query-scoped ``read_tool_artifact(tool_call_id=..., query=...)`` and
-    exact byte-range ``read_tool_artifact(tool_call_id=..., start=..., length=...)``.
-    Never suggests a whole-file read (no ``cat``-equivalents, no bare
-    ``head``/``tail`` on an unknown shape). Pattern/slice bash text tools
-    (``grep``/``rg``, ``sed`` ranges) remain suggested for multi-line content,
-    where they can actually bound the result; for single-line (or near it)
-    content they cannot, so that case is called out separately.
+    access path is viable. For structured (JSON) content with an on-disk file,
+    leads with the deterministic mechanical path (``jq``/``python`` over that
+    file) ahead of the query-scoped and byte-range ``read_tool_artifact`` modes
+    — including for single-line JSON, where raw byte ranges cannot address a
+    value inside nested structure. Non-structured content keeps the prior
+    behavior: pattern/slice bash text tools for multi-line, byte-range-only for
+    single-line (or near it). Never suggests a whole-file read. Every path ends
+    with a disclosure of query mode's true cost (a capped, possibly-partial LLM
+    call).
     """
     total_lines = preview["total_lines"]
     total_bytes = preview["total_bytes"]
@@ -71,7 +92,36 @@ def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str
         "read_tool_artifact(tool_call_id=..., start=<offset>, length=<n>) "
         "for an exact, verbatim byte-range slice"
     )
+
+    if is_json and full_output_path:
+        p = full_output_path
+        mechanical_path = (
+            f"This output is JSON. Read it with a deterministic mechanical "
+            f"path over the full file at {p} as your first move — e.g. "
+            f"jq '<filter>' {p}, or python -c \"import json; "
+            f"d=json.load(open('{p}')); ...\" — never read the whole file "
+            f"at once. Only fall back to {query_path}, or {range_path}, if "
+            "the mechanical path doesn't fit."
+        )
+        return (
+            f"[Preview: {shape}, showing {preview['shown_bytes']}/{total_bytes} "
+            f"bytes. Do NOT assume the excerpt is everything. {mechanical_path} "
+            f"{_DISCLOSURE}]"
+        )
+
     modes = f"Use {query_path}, or {range_path}."
+    if is_json:
+        # JSON detected but no on-disk file to target mechanically (D4): fall
+        # back to the bounded read_tool_artifact paths.
+        fallback = (
+            "This output is JSON, but no on-disk artifact file is available "
+            "for a mechanical read — "
+        )
+        return (
+            f"[Preview: {shape}, showing {preview['shown_bytes']}/{total_bytes} "
+            f"bytes. Do NOT assume the excerpt is everything. {fallback}"
+            f"{modes} {_DISCLOSURE}]"
+        )
 
     if total_lines <= 1:
         line_warning = (
@@ -82,7 +132,7 @@ def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str
         return (
             f"[Preview: {shape}, showing {preview['shown_bytes']}/{total_bytes} "
             f"bytes. Do NOT assume the excerpt is everything. {line_warning} "
-            f"{modes}]"
+            f"{modes} {_DISCLOSURE}]"
         )
 
     counts = (
@@ -99,11 +149,11 @@ def _skim_guidance(full_output_path: str | None, preview: dict[str, int]) -> str
         )
         return (
             f"[Preview: {shape}, {counts}. Do NOT assume the excerpt is "
-            f"everything — {modes} {pattern_tools}]"
+            f"everything — {modes} {pattern_tools} {_DISCLOSURE}]"
         )
     return (
         f"[Preview: {shape}, {counts}. Do NOT assume the excerpt is "
-        f"everything — {modes}]"
+        f"everything — {modes} {_DISCLOSURE}]"
     )
 
 
@@ -135,7 +185,8 @@ def build_stream_preview(
         "shown_bytes": shown_bytes,
         "total_bytes": total_bytes,
     }
-    guidance = _skim_guidance(full_output_path, counts)
+    is_json = looks_like_json(text, max_chars=_JSON_SNIFF_MAX_CHARS)
+    guidance = _skim_guidance(full_output_path, counts, is_json)
     output = f"{excerpt}\n\n{guidance}" if excerpt else guidance
     preview: dict[str, int | str | None] = {
         **counts,
