@@ -1421,7 +1421,10 @@ def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
 
     ctx = _make_ctx(
         agent.llm,
-        messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}],
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "u"},
+        ],
         step_num=3,
         context_reset_threshold=0.75,
         handoff_records=[],

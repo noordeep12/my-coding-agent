@@ -273,14 +273,13 @@ class LLM:
                 classification = exc.classification
                 err = exc
                 if not exc.retryable:
-                    if self._recorder is not None:
-                        self._recorder.record_llm_failure(
-                            kind=kind,
-                            call=call_num,
-                            classification=classification,
-                            attempts=attempt,
-                            elapsed_s=round(time.monotonic() - start, 3),
-                        )
+                    self._record_failure(
+                        kind,
+                        call_num,
+                        classification,
+                        attempt,
+                        time.monotonic() - start,
+                    )
                     raise
 
             elapsed = time.monotonic() - start
@@ -294,14 +293,9 @@ class LLM:
                     call_num,
                     kind,
                 )
-                if self._recorder is not None:
-                    self._recorder.record_llm_failure(
-                        kind=kind,
-                        call=call_num,
-                        classification=classification,
-                        attempts=attempt,
-                        elapsed_s=round(elapsed, 3),
-                    )
+                self._record_failure(
+                    kind, call_num, classification, attempt, elapsed
+                )
                 raise err
             delay = min(PATIENT_BACKOFF_CAP_S, _HTTP_BACKOFF * (2 ** (attempt - 1)))
             delay = min(delay, tolerance - elapsed)  # never oversleep the deadline
@@ -326,6 +320,24 @@ class LLM:
                     elapsed_s=round(elapsed, 3),
                 )
             time.sleep(delay)
+
+    def _record_failure(
+        self,
+        kind: str,
+        call_num: int,
+        classification: str,
+        attempt: int,
+        elapsed: float,
+    ) -> None:
+        """Emit an ``llm_failure`` observation when a recorder is attached."""
+        if self._recorder is not None:
+            self._recorder.record_llm_failure(
+                kind=kind,
+                call=call_num,
+                classification=classification,
+                attempts=attempt,
+                elapsed_s=round(elapsed, 3),
+            )
 
     def available_models(self) -> list[str]:
         """Fetch the server's model list and cache ``self.context_window``.
