@@ -444,6 +444,40 @@ def test_pipeline_execute_returns_messages_on_stop():
     assert result == ctx.messages
 
 
+def test_pipeline_skips_checkpoint_on_reset():
+    """A RESET step is NOT checkpointed: the continuation (already run inside the
+    step) owns the resumable checkpoint, so a fresh main checkpoint here would
+    get a newer mtime and mistarget --resume-last."""
+    calls = []
+
+    class _ResetNode(BaseNode):
+        name = "reset"
+
+        def run(self, ctx):
+            ctx.continuation_messages = [{"role": "assistant", "content": "cont"}]
+            ctx.signal = "RESET"
+
+    ctx = _make_ctx(max_steps=5)
+    Pipeline([_ResetNode()], checkpoint_fn=calls.append).execute(ctx)
+    assert calls == []  # no checkpoint written for the reset step
+
+
+def test_pipeline_checkpoints_completed_non_reset_step():
+    """A CONTINUE/STOP step that completes IS checkpointed (unchanged behavior)."""
+    calls = []
+
+    class _StopNode(BaseNode):
+        name = "stopper"
+
+        def run(self, ctx):
+            ctx.step_num += 1
+            ctx.signal = "STOP"
+
+    ctx = _make_ctx(max_steps=5)
+    Pipeline([_StopNode()], checkpoint_fn=calls.append).execute(ctx)
+    assert calls == [ctx]  # the completed step was checkpointed once
+
+
 # ---------------------------------------------------------------------------
 # ToolRoutingNode — end-to-end cadence across multiple pipeline steps
 # ---------------------------------------------------------------------------

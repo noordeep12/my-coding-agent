@@ -70,6 +70,7 @@ def _make_agent(silent_logger, **overrides):
     agent.failure_error = None
     agent.failure_session_id = None
     agent._continuation = None
+    agent._did_context_reset = False
     agent._session_dir = Path(".my_coding_agent") / "testsession"
     # Held LLM client (composition). LLM.__init__ is network-free; swap in the
     # silent logger and set the state the agent loop reads off the client.
@@ -681,6 +682,66 @@ def test_execute_keeps_checkpoint_on_unrecoverable_failure(silent_logger, mocker
     remove.assert_not_called()
 
 
+def test_execute_keeps_checkpoint_on_max_steps(silent_logger, mocker):
+    """A max_steps run keeps its checkpoint — still resumable with a bigger budget."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    resp = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "still going"},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
+    mocker.patch.object(agent.llm, "chat_completion", return_value=resp)
+    _exec = mocker.patch(
+        "my_coding_agent.engine.tool_execution.ToolExecutor"
+    ).return_value
+    _exec.run.return_value = ([], [])
+    _exec.tool_artifacts = {}
+    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+
+    agent.execute(max_steps=1)
+    assert agent.stop_reason == "max_steps"
+    assert agent.failure_error is None
+    remove.assert_not_called()
+
+
+def test_execute_drops_own_checkpoint_after_context_reset(silent_logger, mocker):
+    """A run that hit a context reset leaves NO own checkpoint, even when the
+    continuation propagated an unrecoverable failure: the continuation chain owns
+    the resumable checkpoint, so --resume-last targets it, not this run."""
+    agent = _make_agent(silent_logger)
+    _stub_run_internals(agent, mocker)
+    err = LLMHTTPStatusError("HTTP 400", status_code=400, retryable=False)
+
+    class _FakePipeline:
+        def execute(self, ctx):
+            # Simulate a context reset whose continuation failed unrecoverably.
+            agent._did_context_reset = True
+            agent.failure_error = err
+            agent.failure_session_id = "contsession"
+            ctx.stop_reason = "llm_failure_http_status"
+            return ctx.messages
+
+    mocker.patch(
+        "my_coding_agent.pipeline.build_default_pipeline",
+        return_value=_FakePipeline(),
+    )
+    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+
+    agent.execute(max_steps=5)
+
+    assert agent.failure_error is err
+    assert agent.failure_session_id == "contsession"
+    # Own checkpoint dropped despite the failure; only the own dir is touched.
+    remove.assert_called_once_with(agent._session_dir)
+
+
 def test_execute_checkpoints_each_completed_step(silent_logger, mocker):
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)  # stubs _write_checkpoint as a Mock
@@ -862,6 +923,31 @@ def test_resumed_run_keeps_source_checkpoint_on_failure(
     assert checkpoint_path(Path(".my_coding_agent") / agent.session_id).exists()
     # The source checkpoint is left untouched (still resumable).
     assert checkpoint_path(Path(".my_coding_agent") / cp.session_id).exists()
+
+
+def test_resume_past_budget_deletes_neither_checkpoint(
+    silent_logger, mocker, tmp_path, monkeypatch
+):
+    """Resuming a session already at/over the budget runs zero steps and must
+    delete NOTHING — the source stays resumable for a larger-budget re-resume."""
+    monkeypatch.chdir(tmp_path)
+    cp = _checkpoint(step=4)
+    save_checkpoint(Path(".my_coding_agent") / cp.session_id, cp)
+    agent = Agent.from_checkpoint(cp, label="Main Agent (resumed)")
+    agent.llm.logger = silent_logger
+    agent.llm.context_window = 8192
+    chat = mocker.patch.object(agent.llm, "chat_completion")  # must not be reached
+    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+
+    agent.execute(max_steps=4)  # resume_step == max_steps → zero steps run
+
+    chat.assert_not_called()
+    assert agent.step_num == 4
+    assert agent.stop_reason == "max_steps"
+    assert agent.failure_error is None
+    remove.assert_not_called()  # neither own nor source checkpoint deleted
+    # The source stays targetable for a larger-budget re-resume.
+    assert find_last_resumable(Path(".my_coding_agent")) == cp.session_id
 
 
 # --- _generate_handoff -------------------------------------------------------
@@ -1293,6 +1379,8 @@ def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
     assert agent.failure_error is failed_cont.failure_error
     assert ctx.stop_reason == "llm_failure_http_status"
     assert agent.failure_session_id == "contsession"
+    # The reset marks this run so execute()'s finally drops its own checkpoint.
+    assert agent._did_context_reset is True
 
 
 # --- composition contract (Phase 4) ------------------------------------------

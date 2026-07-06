@@ -19,7 +19,7 @@ from ..pipeline.nodes.context_summarizer import (
     REPORT_PROMPT,
     summarize_conversation,
 )
-from ..pipeline.schema import ContextHandoff
+from ..pipeline.schema import CLEAN_FINISH_REASONS, ContextHandoff
 from ..utils import (
     attach_session_log,
     detach_session_log,
@@ -106,6 +106,10 @@ class AgentNode(BaseNode):
         # The continuation spawned on a context reset, kept so its own
         # unrecoverable failure can be surfaced to the top-level run (D6).
         self._continuation: AgentNode | None = None
+        # True once a context reset happened this run: the continuation chain
+        # then owns the resumable checkpoint, so this pre-reset run drops its own
+        # at the end (otherwise its newer mtime mistargets --resume-last).
+        self._did_context_reset = False
         self.recorder = Recorder(
             self.session_id,
             _session_dir,
@@ -270,14 +274,26 @@ class AgentNode(BaseNode):
                 self._save_session_data(max_steps)
                 self._print_summary(max_steps)
                 detach_session_log(self._session_log_handler)
-            # The checkpoint exists iff the run is genuinely resumable: keep it
-            # only for an unrecoverable LLM failure (D6) — a crash never reaches
-            # this finally, so its checkpoint persists naturally. A cleanly
-            # finished or max_steps run leaves none, so --resume-last never
-            # targets a done task. A successful resumed run also clears the
-            # SOURCE session's checkpoint so it stops being a --resume-last
-            # magnet; the source's auditable session files stay byte-identical.
-            if self.failure_error is None:
+            # The checkpoint exists iff the run is genuinely resumable, at the
+            # right session. Ordered because the cases overlap:
+            #   1. A context reset happened → the continuation chain supersedes
+            #      this pre-reset run and owns the resumable checkpoint, so drop
+            #      ours regardless of stop_reason (a propagated continuation
+            #      failure sets failure_error/stop but ours must still go).
+            #   2. Unrecoverable LLM failure → keep ours (D6 resumable failure);
+            #      a crash never reaches this finally, so its checkpoint persists.
+            #   3. Clean finish → task done; drop ours, and a resumed run also
+            #      clears the SOURCE checkpoint so it stops being a --resume-last
+            #      magnet (source's auditable session files stay byte-identical).
+            #   4. max_steps / aborted / other → keep ours (still resumable with a
+            #      bigger budget) and never touch the source; a zero-step
+            #      past-budget resume lands here and deletes nothing.
+            clean_finish = (
+                self.failure_error is None and self.stop_reason in CLEAN_FINISH_REASONS
+            )
+            if self._did_context_reset:
+                remove_checkpoint(self._session_dir)
+            elif clean_finish:
                 remove_checkpoint(self._session_dir)
                 if self.resumed_from is not None:
                     remove_checkpoint(Path(".my_coding_agent") / self.resumed_from)
@@ -586,6 +602,7 @@ class AgentNode(BaseNode):
         t_start: float,
     ) -> list[dict[str, Any]]:
         """Generate a handoff, finalize this run, spawn and return the continuation."""
+        self._did_context_reset = True
         ctx_tokens = ctx.last_prompt_tokens or len(json.dumps(ctx.messages)) // 2
         ctx_pct = ctx_tokens / ctx.llm.context_window if ctx.llm.context_window else 0.0
 

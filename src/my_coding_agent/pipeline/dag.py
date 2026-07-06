@@ -40,12 +40,16 @@ class Pipeline:
         ctx.signal = "CONTINUE"
         while ctx.step_num < ctx.max_steps and ctx.signal == "CONTINUE":
             self.run_step(ctx)
+            # A RESET hands control to the continuation, which ran to completion
+            # inside run_step and owns the resumable checkpoint; writing a fresh
+            # main checkpoint here would give the pre-reset run a newer mtime and
+            # mistarget --resume-last. So return without checkpointing this step.
+            if ctx.signal == "RESET":
+                return ctx.continuation_messages
             # The step completed (no exception): persist the resume checkpoint at
             # this boundary before acting on the signal (D3/D4).
             if self._checkpoint_fn is not None:
                 self._checkpoint_fn(ctx)
-            if ctx.signal == "RESET":
-                return ctx.continuation_messages
             if ctx.signal == "STOP":
                 break
         return ctx.messages
