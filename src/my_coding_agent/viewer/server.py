@@ -40,6 +40,8 @@ _VENDOR_FILES = (
     "hooks.umd.js",
     "htm.umd.js",
     "codemirror.bundle.js",
+    "markdown-it.bundle.js",
+    "dompurify.bundle.js",
 )
 _VENDOR_TOKEN = "/*__VENDOR__*/"
 
@@ -199,6 +201,30 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .cb-editor .cm-editor{max-height:340px}
 .cb-editor .cm-scroller{overflow:auto}
 
+/* ── rendered markdown (mini markdown-it + DOMPurify preview) ── */
+.md-render{padding:10px 12px;font-size:12.5px;line-height:1.6;max-height:340px;overflow:auto}
+.md-render>*:first-child{margin-top:0}
+.md-render>*:last-child{margin-bottom:0}
+.md-render h1,.md-render h2,.md-render h3,.md-render h4,.md-render h5,.md-render h6{margin:14px 0 6px;font-weight:600;line-height:1.3}
+.md-render h1{font-size:1.5em}
+.md-render h2{font-size:1.3em}
+.md-render h3{font-size:1.15em}
+.md-render p{margin:8px 0}
+.md-render ul,.md-render ol{margin:8px 0;padding-left:1.6em}
+.md-render li{margin:2px 0}
+.md-render blockquote{margin:8px 0;padding:2px 12px;border-left:3px solid var(--line);color:var(--muted)}
+.md-render a{color:var(--accent);text-decoration:none}
+.md-render a:hover{text-decoration:underline}
+.md-render code{font-family:var(--mono);font-size:.92em;background:var(--bg2);border-radius:4px;padding:1px 5px}
+.md-render pre{margin:8px 0;overflow-x:auto}
+.md-render pre code{background:transparent;padding:0;border-radius:0}
+.md-render table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:8px 0}
+.md-render th,.md-render td{border:1px solid var(--line);padding:4px 10px;text-align:left}
+.md-render th{background:var(--bg2);font-weight:600}
+.md-render hr{border:none;border-top:1px solid var(--line);margin:12px 0}
+.md-render img{max-width:100%}
+.md-render .cm-editor{max-height:none;border:1px solid var(--line);border-radius:6px}
+
 /* ── tool result / llm body (rendered inside .sbody) ── */
 .toolres{display:flex;flex-direction:column}
 .tr-block{padding:12px 0 0}
@@ -239,6 +265,81 @@ const CB_THEME = CM.EditorView.theme({
   '.cm-panels':{backgroundColor:'var(--bg)',color:'var(--text)',borderTop:'1px solid var(--line)'},
   '.cm-panel input':{fontFamily:'var(--font)',fontSize:'11px'},
 });
+
+// ── markdown-it (vendored, offline) — html:false so embedded HTML in the
+// source is escaped rather than emitted as live markup; this is layer (a) of
+// the XSS defense (issue #112). CommonMark + tables preset, no linkify/typography.
+const _md = new window.markdownit({html:false, linkify:false, typography:false});
+
+// Parse *src* to HTML and sanitize it with DOMPurify before it is ever
+// assigned to innerHTML — layer (b) of the XSS defense. This is the single
+// insertion path for rendered markdown; no raw content bypasses sanitize().
+function renderMarkdownHTML(src){
+  const raw = _md.render(String(src==null?'':src));
+  return window.DOMPurify.sanitize(raw);
+}
+
+// Fenced code blocks come out of markdown-it as <pre><code class="language-x">.
+// Replace each with a small read-only CodeMirror view (same theme as CodeBox)
+// when the language is one CM6 already knows (json/python/shell); unsupported
+// languages are left as the plain <pre><code> markup DOMPurify let through,
+// which already reads as code (monospace, distinct background).
+function highlightFences(container){
+  if(!container || !CM) return;
+  container.querySelectorAll('pre > code').forEach(code=>{
+    const m = /language-(\\w+)/.exec(code.className||'');
+    const lang = m ? m[1] : null;
+    const exts = [
+      CM.EditorState.readOnly.of(true),
+      CM.syntaxHighlighting(CM.defaultHighlightStyle,{fallback:true}),
+      CM.EditorView.lineWrapping,
+      CB_THEME,
+    ];
+    if(lang==='json') exts.push(CM.json());
+    else if(lang==='python' && CM.python) exts.push(CM.python());
+    else if(['shell','bash','sh'].includes(lang) && CM.shell) exts.push(CM.shell());
+    else return;
+    const pre = code.parentElement;
+    const host = document.createElement('div');
+    new CM.EditorView({state: CM.EditorState.create({doc:code.textContent, extensions:exts}), parent: host});
+    pre.replaceWith(host);
+  });
+}
+
+// Rendered-markdown view for free-text content, with a per-box Rendered ⇄ Raw
+// toggle. Rendered is the default (issue #112); Raw reuses CodeBox verbatim
+// so the byte-exact source, copy/find/line-numbers stay unchanged.
+function MarkdownBox({value, lang:hint}){
+  const [raw,setRaw] = useState(false);
+  const text = typeof value==='string' ? value : JSON.stringify(value,null,2);
+  const out = useMemo(()=>renderMarkdownHTML(text), [text]);
+  const host = useRef(null);
+
+  useEffect(()=>{
+    if(raw || !host.current) return;
+    host.current.innerHTML = out;
+    highlightFences(host.current);
+  }, [raw, out]);
+
+  return html`<div class="cb">
+    <div class="cb-bar">
+      <div class="cb-crumbs muted">markdown</div>
+      <div class="cb-actions">
+        <button class="cb-btn" onClick=${()=>setRaw(!raw)}>${raw?'rendered':'raw'}</button>
+      </div>
+    </div>
+    ${raw ? html`<${CodeBox} value=${value} lang=${hint}/>` : html`<div class="md-render" ref=${host}></div>`}
+  </div>`;
+}
+
+// Content-dispatch wrapper: free-text (non-JSON, non-code-hint) strings get
+// the rendered-markdown treatment; JSON and explicitly hinted (python/shell/
+// json) values render exactly as before via CodeBox.
+function ContentBox({value, lang:hint}){
+  const {lang} = useMemo(()=>toDoc(value, hint), [value, hint]);
+  if(lang==='text') return html`<${MarkdownBox} value=${value} lang=${hint}/>`;
+  return html`<${CodeBox} value=${value} lang=${hint}/>`;
+}
 
 // Walk the JSON syntax tree from the caret to the root, building a clickable
 // breadcrumb of property names and array indices (VS Code style). Best-effort:
@@ -719,7 +820,7 @@ function ReportOutput({node}){
   const content = (node.outputs && node.outputs.content) || '';
   return html`<div class="toolres">
     ${content ? html`<div class="tr-block"><div class="tr-label">report</div>
-      <${CodeBox} value=${content}/></div>`
+      <${ContentBox} value=${content}/></div>`
       : html`<div class="tr-block muted">No report content recorded.</div>`}
   </div>`;
 }
@@ -754,11 +855,11 @@ function ToolResult({node}){
   // The tool/status/latency/artifact badges live in the node header (nodeBadges).
   return html`<div class="toolres">
     ${cmd ? html`<div class="tr-block"><div class="tr-label">command</div>
-      <${CodeBox} value=${cmd} lang=${lang.command}/></div>` : null}
+      <${ContentBox} value=${cmd} lang=${lang.command}/></div>` : null}
     ${r.output ? html`<div class="tr-block"><div class="tr-label">output</div>
-      <${CodeBox} value=${r.output} lang=${lang.output}/></div>` : null}
+      <${ContentBox} value=${r.output} lang=${lang.output}/></div>` : null}
     ${r.error ? html`<div class="tr-block"><div class="tr-label err">error</div>
-      <${CodeBox} value=${r.error} lang=${lang.error}/></div>` : null}
+      <${ContentBox} value=${r.error} lang=${lang.error}/></div>` : null}
     ${hasResult ? html`<div class="tr-block"><div class="tr-label">raw_envelope</div>
       <${CodeBox} value=${r}/></div>`
       : html`<div class="tr-block muted">No result recorded.</div>`}
@@ -770,9 +871,9 @@ function LlmOutputs({node}){
   const calls = o.tool_calls || [];
   return html`<div class="toolres">
     ${o.content ? html`<div class="tr-block"><div class="tr-label">response</div>
-      <${CodeBox} value=${o.content}/></div>` : null}
+      <${ContentBox} value=${o.content}/></div>` : null}
     ${o.reasoning ? html`<div class="tr-block"><div class="tr-label">reasoning</div>
-      <${CodeBox} value=${o.reasoning}/></div>` : null}
+      <${ContentBox} value=${o.reasoning}/></div>` : null}
     ${calls.length ? html`<div class="tr-block"><div class="tr-label">tool calls · ${calls.length}</div>
       <${CodeBox} value=${calls}/></div>` : null}
     ${(!o.content && !o.reasoning && !calls.length) ? html`<div class="tr-block muted">No output recorded.</div>` : null}
@@ -891,7 +992,7 @@ function Section({title,data,open,body}){
 
 function DataView({data}){
   if(data==null) return html`<span class="muted">—</span>`;
-  if(typeof data==='string') return html`<${CodeBox} value=${data}/>`;
+  if(typeof data==='string') return html`<${ContentBox} value=${data}/>`;
   if(Array.isArray(data)) return html`<${CodeBox} value=${data}/>`;
   if(typeof data==='object'){
     const keys = Object.keys(data);
@@ -904,7 +1005,7 @@ function DataView({data}){
 function Value({v}){
   if(v==null) return html`<span class="muted">null</span>`;
   if(typeof v==='object') return html`<${CodeBox} value=${v}/>`;
-  if(typeof v==='string' && (v.length>60 || v.includes('\\n'))) return html`<${CodeBox} value=${v}/>`;
+  if(typeof v==='string' && (v.length>60 || v.includes('\\n'))) return html`<${ContentBox} value=${v}/>`;
   return html`<span>${String(v)}</span>`;
 }
 
