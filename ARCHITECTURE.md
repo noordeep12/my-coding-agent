@@ -109,7 +109,7 @@ Before writing that per-stream file, `_offload_stream` checks the offload-bound 
 
 The node-based DAG execution engine. `pipeline/` only knows how to build and execute a DAG — it has no knowledge of LLM client internals or session management.
 
-**`RunContext` (`context.py`)** — the explicit data contract that flows through the pipeline. Holds immutable run config (session id, max steps, LLM client, recorder, all tools) and mutable state fields (messages, step_num, last_prompt_tokens, tool_records, tool_artifacts, handoff_records, plus the skill snapshot and the run's `loaded_skills` set — issue #19). Control signals (`signal`, `stop_reason`) are written by nodes and read by `Pipeline.execute`.
+**`RunContext` (`context.py`)** — the explicit data contract that flows through the pipeline. Holds immutable run config (session id, max steps, LLM client, recorder, all tools) and mutable state fields (messages, step_num, last_prompt_tokens, tool_records, tool_artifacts, handoff_records, plus the skill snapshot and the run's `loaded_skills` set — issue #19). Control signals (`signal`, `stop_reason`) are written by nodes and read by `Pipeline.execute`. `routed_tools` stays on the dataclass (defaulting to `[]`) solely so the retained-but-unwired `ToolRoutingNode` (#114) still has somewhere to write its selection under type-checking — no live node reads it, since `LLMCallNode`/`ToolDispatchNode` both consult `ctx.all_tools`.
 
 **`Node` protocol + `BaseNode` (`node.py`)** — a `Node` is any callable with a `name: str` and a `run(ctx: RunContext) -> None` method. Nodes read and write `ctx` in place.
 

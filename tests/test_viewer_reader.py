@@ -311,7 +311,9 @@ class TestGroupIntoSteps:
         ]
         groups = _group_into_steps(events)
         assert len(groups) == 2
-        assert all(g[0]["type"] == "llm_call" and g[0]["kind"] == "main" for g in groups)
+        assert all(
+            g[0]["type"] == "llm_call" and g[0]["kind"] == "main" for g in groups
+        )
 
     def test_nested_llm_call_does_not_start_a_new_bucket(self):
         """A non-main llm_call (e.g. tool_arg_correction) stays in its step."""
