@@ -607,8 +607,7 @@ class ToolRegistry:
                 opening_message += f"\n\nKnown facts from the main agent:\n{facts}"
             if expected_report:
                 opening_message += (
-                    "\n\nReport expectations from the main agent:\n"
-                    f"{expected_report}"
+                    f"\n\nReport expectations from the main agent:\n{expected_report}"
                 )
         now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%Z)")
         system_prompt = (
