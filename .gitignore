@@ -28,7 +28,12 @@ htmlcov/
 docs/_build/
 
 .my_coding_agent/handoffs/
-.my_coding_agent/
+# Ignore all of .my_coding_agent/ (ephemeral session data) EXCEPT the bundled
+# example skills, which ship with the repo so they are auto-discovered. Negation
+# needs the parent dir kept walkable (`/*`, not `/`) before re-including skills.
+.my_coding_agent/*
+!.my_coding_agent/skills/
+!.my_coding_agent/skills/**
 .claude/
 .codex/
 

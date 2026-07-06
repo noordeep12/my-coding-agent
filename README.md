@@ -135,6 +135,16 @@ description: Commit staged changes and push with a Conventional Commits message.
 
 **How it reaches the model** — when at least one skill is discovered, a compact index (one `- name: description` line per skill, within a fixed character budget) is appended to the opening task message, and a `use_skill(name)` tool is registered. The system prompt is never touched, so the prompt-prefix cache still hits across runs. The agent calls `use_skill("commit-and-push")` to pull that skill's full instructions into context on demand; a skill is loaded once (a repeat call returns a short pointer). Delegated subagents get the same index and tool; the loaded skills survive a context handoff. With **no** skills on disk, nothing changes — no index, no `use_skill` tool, identical prompts and tool schemas.
 
+**Bundled example skills** — the repo ships three ready-to-use project skills under `.my_coding_agent/skills/`. That subtree is un-ignored in `.gitignore` (the rest of `.my_coding_agent/` stays ephemeral and untracked), so they are committed and **auto-discovered** with no setup — run the agent from the repo root and they appear in the index.
+
+| Skill | When to use |
+|---|---|
+| `commit-and-push` | Stage, write a Conventional Commit that passes the `commit-msg` hooks, and push the current branch. |
+| `run-quality-checks` | Run tests + ruff + mypy + security the way the `Makefile`/CI expect before declaring work done. |
+| `debug-failing-run` | Diagnose a failed run from its session files (`events.jsonl`, `session_data.json`) and the Trace Explorer. |
+
+Treat them as templates: copy one into a new `.my_coding_agent/skills/<name>/SKILL.md` (or `~/.my_coding_agent/skills/` for a user-wide skill) and edit the frontmatter and body for your own task.
+
 
 ## Observability
 
