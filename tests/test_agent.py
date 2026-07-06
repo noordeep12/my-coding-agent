@@ -255,6 +255,8 @@ def _make_preflight_ctx(context_window, last_prompt_tokens=0, messages=None):
     ctx = object.__new__(RunContext)
     ctx.llm = llm
     ctx.messages = messages or []
+    ctx.session_id = "test-session"
+    ctx.tool_records = []
     ctx.step_num = 0
     ctx.last_prompt_tokens = last_prompt_tokens
     ctx.context_reset_threshold = 0.75
@@ -363,6 +365,86 @@ def test_preflight_estimates_tokens_when_no_last_prompt():
     # len(json.dumps(messages)) // 2 is well over 1000 → hard stop.
     ContextGuardNode().run(ctx)
     assert ctx.signal == "STOP"
+
+
+# --- ContextGuardNode supersession pass (issue #121) --------------------
+
+
+def test_guard_retires_contained_result_and_records_event():
+    from my_coding_agent.engine.tool_execution.schema import (
+        SUPERSESSION_SIZE_FLOOR_CHARS,
+    )
+    from my_coding_agent.pipeline.supersession import CASE_CONTAINMENT, STUB_PREFIX
+
+    big = "x" * SUPERSESSION_SIZE_FLOOR_CHARS
+    ctx = _make_preflight_ctx(
+        context_window=1000,
+        last_prompt_tokens=100,
+        messages=[
+            {"role": "tool", "tool_call_id": "call_1", "content": big},
+            {"role": "tool", "tool_call_id": "call_2", "content": "pre-" + big},
+        ],
+    )
+    ctx.tool_records = [
+        {"name": "bash", "tool_call_id": "call_1", "args": {"cmd": "a"}, "ok": True},
+        {"name": "bash", "tool_call_id": "call_2", "args": {"cmd": "b"}, "ok": True},
+    ]
+    old_message = ctx.messages[0]
+    ContextGuardNode().run(ctx)
+
+    assert ctx.messages[0] is not old_message  # replaced, never mutated in place
+    assert ctx.messages[0]["role"] == "tool"
+    assert ctx.messages[0]["tool_call_id"] == "call_1"
+    assert ctx.messages[0]["content"].startswith(STUB_PREFIX)
+    assert ctx.messages[1]["content"] == "pre-" + big  # superseding result untouched
+
+    ctx.recorder.record_supersession.assert_called_once_with(
+        tool_call_id="call_1",
+        tool_name="bash",
+        case=CASE_CONTAINMENT,
+        superseding_tool_call_id="call_2",
+        retired_size=len(big),
+        step=0,
+    )
+
+
+def test_guard_supersession_disabled_via_env(monkeypatch):
+    from my_coding_agent.engine.tool_execution.schema import (
+        SUPERSESSION_SIZE_FLOOR_CHARS,
+    )
+
+    monkeypatch.setenv("MCA_SUPERSESSION", "0")
+    big = "x" * SUPERSESSION_SIZE_FLOOR_CHARS
+    ctx = _make_preflight_ctx(
+        context_window=1000,
+        last_prompt_tokens=100,
+        messages=[
+            {"role": "tool", "tool_call_id": "call_1", "content": big},
+            {"role": "tool", "tool_call_id": "call_2", "content": "pre-" + big},
+        ],
+    )
+    ctx.tool_records = [
+        {"name": "bash", "tool_call_id": "call_1", "args": {"cmd": "a"}, "ok": True},
+        {"name": "bash", "tool_call_id": "call_2", "args": {"cmd": "b"}, "ok": True},
+    ]
+    old_message = ctx.messages[0]
+    ContextGuardNode().run(ctx)
+
+    assert ctx.messages[0] is old_message  # untouched — run stays byte-identical
+    ctx.recorder.record_supersession.assert_not_called()
+
+
+def test_guard_no_qualifying_result_no_event():
+    ctx = _make_preflight_ctx(
+        context_window=1000,
+        last_prompt_tokens=100,
+        messages=[{"role": "tool", "tool_call_id": "call_1", "content": "small"}],
+    )
+    ctx.tool_records = [
+        {"name": "bash", "tool_call_id": "call_1", "args": {"cmd": "a"}, "ok": True},
+    ]
+    ContextGuardNode().run(ctx)
+    ctx.recorder.record_supersession.assert_not_called()
 
 
 # --- step-ceiling cutoff (FinalizeStepNode → ContextSummarizerNode) -----------

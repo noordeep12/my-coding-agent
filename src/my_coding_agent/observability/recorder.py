@@ -37,6 +37,7 @@ FINISH_CHECK = "finish_check"
 SUMMARIZER = "summarizer"
 ANOMALY = "anomaly"
 SKILL_INDEX = "skill_index"
+SUPERSESSION = "supersession"
 # Run-resilience (D2): additive events for the LLM outage-recovery loop.
 LLM_WAIT = "llm_wait"  # one patient-phase wait before a retry
 LLM_RECOVERY = "llm_recovery"  # server answered after a stall
@@ -529,6 +530,34 @@ class Recorder:
                 "tool_name": tool_name,
                 "streak_len": streak_len,
                 "tokens_spent": tokens_spent,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_supersession(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        case: str,
+        superseding_tool_call_id: str,
+        retired_size: int,
+        step: int,
+    ) -> None:
+        """Record one tool-result retirement (passive: reports what retired).
+
+        Emitted once per retired message by ``ContextGuardNode``'s
+        supersession pass, never influencing execution — the recorder only
+        appends what it is told, same as ``record_anomaly``.
+        """
+        self._emit(
+            {
+                "type": SUPERSESSION,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "case": case,
+                "superseding_tool_call_id": superseding_tool_call_id,
+                "retired_size": retired_size,
                 "step": step,
                 "started_at": _now(),
             }

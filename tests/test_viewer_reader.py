@@ -1085,6 +1085,40 @@ class TestReportNode:
         assert reports[0].attributes["source"] == "unknown"
 
 
+class TestSupersessionEventSkipped:
+    """A `supersession` event (issue #121) is an unrecognized type to today's
+    node builders — it must load without error, per the old-readers-skip-new-
+    event-types contract (same as an old pre-provenance report event, D3)."""
+
+    def _load_with(self, tmp_path, sid, extra):
+        events = _minimal_events(sid) + extra
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        return load_session(ep)
+
+    def test_session_with_supersession_event_loads_without_error(self, tmp_path):
+        session = self._load_with(
+            tmp_path,
+            "supersession",
+            [
+                _ev(
+                    "supersession",
+                    tool_call_id="call_1",
+                    tool_name="bash",
+                    case="containment",
+                    superseding_tool_call_id="call_2",
+                    retired_size=3200,
+                    step=1,
+                    started_at="2026-01-01T10:00:10",
+                )
+            ],
+        )
+        assert session is not None
+        assert not any(n.type == "supersession" for n in session.nodes.values())
+
+
 class TestLlmToolDefinitions:
     """LLM-call nodes surface the tool definitions from the event's ``tools``."""
 

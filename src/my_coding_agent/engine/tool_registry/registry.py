@@ -32,6 +32,7 @@ from ..schema import (
 )
 from ..tool_execution.schema import (
     ARTIFACT_THRESHOLD,
+    EXTRACTION_INCOMPLETE_MARKER,
     EXTRACTION_OUTPUT_MAX_CHARS,
     EXTRACTION_OUTPUT_TOKEN_BUDGET,
     PAGE_FETCH_MAX_CHARS,
@@ -486,7 +487,7 @@ class ToolRegistry:
                 "(grep/rg, sed, awk, jq, head/tail, wc)"
             )
         return (
-            f"\n\n[Extract incomplete — {'; '.join(reasons)}. "
+            f"\n\n{EXTRACTION_INCOMPLETE_MARKER} {'; '.join(reasons)}. "
             f"Not the full stored output. Try {recovery}.]"
         )
 

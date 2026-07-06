@@ -17,6 +17,7 @@ from my_coding_agent.observability.recorder import (
     HANDOFF,
     LLM_CALL,
     REPORT,
+    SUPERSESSION,
     TOKEN_TRACKING,
     Recorder,
 )
@@ -328,6 +329,24 @@ class TestRecordLlmCallMessageDeltas:
         assert ev["messages"] == m2
         assert "messages_base_call" not in ev
 
+    def test_mid_history_supersession_stub_falls_back_to_full_snapshot(
+        self, tmp_path
+    ):
+        """A retiring step (issue #121) replaces one message object in place
+        of a mutation — the identity check for that index fails, so the whole
+        step's recorded messages are a full snapshot (what the model actually
+        saw), never a delta silently missing the stub."""
+        rec, path = _make_recorder(tmp_path)
+        tool_msg = {"role": "tool", "tool_call_id": "call_1", "content": "x" * 600}
+        m1 = [{"role": "user", "content": "hi"}, tool_msg]
+        self._call(rec, kind="main", call=1, messages=m1)
+        stub_msg = {"role": "tool", "tool_call_id": "call_1", "content": "[Superseded]"}
+        m2 = [m1[0], stub_msg]  # same length, but index 1 is a new object
+        self._call(rec, kind="main", call=2, messages=m2)
+        ev = _read_events(path)[-1]
+        assert ev["messages"] == m2
+        assert "messages_base_call" not in ev
+
     def test_shorter_history_falls_back_to_full_snapshot(self, tmp_path):
         rec, path = _make_recorder(tmp_path)
         m1 = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "a"}]
@@ -427,3 +446,38 @@ class TestRecordAnomaly:
         assert events[0]["streak_id"] == events[1]["streak_id"] == "abc123-1"
         assert events[-1]["streak_len"] == 5
         assert events[-1]["tokens_spent"] == 25000
+
+
+class TestRecordSupersession:
+    def test_emits_correct_type_and_row_shape(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_supersession(
+            tool_call_id="call_1",
+            tool_name="bash",
+            case="containment",
+            superseding_tool_call_id="call_2",
+            retired_size=3200,
+            step=4,
+        )
+        ev = _read_events(path)[-1]
+        assert ev["type"] == SUPERSESSION
+        assert ev["tool_call_id"] == "call_1"
+        assert ev["tool_name"] == "bash"
+        assert ev["case"] == "containment"
+        assert ev["superseding_tool_call_id"] == "call_2"
+        assert ev["retired_size"] == 3200
+        assert ev["step"] == 4
+        assert "started_at" in ev
+
+    def test_sessions_without_retirements_emit_none(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_token_tracking(
+            step=1,
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            ctx_pct=0.1,
+            context_window=1000,
+        )
+        events = [e for e in _read_events(path) if e["type"] == SUPERSESSION]
+        assert events == []

@@ -94,3 +94,19 @@ SKILL_INDEX_PER_ENTRY_MAX_CHARS = 200
 # budget, descriptions are truncated evenly; still over, lines degrade to
 # names-only. The block placed into the opening message never exceeds this cap.
 SKILL_INDEX_TOTAL_MAX_CHARS = 2_000
+
+# ── Tool-result supersession (issue #121) ─────────────────────────────────────
+# The machine-written marker `read_tool_artifact`'s query mode appends to a
+# return when it cut content (see `tool_registry/registry.py`'s
+# `_extraction_disclosure`). Shared here so the supersession pass (Case A) can
+# detect it without importing the registry module back.
+EXTRACTION_INCOMPLETE_MARKER = "[Extract incomplete —"
+
+# Minimum retired-content size below which a provably-superseded tool result is
+# left alone: replacing a message invalidates the KV prefix cache from that
+# point forward, so the one-time re-prefill cost must be smaller than the
+# repeated re-pay a retirement avoids. Picked below the ~3,200-char incomplete-
+# extract fragment measured in the motivating session (issue #121,
+# ebd9ae84480d) so that case is covered, while trivial results are never worth
+# the churn.
+SUPERSESSION_SIZE_FLOOR_CHARS = 500
