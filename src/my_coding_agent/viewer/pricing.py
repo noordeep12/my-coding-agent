@@ -60,8 +60,7 @@ def project_costs(
     prompt = prompt_tokens or 0
     completion = completion_tokens or 0
     return {
-        model: (prompt * price["prompt"] + completion * price["completion"])
-        / 1_000_000
+        model: (prompt * price["prompt"] + completion * price["completion"]) / 1_000_000
         for model, price in PRICING.items()
         if price["prompt"] or price["completion"]
     }

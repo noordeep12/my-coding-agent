@@ -51,7 +51,10 @@ class TestProjectCosts:
         projected = project_costs(1_000_000, 1_000_000)
         for model, price in PRICING.items():
             if price["prompt"] or price["completion"]:
-                assert abs(projected[model] - compute_cost(model, 1_000_000, 1_000_000)) < 1e-9
+                assert (
+                    abs(projected[model] - compute_cost(model, 1_000_000, 1_000_000))
+                    < 1e-9
+                )
 
     def test_excludes_zero_priced_and_unknown_models(self):
         projected = project_costs(1_000_000, 1_000_000)

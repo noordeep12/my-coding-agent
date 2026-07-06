@@ -486,9 +486,7 @@ class TestLoadSession:
         assert "Qwen3.6-35B-A3B-6bit" not in projected
         llm_nodes = [n for n in session.nodes.values() if n.type == "llm_call"]
         assert all("projected_costs" in n.attributes for n in llm_nodes)
-        summed = sum(
-            n.attributes["projected_costs"]["gpt-4o-mini"] for n in llm_nodes
-        )
+        summed = sum(n.attributes["projected_costs"]["gpt-4o-mini"] for n in llm_nodes)
         assert abs(summed - projected["gpt-4o-mini"]) < 1e-9
 
     def test_resumed_from_surfaces_on_session_root(self, tmp_path):
@@ -838,7 +836,10 @@ class TestAnalyticsAllKindsAcrossTree:
         from my_coding_agent.viewer.pricing import project_costs
 
         session = self._setup(tmp_path)
-        expected = project_costs(session.analytics["total_prompt_tokens"], session.analytics["total_completion_tokens"])
+        expected = project_costs(
+            session.analytics["total_prompt_tokens"],
+            session.analytics["total_completion_tokens"],
+        )
         assert session.analytics["projected_costs"] == expected
 
 
