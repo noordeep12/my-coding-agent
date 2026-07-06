@@ -83,6 +83,11 @@ Local model time is the run's real cost, so a transient LLM failure must not thr
 
 **Partial-step caveat (by design):** the checkpoint granularity is a completed step. A run killed mid-step resumes from the end of the last *completed* step; the partial step is discarded. Any tool side effects from that partial step may already exist on disk — the resumed conversation simply doesn't know about them (the same risk class as re-running a command after a crash). There is no step-level journaling.
 
+**Known limitations (by design):**
+
+- **Multi-hop resume chains.** The automatic source-checkpoint cleanup clears only the *immediate* source, and only on a clean finish; a `max_steps` hop deliberately keeps its checkpoint (still resumable with a larger budget). So a completed resume chain of 3+ hops that includes a `max_steps` middle hop (e.g. `W` dies → `X` resumes `W` and hits `max_steps` → `Z` resumes `X` and finishes) can leave an earlier ancestor's checkpoint (`W`) behind, which `--resume-last` may then target and re-run an already-finished task. No progress is lost and the conversation is intact. Workaround: pass `--resume <id>` explicitly, or delete the stale `.my_coding_agent/<id>/checkpoint.json`.
+- **Propagated continuation-failure trace artifacts.** When a post-context-reset continuation fails unrecoverably and the failure is propagated to the main run, the main session's `session_data.json` (written at reset time with `stop_reason=context_reset`) and its `session_end` event (`stop_reason=llm_failure_*`) can disagree — a cosmetic trace-observability inconsistency only. The authoritative failure and resume state lives in the continuation session, which holds the resumable checkpoint and is named by the CLI resume hint.
+
 ### CLI Options
 
 | Option | Default | Description |
