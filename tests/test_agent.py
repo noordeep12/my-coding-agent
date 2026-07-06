@@ -52,6 +52,9 @@ def _make_agent(silent_logger, **overrides):
     agent.needs_handback = False
     agent.handback_report = None
     agent.child_rollups = []
+    agent.skills = {}
+    agent.loaded_skills = set()
+    agent._rendered_index = None
     # Held LLM client (composition). LLM.__init__ is network-free; swap in the
     # silent logger and set the state the agent loop reads off the client.
     agent.llm = LLM()

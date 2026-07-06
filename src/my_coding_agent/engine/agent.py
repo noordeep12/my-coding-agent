@@ -30,6 +30,7 @@ from ..utils import (
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
 from .schema import REPORT_SOURCE_FALLBACK
+from .tool_registry.skills import RenderedIndex, Skill, build_opening_block
 
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
 # and delegated subagents, so all three run with the same ceiling.
@@ -57,10 +58,20 @@ class AgentNode(BaseNode):
         label: str = "Agent",
         context_reset_threshold: float = 0.75,
         needs_handback: bool = False,
+        skills: dict[str, Skill] | None = None,
+        loaded_skills: set[str] | None = None,
     ) -> None:
         """Initialize the agent, open a session log, and build the LLM client.
 
         No network I/O is performed; the LLM context-window probe is deferred.
+
+        ``skills`` is the discovered-skill snapshot for this run (name → Skill);
+        when non-empty, its index is placed into the opening user message here
+        (never the system prompt, so #75 holds) and offered to the model via the
+        ``use_skill`` tool. ``loaded_skills`` seeds the set of already-loaded
+        skills — empty for a fresh run, or the pre-reset run's loaded names for a
+        continuation, whose full bodies are re-injected into the opening message
+        so knowledge survives a handoff (D6).
         """
         self.session_id = uuid.uuid4().hex[:12]
         self.started_at = datetime.now().isoformat(timespec="seconds")
@@ -87,6 +98,14 @@ class AgentNode(BaseNode):
         self.last_prompt_tokens: int = 0
         self.needs_handback = needs_handback
         self.handback_report: str | None = None
+        # Skill snapshot + the run's loaded-skill set (shared by reference into
+        # every per-message registry so dedup persists across steps). Placement
+        # of the index into the opening message happens now, at construction,
+        # before any recording — the event is emitted at session start (D9).
+        self.skills = skills or {}
+        self.loaded_skills = loaded_skills if loaded_skills is not None else set()
+        self._rendered_index: RenderedIndex | None = None
+        self._place_skill_index()
         # Usage summaries of delegated subagents spawned by this agent, handed
         # up via ``current_agent_node`` as each ``delegate`` call returns (D3).
         # Each entry already carries its own nested descendants, so a child's
@@ -98,6 +117,26 @@ class AgentNode(BaseNode):
             len(self.messages),
             len(self.tools),
         )
+
+    def _place_skill_index(self) -> None:
+        """Append the skill index (and any re-injected bodies) to the opening msg.
+
+        Renders the index from this run's snapshot and appends it after the task
+        text of the first user message; for a continuation the previously-loaded
+        skills' full bodies follow (D6). Stores the placed :class:`RenderedIndex`
+        for the session-start event. A no-op when there are no skills, so the
+        opening message stays byte-identical to today.
+        """
+        if not self.skills:
+            return
+        block, placed = build_opening_block(self.skills, self.loaded_skills or None)
+        if not block:
+            return
+        for msg in self.messages:
+            if msg.get("role") == "user":
+                msg["content"] = f"{msg.get('content', '')}\n\n{block}"
+                break
+        self._rendered_index = placed
 
     def run(self, ctx: RunContext) -> None:
         """Run the full agentic loop and write results back to ctx."""
@@ -125,6 +164,14 @@ class AgentNode(BaseNode):
 
         t_start = time.monotonic()
         self.recorder.start(self.label, self.llm.model, self.llm.context_window)
+        if self._rendered_index is not None:
+            # The *offered* record (D9): one skill-index event per session start /
+            # continuation, only when an index was actually placed.
+            self.recorder.record_skill_index(
+                self._rendered_index.names,
+                self._rendered_index.chars,
+                self._rendered_index.tier,
+            )
         _ctx_token = current_session_id.set(self.session_id)
         _rec_token = current_recorder.set(self.recorder)
         _node_token = current_agent_node.set(self)
@@ -151,6 +198,8 @@ class AgentNode(BaseNode):
             messages=self.messages,
             last_prompt_tokens=self.last_prompt_tokens,
             needs_handback=self.needs_handback,
+            skills=self.skills,
+            loaded_skills=self.loaded_skills,
         )
 
         def _spawn_fn() -> list[dict[str, Any]]:
@@ -265,6 +314,11 @@ class AgentNode(BaseNode):
             tools=self.tools,
             label=f"{self.label} (cont.)",
             context_reset_threshold=self.context_reset_threshold,
+            # Carry the skill snapshot and seed the loaded-set (a copy) so the
+            # continuation re-injects the loaded skills' full bodies into its
+            # opening message and dedup keeps working post-reset (D6).
+            skills=self.skills,
+            loaded_skills=set(self.loaded_skills),
         )
         remaining_steps = max_steps - self.step_num
         return continuation.execute(max_steps=max(remaining_steps, 1))

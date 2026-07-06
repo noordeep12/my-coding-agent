@@ -17,7 +17,13 @@ from .llm.schema import CALL_KIND_TOOL_ROUTER
 if TYPE_CHECKING:
     from .llm import LLM
 
-_BASELINE_TOOLS = {"bash", "read_file", "read_tool_artifact"}
+# Baseline tools always offered to the model regardless of tag match/debounce.
+# ``use_skill`` joins the baseline so the skill-loading path is never withheld —
+# but only when it is actually registered (i.e. skills were discovered): the
+# baseline is intersected with the run's real toolset, so with no skills present
+# ``use_skill`` is absent from ``all_tools`` and the effective baseline stays
+# exactly ``bash``/``read_file``/``read_tool_artifact`` (D5, tool-routing).
+_BASELINE_TOOLS = {"bash", "read_file", "read_tool_artifact", "use_skill"}
 
 
 def _search_bracketed(text: str) -> str:

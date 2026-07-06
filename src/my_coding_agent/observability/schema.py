@@ -28,6 +28,14 @@ ANOMALY_STEP = "step"
 # values without a schema change.
 ANOMALY_KIND_FAILURE_STREAK = "failure_streak"
 
+# Keys of a "skill_index" row (``Recorder.record_skill_index``, issue #19),
+# emitted once per session start / continuation when a skill index is placed
+# into the opening user message. Absent entirely from a skill-free run.
+SKILL_INDEX_NAMES = "names"
+SKILL_INDEX_COUNT = "count"
+SKILL_INDEX_CHARS = "chars"
+SKILL_INDEX_TIER = "tier"
+
 # Keys of a machine-wide "resources" object, optionally attached to timed
 # events (``llm_call``, ``tool_call``, ``summarizer``) and to the run-level
 # rollup in ``session_data.json`` (node-resource-monitoring). Absent means

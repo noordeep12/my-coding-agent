@@ -160,6 +160,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .nbadge.ts{color:var(--muted);background:var(--bg2)}
 .nbadge.step{color:var(--muted);background:var(--bg2)}
 .nbadge.art{color:var(--sub);background:var(--sub-soft)}
+.nbadge.skill{color:var(--sub);background:var(--sub-soft)}
 .nbadge.trunc{color:var(--amber);background:#fdf1e5}
 .nbadge.phase{color:var(--muted);background:var(--bg2)}
 .nbadge.count{color:var(--muted);background:var(--bg2)}
@@ -429,6 +430,7 @@ function Stats({data}){
       <span><b>${cost}</b></span>
       ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
       ${a.anomaly_count ? html`<span class="warn">⚠ ${a.anomaly_count} anomaly(s)</span>` : null}
+      ${a.skill_offered_count!=null ? html`<span class="muted">🧠 ${a.skill_offered_count} offered · ${a.skill_loaded_count} loaded</span>` : null}
       ${data.stop_reason ? html`<span class="muted">stop: ${data.stop_reason}</span>` : null}
       ${hasBreakdown ? html`<button class="filter-btn" onClick=${()=>setOpen(!open)}>
         Breakdown</button>` : null}
@@ -521,6 +523,7 @@ function nodeBadges(node){
   if(r && r.metadata && r.metadata.truncated===true) b.push({t:'✂️ truncated', c:'trunc'});
   if(node.type==='llm_call' && a.capped===true) b.push({t:'✂️ cut at '+a.max_tokens+'-token cap', c:'trunc'});
   if(node.type==='tool_call' && a.name==='bash' && isMultilineBashCall(node)) b.push({t:'📜 multi-line', c:'art'});
+  if(node.type==='tool_call' && a.name==='use_skill') b.push({t:'🧠 skill', c:'skill'});
   if(node.type==='router' && a.phase) b.push({t:'🧭 '+phaseLabel(a.phase), c:'phase'});
   if(node.type==='report'){
     if(a.source==='verbatim') b.push({t:'🆓 free', c:'ok'});
@@ -559,7 +562,7 @@ function nodeBadges(node){
 
 // Compact subset for the tree row: the glanceable badges only (timestamp/step
 // are redundant in the ordered tree, so they are dropped to save width).
-const TREE_BADGE = new Set(['name','ok','err','lat','art','trunc','phase','count']);
+const TREE_BADGE = new Set(['name','ok','err','lat','art','trunc','phase','count','skill']);
 const treeBadges = node => nodeBadges(node).filter(x=>TREE_BADGE.has(x.c));
 
 function Tree({data,hidden,sel,onSel,collapsed,setCollapsed}){

@@ -28,6 +28,12 @@ from my_coding_agent import (
     tool,
 )
 from my_coding_agent.engine import OMLX_MODEL
+from my_coding_agent.engine.tool_registry import discover_skills
+
+# ``use_skill`` is registered conditionally — only when skills are discovered —
+# so tool schemas stay byte-identical to today for a skill-free run (D5). It is
+# therefore excluded from the automatic public-method scan in ``_all_tools``.
+_SPECIAL_TOOLS = {"use_skill"}
 
 _DEFAULT_PROMPT = (
     "Using `git` and `gh` CLI tools, ensure the latest local code changes "
@@ -80,9 +86,18 @@ def _all_tools() -> list:
     names = [
         name
         for name, _ in inspect.getmembers(ToolRegistry, predicate=inspect.isfunction)
-        if not name.startswith("_")
+        if not name.startswith("_") and name not in _SPECIAL_TOOLS
     ]
     return [tool(getattr(ToolRegistry, name)) for name in names]
+
+
+def _build_tools(skills: dict) -> list:
+    """Return the run's toolset: the standard tools, plus ``use_skill`` iff skills
+    were discovered. With no skills the result is byte-identical to today (D5)."""
+    tools = _all_tools()
+    if skills:
+        tools.append(tool(ToolRegistry.use_skill))
+    return tools
 
 
 def _read_interactive_prompt() -> str:
@@ -163,7 +178,11 @@ def main(prompt: str | None, interactive: bool, max_steps: int) -> None:
     else:
         user_prompt = _DEFAULT_PROMPT
 
-    tools = _all_tools()
+    # Discover skills once at session start (before the first LLM call). The
+    # index is placed into the opening user message by AgentNode; the system
+    # prompt is untouched so the #75 prefix-cache invariant holds.
+    skills = discover_skills()
+    tools = _build_tools(skills)
     agent = AgentNode(
         messages=[
             {"role": "system", "content": _system_prompt()},
@@ -171,6 +190,7 @@ def main(prompt: str | None, interactive: bool, max_steps: int) -> None:
         ],
         tools=tools,
         label="Main Agent",
+        skills=skills,
     )
     agent.execute(max_steps=max_steps)
 

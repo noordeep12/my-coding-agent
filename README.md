@@ -11,6 +11,7 @@ Key ideas:
 - **Node-based pipeline**: the agentic loop is a DAG of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them
 - **Runtime anomaly detection**: while the run is live, a same-class tool-failure streak (e.g. the same tool failing 3+ times in a row with the same error class, regardless of args) is flagged the moment it happens — logged as a warning and recorded in the session's event stream, in main agents and subagents alike
 - **Decorator-based tools**: plain Python functions become LLM-callable tools
+- **Skills**: steer the agent's tool usage with plain-Markdown `SKILL.md` files, loaded on demand via `use_skill` — no Python edits, no system-prompt changes
 - **Context handoff**: when the context window fills up, the agent writes a structured summary of progress and spawns a fresh continuation — so long-running tasks don't get silently truncated
 - **Session persistence**: each run saves token usage, tool calls, and a final summary to `.my_coding_agent/<session_id>/`
 
@@ -86,6 +87,33 @@ uv run my-coding-agent --help
 | `MCA_TOOL_MAX_CONCURRENCY` | `4` | Max read-only tool calls overlapped per assistant message (`1` disables overlap) |
 
 
+## Skills
+
+Skills let you steer the agent's tool usage with plain Markdown, without editing any Python. A skill is a directory holding a `SKILL.md` file that bundles procedural knowledge for a specific task ("when doing X, drive the tools this way").
+
+**Locations** (scanned once at session start; a project skill shadows a user skill of the same name):
+
+| Scope | Path |
+|---|---|
+| Project | `<cwd>/.my_coding_agent/skills/<name>/SKILL.md` |
+| User | `~/.my_coding_agent/skills/<name>/SKILL.md` |
+
+**Format** — minimal frontmatter (`name` and `description`) plus a free-Markdown body. `description` doubles as the when-to-use hint shown in the index; unknown frontmatter keys are ignored (so Claude Code-authored `SKILL.md` files parse as-is). Malformed frontmatter skips that skill with one warning — it never fails the run.
+
+```markdown
+---
+name: commit-and-push
+description: Commit staged changes and push with a Conventional Commits message.
+---
+
+1. Run `git status` and `git diff --staged` to see what changed.
+2. Group related changes; write a `type(scope): summary` subject ≤ 72 chars.
+3. Commit, then `git push` to the current branch's upstream.
+```
+
+**How it reaches the model** — when at least one skill is discovered, a compact index (one `- name: description` line per skill, within a fixed character budget) is appended to the opening task message, and a `use_skill(name)` tool is registered. The system prompt is never touched, so the prompt-prefix cache still hits across runs. The agent calls `use_skill("commit-and-push")` to pull that skill's full instructions into context on demand; a skill is loaded once (a repeat call returns a short pointer). Delegated subagents get the same index and tool; the loaded skills survive a context handoff. With **no** skills on disk, nothing changes — no index, no `use_skill` tool, identical prompts and tool schemas.
+
+
 ## Observability
 
 Every run automatically records a structured `events.jsonl` alongside the other session files under `.my_coding_agent/<session_id>/`. No configuration needed — capture is always on.
@@ -94,7 +122,7 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 |---|---|
 | `stderr.log` | Plain-text log of the full run |
 | `session_data.json` | Metrics, tool records, LLM call log, stop reason, usage rollup (own + delegated subagents, per call kind) |
-| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs) |
+| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs, skill-index offers) |
 | `artifacts/<tool_call_id>.<stream>.txt` | Full content of each offloaded large output stream (`stdout`/`stderr`), written at creation so bash can skim it during the run |
 | `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
 
@@ -127,6 +155,7 @@ Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, serve
 - Loop-detected tool calls are flagged inline
 - Detected failure streaks are flagged inline too (a distinct **anomaly** tag on the affected tool calls, alongside a dedicated anomaly node reporting the streak's length, signature, and tokens spent) — separate from the loop flag
 - A **Breakdown** toggle in the stats bar (shown whenever the session has token-usage data) reveals per-call-kind and per-agent token totals across the whole delegated tree
+- When a run used [skills](#skills), `use_skill` tool calls carry a **🧠 skill** badge and the stats bar shows an **offered / loaded** count; traces recorded before skills existed load and render unchanged
 
 ## Requirements
 
