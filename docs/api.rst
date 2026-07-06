@@ -31,6 +31,10 @@ Tool registry
    :members:
    :show-inheritance:
 
+.. automodule:: my_coding_agent.engine.tool_registry.skills
+   :members:
+   :show-inheritance:
+
 
 Tool execution
 --------------
