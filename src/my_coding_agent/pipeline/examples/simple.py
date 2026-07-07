@@ -34,6 +34,7 @@ from my_coding_agent.engine.checkpoint import (
     find_last_resumable,
     load_checkpoint,
 )
+from my_coding_agent.engine import egress
 from my_coding_agent.engine.tool_execution import policy
 from my_coding_agent.engine.tool_registry import discover_skills
 
@@ -190,6 +191,15 @@ def _read_interactive_prompt() -> str:
         "(same effect as MCA_DISABLE_DANGEROUS_COMMAND_GATE=1). See SECURITY.md."
     ),
 )
+@click.option(
+    "--no-egress-filter",
+    is_flag=True,
+    default=False,
+    help=(
+        "Disable the network egress filter for this run (same effect as "
+        "MCA_DISABLE_EGRESS_FILTER=1). See SECURITY.md."
+    ),
+)
 @click.version_option(version=__version__, prog_name="my-coding-agent")
 def main(
     prompt: str | None,
@@ -198,6 +208,7 @@ def main(
     resume_id: str | None,
     resume_last: bool,
     no_safety_gate: bool,
+    no_egress_filter: bool,
 ) -> None:
     """Run the coding-agent pipeline.
 
@@ -215,6 +226,17 @@ def main(
             "⚠ --no-safety-gate: the dangerous-command refusal gate is OFF for "
             "this run. Every bash command the model emits executes verbatim, "
             "with no pre-execution check. See SECURITY.md.",
+            fg="red",
+            bold=True,
+            err=True,
+        )
+
+    if no_egress_filter:
+        os.environ[egress.schema.DISABLE_ENV_VAR] = "1"
+        click.secho(
+            "⚠ --no-egress-filter: the network egress filter is OFF for this "
+            "run. `fetch_web` destinations are not checked against the "
+            "known-malicious blocklist. See SECURITY.md.",
             fg="red",
             bold=True,
             err=True,

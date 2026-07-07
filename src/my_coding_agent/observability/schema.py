@@ -42,6 +42,16 @@ REFUSAL_TOOL_NAME = "tool_name"
 REFUSAL_COMMAND = "command"
 REFUSAL_STEP = "step"
 
+# Keys of an "egress" row (``Recorder.record_egress``) and of the
+# ``metadata.egress`` structure carried on a blocked ``fetch_web`` call's
+# envelope, kept here so consumers (e.g. the viewer) can reference the
+# contract without importing the recorder or engine.egress modules directly.
+EGRESS_HOST = "host"
+EGRESS_MATCHED_LIST = "matched_list"
+EGRESS_REASON = "reason"
+EGRESS_TOOL_NAME = "tool_name"
+EGRESS_STEP = "step"
+
 # Keys of a "skill_index" row (``Recorder.record_skill_index``, issue #19),
 # emitted once per session start / continuation when a skill index is placed
 # into the opening user message. Absent entirely from a skill-free run.
