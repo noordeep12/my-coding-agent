@@ -102,3 +102,29 @@ def scan_payload(data: str) -> str | None:
         if pattern.search(data):
             return category
     return is_sensitive(data)
+
+
+# Tools whose outbound payload this guard inspects before the call dispatches.
+# An open set — #25 (sandboxed subprocess egress) is the documented next
+# integration point (design.md decision 2 / tasks.md 2.2).
+_EGRESS_TOOLS = ("fetch_web",)
+
+
+def evaluate(func_name: str, args: dict) -> str | None:
+    """Return the matched sensitivity category when ``args`` would leak a
+    secret through ``func_name``'s outbound payload, or ``None``.
+
+    Only tools in :data:`_EGRESS_TOOLS` are evaluated; every other tool
+    returns ``None`` untouched (reads stay unblocked — design.md decision 2).
+    Returns ``None`` unconditionally when :func:`is_guard_disabled` is true.
+    """
+    if is_guard_disabled():
+        return None
+    if func_name not in _EGRESS_TOOLS:
+        return None
+    if func_name == "fetch_web":
+        url = args.get("url", "")
+        if not url:
+            return None
+        return scan_payload(url)
+    return None
