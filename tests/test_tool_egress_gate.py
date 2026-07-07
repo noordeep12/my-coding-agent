@@ -40,7 +40,9 @@ def blocklist_cache(tmp_path, monkeypatch):
 
 
 class TestGateBlocksExecution:
-    def test_blocked_destination_makes_no_http_call(self, bare_executor, blocklist_cache):
+    def test_blocked_destination_makes_no_http_call(
+        self, bare_executor, blocklist_cache
+    ):
         raw, failure = bare_executor.invoke_tool(
             "c0", "fetch_web", {"url": "https://evil.example/page"}
         )
@@ -49,8 +51,12 @@ class TestGateBlocksExecution:
         assert failure["reason"] == "egress_blocked"
         assert failure["block"].host == "evil.example"
 
-    def test_unknown_destination_is_unaffected(self, bare_executor, blocklist_cache, monkeypatch):
-        monkeypatch.setattr(ToolsRegistry, "fetch_web", staticmethod(lambda **kw: "hello"))
+    def test_unknown_destination_is_unaffected(
+        self, bare_executor, blocklist_cache, monkeypatch
+    ):
+        monkeypatch.setattr(
+            ToolsRegistry, "fetch_web", staticmethod(lambda **kw: "hello")
+        )
         raw, failure = bare_executor.invoke_tool(
             "c0", "fetch_web", {"url": "https://good.example/page"}
         )
@@ -59,7 +65,9 @@ class TestGateBlocksExecution:
 
 
 class TestEgressEnvelope:
-    def test_envelope_is_ok_false_with_structured_metadata(self, bare_executor, blocklist_cache):
+    def test_envelope_is_ok_false_with_structured_metadata(
+        self, bare_executor, blocklist_cache
+    ):
         _, failure = bare_executor.invoke_tool(
             "c0", "fetch_web", {"url": "https://evil.example/page"}
         )
@@ -78,7 +86,9 @@ class TestEgressEnvelope:
         assert egress_meta["reason"]
         assert env["metadata"]["reason"] == "egress_blocked"
 
-    def test_egress_emits_recorder_event_and_warning_log(self, bare_executor, blocklist_cache):
+    def test_egress_emits_recorder_event_and_warning_log(
+        self, bare_executor, blocklist_cache
+    ):
         calls = []
         bare_executor.llm._recorder = type(
             "R",
@@ -107,7 +117,9 @@ class TestDisabledFilterIsByteIdentical:
         self, bare_executor, blocklist_cache, monkeypatch
     ):
         monkeypatch.setenv(egress_schema.DISABLE_ENV_VAR, "1")
-        monkeypatch.setattr(ToolsRegistry, "fetch_web", staticmethod(lambda **kw: "hello"))
+        monkeypatch.setattr(
+            ToolsRegistry, "fetch_web", staticmethod(lambda **kw: "hello")
+        )
         raw, failure = bare_executor.invoke_tool(
             "c0", "fetch_web", {"url": "https://evil.example/page"}
         )
@@ -127,7 +139,9 @@ class TestDisabledFilterIsByteIdentical:
                 "after_tool": lambda self, *a, **kw: a[2] if a else None,
             },
         )()
-        monkeypatch.setattr(ToolsRegistry, "fetch_web", staticmethod(lambda **kw: "hello"))
+        monkeypatch.setattr(
+            ToolsRegistry, "fetch_web", staticmethod(lambda **kw: "hello")
+        )
         raw, failure = bare_executor.invoke_tool(
             "c0", "fetch_web", {"url": "https://evil.example/page"}
         )
