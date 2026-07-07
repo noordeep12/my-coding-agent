@@ -16,8 +16,8 @@ CATEGORY_SSH_KEY = "ssh_key"
 CATEGORY_CLOUD_CREDENTIALS = "cloud_credentials"
 CATEGORY_NETRC = "netrc"
 CATEGORY_KEY_FILE = "key_file"
-CATEGORY_SECRET_NAMED_PATH = "secret_named_path"
-CATEGORY_PRIVATE_KEY_CONTENT = "private_key_content"
+CATEGORY_SECRET_NAMED_PATH = "secret_named_path"  # pragma: allowlist secret
+CATEGORY_PRIVATE_KEY_CONTENT = "private_key_content"  # pragma: allowlist secret
 CATEGORY_TOKEN_CONTENT = "token_content"
 
 

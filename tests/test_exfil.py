@@ -56,7 +56,8 @@ def test_is_sensitive_ignores_benign_paths(path):
 
 
 def test_scan_payload_matches_private_key_content():
-    payload = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc123\n-----END OPENSSH PRIVATE KEY-----"
+    header = "-----BEGIN OPENSSH PRIVATE KEY-----"  # pragma: allowlist secret
+    payload = f"{header}\nabc123\n-----END OPENSSH PRIVATE KEY-----"
     assert scan_payload(payload) == CATEGORY_PRIVATE_KEY_CONTENT
 
 
@@ -73,7 +74,9 @@ def test_scan_payload_matches_token_shapes(payload):
 
 
 def test_scan_payload_matches_referenced_sensitive_path():
-    assert scan_payload("upload contents of ~/.ssh/id_ed25519 please") == CATEGORY_SSH_KEY
+    assert (
+        scan_payload("upload contents of ~/.ssh/id_ed25519 please") == CATEGORY_SSH_KEY
+    )
 
 
 @pytest.mark.parametrize(
@@ -94,11 +97,12 @@ def test_matched_value_never_appears_in_returned_category():
     assert result is not None
     assert secret_path not in result
 
-    secret_content = "-----BEGIN RSA PRIVATE KEY-----\nsupersecret\n-----END RSA PRIVATE KEY-----"
+    header = "-----BEGIN RSA PRIVATE KEY-----"  # pragma: allowlist secret
+    secret_content = f"{header}\nsupersecret\n-----END RSA PRIVATE KEY-----"
     result = scan_payload(secret_content)
     assert result is not None
     assert "supersecret" not in result
-    assert "BEGIN RSA PRIVATE KEY" not in result
+    assert header not in result
 
 
 def test_guard_disabled_via_env_var(monkeypatch):

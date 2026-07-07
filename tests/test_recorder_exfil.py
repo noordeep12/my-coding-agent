@@ -30,9 +30,7 @@ class TestRecordExfil:
         events = _read_events(path)
         assert events[0]["type"] == EXFIL
 
-    def test_row_answerable_with_one_json_loads_and_has_no_secret_value(
-        self, tmp_path
-    ):
+    def test_row_answerable_with_one_json_loads_and_has_no_secret_value(self, tmp_path):
         rec, path = _make_recorder(tmp_path)
         rec.record_exfil(tool_name="fetch_web", category="ssh_key", step=2)
         raw_line = path.read_text().splitlines()[0]
