@@ -24,6 +24,7 @@ from ...observability.recorder import (
 from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
 from ...utils.parsing import extract_finish_reason, extract_message, extract_usage
+from .. import sandbox
 from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
 from ..schema import (
     REPORT_SOURCE_FALLBACK,
@@ -173,6 +174,7 @@ class ToolRegistry:
         llm: "LLM | None" = None,
         skills: "dict[str, Skill] | None" = None,
         loaded_skills: set[str] | None = None,
+        step_num: int = 0,
     ):
         self._artifacts = artifacts if artifacts is not None else {}
         self._tools = tools if tools is not None else []
@@ -195,6 +197,10 @@ class ToolRegistry:
         # registries so a load in one step is remembered in the next (D5/D6).
         self._skills = skills if skills is not None else {}
         self._loaded_skills = loaded_skills if loaded_skills is not None else set()
+        # Carried only to attribute a sandbox-denial event (record_sandbox_denial)
+        # to the step it happened in; defaults to 0 for callers (mostly tests)
+        # that construct a registry outside a run.
+        self._step_num = step_num
 
     def _resolve_in_base(self, file_path: str) -> Path:
         """Resolve file_path against the workspace base, rejecting any escape.
@@ -242,18 +248,45 @@ class ToolRegistry:
                 string provides stdin that is immediately exhausted (EOF), which is
                 distinct from omitting it.
         """
+        sandboxed = sandbox.is_enabled()
+        if sandboxed:
+            capability = sandbox.probe_host_capability()
+            if not capability.supported:
+                # Fail-closed: enabling the flag on an unsupported host must
+                # never silently fall through to unconfined execution (design.md
+                # decision 4). No subprocess runs at all.
+                return json.dumps(
+                    {
+                        "stdout": "",
+                        "stderr": (
+                            "Error: bash sandbox is enabled "
+                            f"({sandbox.ENV_VAR}) but unavailable on this host: "
+                            f"{capability.reason}. Refusing to run unsandboxed."
+                        ),
+                        "exit_code": -1,
+                        "ok": False,
+                    }
+                )
+            scope = sandbox.default_scope(self._base_dir)
+            argv: str | list[str] = sandbox.wrap_command(command, scope)
+        else:
+            argv = command
         try:
-            # shell=True is required here: this bash tool is a first-class execution
-            # surface for the LLM coding agent. It must support shell features such as
-            # pipes (`|`), redirections (`>`), builtins (`cd`), and compound commands
-            # (`&&`, `;`). Splitting on whitespace and passing a list would break these
-            # core use cases. The command originates from the LLM (not from raw,
-            # unmediated user string interpolation), and shell=True on this surface is
-            # a documented, intentional design decision — not an incidental subprocess
-            # call. CONTRIBUTE.md §32 is acknowledged; this is the approved exception.
+            # shell=True (unsandboxed path) is required here: this bash tool is a
+            # first-class execution surface for the LLM coding agent. It must
+            # support shell features such as pipes (`|`), redirections (`>`),
+            # builtins (`cd`), and compound commands (`&&`, `;`). Splitting on
+            # whitespace and passing a list would break these core use cases. The
+            # command originates from the LLM (not from raw, unmediated user
+            # string interpolation), and shell=True on this surface is a
+            # documented, intentional design decision — not an incidental
+            # subprocess call. CONTRIBUTE.md §32 is acknowledged; this is the
+            # approved exception. The sandboxed path instead runs a fixed argv
+            # (`sandbox-exec -p <profile> /bin/sh -c <command>`), so shell=False
+            # there — the shell features still work, just inside `/bin/sh -c`.
             result = subprocess.run(  # nosec B602  # noqa: S602
-                command,
-                shell=True,
+                argv,
+                shell=not sandboxed,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -270,6 +303,15 @@ class ToolRegistry:
             )
         stdout = result.stdout.rstrip()
         stderr = result.stderr.rstrip()
+        if sandboxed and result.returncode != 0 and sandbox.is_likely_denial(stderr):
+            recorder = current_recorder.get()
+            if recorder is not None:
+                recorder.record_sandbox_denial(
+                    command=command,
+                    exit_code=result.returncode,
+                    stderr=stderr,
+                    step=self._step_num,
+                )
         full = {
             "stdout": stdout,
             "stderr": stderr,

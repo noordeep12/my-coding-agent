@@ -27,6 +27,7 @@ from ..utils import (
     print_banner,
     print_run_summary,
 )
+from . import sandbox
 from .checkpoint import Checkpoint, remove_checkpoint, save_checkpoint
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 from .llm.errors import LLMCallError
@@ -207,6 +208,12 @@ class AgentNode(BaseNode):
         self.recorder.start(
             self.label, self.llm.model, self.llm.context_window, posture
         )
+        if sandbox.is_enabled():
+            scope = sandbox.default_scope(Path.cwd())
+            self.recorder.record_sandbox_activation(
+                workspace_root=str(scope.workspace_root),
+                extra_write_paths=[str(p) for p in scope.extra_write_paths],
+            )
         if self._rendered_index is not None:
             # The *offered* record (D9): one skill-index event per session start /
             # continuation, only when an index was actually placed.
