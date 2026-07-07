@@ -34,6 +34,10 @@ docs/_build/
 .my_coding_agent/*
 !.my_coding_agent/skills/
 !.my_coding_agent/skills/**
+!.my_coding_agent/evals/
+.my_coding_agent/evals/*
+!.my_coding_agent/evals/cases/
+!.my_coding_agent/evals/cases/**
 .claude/
 .codex/
 
