@@ -16,6 +16,7 @@ from my_coding_agent.observability.recorder import (
     FINISH_CHECK,
     HANDOFF,
     LLM_CALL,
+    REFUSAL,
     REPORT,
     SUPERSESSION,
     TOKEN_TRACKING,
@@ -478,4 +479,46 @@ class TestRecordSupersession:
             context_window=1000,
         )
         events = [e for e in _read_events(path) if e["type"] == SUPERSESSION]
+        assert events == []
+
+
+class TestRecordRefusal:
+    def test_emits_correct_type_and_row_shape(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_refusal(
+            tool_name="bash",
+            command="rm -rf /",
+            rule_id="rm_root_class_path",
+            reason="Recursive force-delete of a root/home-class path.",
+            references=[
+                {
+                    "standard_id": "NIST SP 800-53 SI-7",
+                    "url": "https://csrc.nist.gov/controls/sp800-53/rev5/si-7",
+                }
+            ],
+            safer_alternative="Scope the delete to a specific subdirectory.",
+            step=4,
+        )
+        ev = _read_events(path)[-1]
+        assert ev["type"] == REFUSAL
+        assert ev["tool_name"] == "bash"
+        assert ev["command"] == "rm -rf /"
+        assert ev["rule_id"] == "rm_root_class_path"
+        assert ev["reason"]
+        assert ev["references"][0]["url"].startswith("http")
+        assert ev["safer_alternative"]
+        assert ev["step"] == 4
+        assert "started_at" in ev
+
+    def test_sessions_without_refusals_emit_none(self, tmp_path):
+        rec, path = _make_recorder(tmp_path)
+        rec.record_token_tracking(
+            step=1,
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            ctx_pct=0.1,
+            context_window=1000,
+        )
+        events = [e for e in _read_events(path) if e["type"] == REFUSAL]
         assert events == []

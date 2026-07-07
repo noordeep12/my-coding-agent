@@ -28,6 +28,7 @@ class ToolDispatchNode(BaseNode):
             tools=ctx.all_tools,
             skills=ctx.skills,
             loaded_skills=ctx.loaded_skills,
+            step_num=ctx.step_num,
         )
         tool_messages, records = executor.run()
 

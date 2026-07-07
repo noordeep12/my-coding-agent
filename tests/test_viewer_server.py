@@ -138,6 +138,30 @@ class TestRoutes:
         assert "a.source==='verbatim'" in node_badges_src
         assert "a.source==='summarizer'" in node_badges_src
 
+    def test_refusal_badge_rendered_tree_and_detail(self, server):
+        """A refused tool_call node shows a distinct `refusal-tag` in both the
+        tree row (TreeLeaf/TreeGroup) and the detail header, alongside — never
+        replacing — loop/anomaly, and the stats strip renders a refusal
+        count when the session's analytics carry one (issue #124)."""
+        port, _ = server
+        status, body = _get(port, "/")
+        html = body.decode()
+        assert "refusal-tag" in html
+        assert "node.refusal_flag" in html
+        assert "a.refusal_count" in html
+
+    def test_refusal_detail_block_renders_reason_and_reference_links(self, server):
+        port, _ = server
+        status, body = _get(port, "/")
+        html = body.decode()
+        detail_src = html[
+            html.index("function RefusalDetail") : html.index("function ToolResult")
+        ]
+        assert "refusal.reason" in detail_src
+        assert "refusal.safer_alternative" in detail_src
+        assert "r.url" in detail_src
+        assert "r.standard_id" in detail_src
+
     def test_sessions_empty_dir(self, server):
         port, _ = server
         status, body = _get(port, "/api/sessions")

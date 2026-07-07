@@ -545,6 +545,25 @@ def _build_llm_node(
     )
 
 
+def _refusal_metadata(result: Any) -> dict[str, Any] | None:
+    """Return the recorded envelope's ``metadata.refusal`` dict, or ``None``.
+
+    Reads the exact per-call fact the model itself saw (no positional
+    back-walk, unlike anomaly's streak matching): absent on any pre-change
+    trace or on a call the policy gate never refused.
+    """
+    if not isinstance(result, str):
+        return None
+    try:
+        parsed = json.loads(result)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    refusal = parsed.get("metadata", {}).get("refusal")
+    return refusal if isinstance(refusal, dict) else None
+
+
 def _build_tool_node(
     ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
 ) -> tuple[str, TraceNode]:
@@ -552,7 +571,7 @@ def _build_tool_node(
     counters["tool"] += 1
     node_id = f"{session_id}::step{step}::tool::{counters['tool']}"
     tool_name = ev.get("name", "tool")
-    return node_id, _make_node(
+    node = _make_node(
         id=node_id,
         type="tool_call",
         label=f"ToolDispatchNode ({tool_name})",
@@ -568,6 +587,8 @@ def _build_tool_node(
             "resources": ev.get("resources"),
         },
     )
+    node.refusal_flag = _refusal_metadata(ev.get("result")) is not None
+    return node_id, node
 
 
 def _build_handoff_node(
@@ -1133,7 +1154,8 @@ def _compute_analytics(
         Dict with ``total_tokens``, ``total_prompt_tokens``,
         ``total_completion_tokens``, ``cost_usd``, ``elapsed_s``,
         ``llm_call_count``, ``tool_call_count``, ``loop_count``,
-        ``anomaly_count``, ``by_kind`` (tokens per call kind) and ``by_agent``
+        ``anomaly_count``, ``refusal_count``, ``by_kind`` (tokens per call
+        kind) and ``by_agent``
         (per session id: tokens, wall time, call count), plus
         ``skill_offered_count`` / ``skill_loaded_count`` when skill events exist.
 
@@ -1143,7 +1165,7 @@ def _compute_analytics(
     ``main`` calls only, for step semantics.
     """
     prompt_total = completion_total = 0
-    llm_count = tool_count = loop_count = anomaly_count = 0
+    llm_count = tool_count = loop_count = anomaly_count = refusal_count = 0
     skill_loaded = 0
     by_kind: dict[str, dict[str, int]] = {}
     by_agent: dict[str, dict[str, Any]] = {}
@@ -1173,8 +1195,8 @@ def _compute_analytics(
             agent_agg["call_count"] += 1
         elif node.type == "tool_call":
             tool_count += 1
-            if node.loop_flag:
-                loop_count += 1
+            loop_count += int(node.loop_flag)
+            refusal_count += int(node.refusal_flag)
         elif node.type == "session_end":
             agent_agg = by_agent.setdefault(
                 node.agent, {"tokens": 0, "call_count": 0, "elapsed_s": None}
@@ -1191,6 +1213,7 @@ def _compute_analytics(
         "tool_call_count": tool_count,
         "loop_count": loop_count,
         "anomaly_count": anomaly_count,
+        "refusal_count": refusal_count,
         "by_kind": by_kind,
         "by_agent": by_agent,
     }

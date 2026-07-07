@@ -34,6 +34,7 @@ from my_coding_agent.engine.checkpoint import (
     find_last_resumable,
     load_checkpoint,
 )
+from my_coding_agent.engine.tool_execution import policy
 from my_coding_agent.engine.tool_registry import discover_skills
 
 # ``use_skill`` is registered conditionally — only when skills are discovered —
@@ -180,6 +181,15 @@ def _read_interactive_prompt() -> str:
     default=False,
     help="Resume the most recently checkpointed session.",
 )
+@click.option(
+    "--no-safety-gate",
+    is_flag=True,
+    default=False,
+    help=(
+        "Disable the dangerous-command refusal gate for this run "
+        "(same effect as MCA_DISABLE_DANGEROUS_COMMAND_GATE=1). See SECURITY.md."
+    ),
+)
 @click.version_option(version=__version__, prog_name="my-coding-agent")
 def main(
     prompt: str | None,
@@ -187,6 +197,7 @@ def main(
     max_steps: int,
     resume_id: str | None,
     resume_last: bool,
+    no_safety_gate: bool,
 ) -> None:
     """Run the coding-agent pipeline.
 
@@ -198,6 +209,17 @@ def main(
       uv run my-coding-agent --resume 3f9a1c2b4d5e
       uv run my-coding-agent --resume-last
     """
+    if no_safety_gate:
+        os.environ[policy.DISABLE_ENV_VAR] = "1"
+        click.secho(
+            "⚠ --no-safety-gate: the dangerous-command refusal gate is OFF for "
+            "this run. Every bash command the model emits executes verbatim, "
+            "with no pre-execution check. See SECURITY.md.",
+            fg="red",
+            bold=True,
+            err=True,
+        )
+
     if resume_id or resume_last:
         agent = _build_resumed_agent(resume_id, resume_last)
     else:

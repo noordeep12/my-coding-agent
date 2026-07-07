@@ -36,6 +36,7 @@ TOKEN_TRACKING = "token_tracking"
 FINISH_CHECK = "finish_check"
 SUMMARIZER = "summarizer"
 ANOMALY = "anomaly"
+REFUSAL = "refusal"
 SKILL_INDEX = "skill_index"
 SUPERSESSION = "supersession"
 # Run-resilience (D2): additive events for the LLM outage-recovery loop.
@@ -530,6 +531,37 @@ class Recorder:
                 "tool_name": tool_name,
                 "streak_len": streak_len,
                 "tokens_spent": tokens_spent,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_refusal(
+        self,
+        tool_name: str,
+        command: str,
+        rule_id: str,
+        reason: str,
+        references: list[dict[str, str]],
+        safer_alternative: str,
+        step: int,
+    ) -> None:
+        """Record one policy-refusal row (passive: reports what the gate refused).
+
+        Follows ``record_anomaly``'s template with a true wall-clock
+        ``started_at``. The recorder never participates in the refusal
+        decision — it only appends what the gate (``tool_execution.policy``)
+        already decided, via the executor.
+        """
+        self._emit(
+            {
+                "type": REFUSAL,
+                "tool_name": tool_name,
+                "command": command,
+                "rule_id": rule_id,
+                "reason": reason,
+                "references": references,
+                "safer_alternative": safer_alternative,
                 "step": step,
                 "started_at": _now(),
             }
