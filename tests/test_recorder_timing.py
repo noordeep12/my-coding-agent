@@ -33,7 +33,7 @@ def test_timed_events_start_and_end_fit_within_session_bounds(tmp_path):
     sdir.mkdir()
     rec = Recorder(session_id=sid, session_dir=sdir)
 
-    rec.start("Agent", "test-model", 8192)
+    rec.start("Agent", "test-model", 8192, "screened_only")
 
     # LLM call: wall start captured alongside the monotonic latency timer.
     llm_started_at = datetime.now().astimezone().isoformat(timespec="milliseconds")

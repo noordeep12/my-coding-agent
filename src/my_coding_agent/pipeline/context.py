@@ -29,6 +29,10 @@ class RunContext:
     all_tools: list[dict[str, Any]]
     llm: LLM
     recorder: Recorder
+    # "sandboxed" (the #25 OS sandbox is active) or "screened_only" (only the
+    # #124 textual refusal gate). Derived once from run config; see
+    # ``engine.tool_execution.policy.get_protection_posture``.
+    posture: str
 
     # --- mutable conversation state ---
     messages: list[dict[str, Any]]

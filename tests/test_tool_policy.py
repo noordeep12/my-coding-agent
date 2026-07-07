@@ -9,8 +9,12 @@ import pytest
 
 from my_coding_agent.engine.tool_execution.policy import (
     DISABLE_ENV_VAR,
+    POSTURE_SANDBOXED,
+    POSTURE_SCREENED_ONLY,
     RULES,
+    SANDBOX_ENV_VAR,
     evaluate,
+    get_protection_posture,
     is_gate_disabled,
 )
 
@@ -106,3 +110,19 @@ class TestDisableSwitch:
         monkeypatch.setenv(DISABLE_ENV_VAR, value)
         assert is_gate_disabled() is False
         assert evaluate("bash", {"command": "rm -rf /"}) is not None
+
+
+class TestProtectionPosture:
+    def test_screened_only_with_no_sandbox_flag(self, monkeypatch):
+        monkeypatch.delenv(SANDBOX_ENV_VAR, raising=False)
+        assert get_protection_posture() == POSTURE_SCREENED_ONLY
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "False"])
+    def test_screened_only_for_falsy_sandbox_flag(self, monkeypatch, value):
+        monkeypatch.setenv(SANDBOX_ENV_VAR, value)
+        assert get_protection_posture() == POSTURE_SCREENED_ONLY
+
+    @pytest.mark.parametrize("value", ["1", "true", "True", "yes"])
+    def test_sandboxed_for_truthy_sandbox_flag(self, monkeypatch, value):
+        monkeypatch.setenv(SANDBOX_ENV_VAR, value)
+        assert get_protection_posture() == POSTURE_SANDBOXED

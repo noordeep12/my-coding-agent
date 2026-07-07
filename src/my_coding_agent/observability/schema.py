@@ -52,6 +52,26 @@ EGRESS_REASON = "reason"
 EGRESS_TOOL_NAME = "tool_name"
 EGRESS_STEP = "step"
 
+# First-layer/limitation note carried on every refusal envelope (issue #130):
+# the gate is a high-signal textual screen, not a complete boundary — it can
+# be evaded by obfuscation (base64, ${IFS}, eval). OS-level enforcement (the
+# #25 sandbox) is what covers what text-matching cannot; this key exists so
+# the model/operator never infers completeness from a refusal alone.
+REFUSAL_POSTURE_NOTE = "posture_note"
+POSTURE_NOTE_TEXT = (
+    "This gate is a high-signal textual screen, not a complete boundary — "
+    "obfuscated commands can evade it. OS-level enforcement (sandbox), when "
+    "active, is what covers what text-matching cannot."
+)
+
+# Keys of the run-level "protection posture" recorded once per session on the
+# session_start row (issue #130): whether the run had OS-level enforcement
+# (the #25 sandbox) or only this textual gate. Absent on pre-change traces.
+POSTURE = "posture"
+POSTURE_SANDBOXED = "sandboxed"
+POSTURE_SCREENED_ONLY = "screened_only"
+
+
 # Keys of a "skill_index" row (``Recorder.record_skill_index``, issue #19),
 # emitted once per session start / continuation when a skill index is placed
 # into the opening user message. Absent entirely from a skill-free run.

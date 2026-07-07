@@ -32,6 +32,7 @@ from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 from .llm.errors import LLMCallError
 from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
 from .schema import REPORT_SOURCE_FALLBACK, llm_failure_stop_reason
+from .tool_execution.policy import get_protection_posture
 from .tool_registry.skills import RenderedIndex, Skill, build_opening_block
 
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
@@ -202,7 +203,10 @@ class AgentNode(BaseNode):
         self.failure_error = None
 
         t_start = time.monotonic()
-        self.recorder.start(self.label, self.llm.model, self.llm.context_window)
+        posture = get_protection_posture()
+        self.recorder.start(
+            self.label, self.llm.model, self.llm.context_window, posture
+        )
         if self._rendered_index is not None:
             # The *offered* record (D9): one skill-index event per session start /
             # continuation, only when an index was actually placed.
@@ -234,6 +238,7 @@ class AgentNode(BaseNode):
             all_tools=self.tools,
             llm=self.llm,
             recorder=self.recorder,
+            posture=posture,
             messages=self.messages,
             step_num=self.step_num,
             last_prompt_tokens=self.last_prompt_tokens,

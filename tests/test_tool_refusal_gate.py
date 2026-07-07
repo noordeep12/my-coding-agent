@@ -77,6 +77,11 @@ class TestRefusalEnvelope:
         assert refusal_meta["references"][0]["url"].startswith("http")
         assert refusal_meta["safer_alternative"]
         assert env["metadata"]["reason"] == "refused"
+        # first-layer/limitation note (issue #130): the gate never implies
+        # completeness; matching behavior itself is unchanged.
+        assert "not a complete boundary" in refusal_meta["posture_note"]
+        assert "obfuscat" in refusal_meta["posture_note"]
+        assert "Note:" in env["error"]
 
     def test_safe_call_envelope_shape_is_byte_identical_to_before(
         self, bare_executor, monkeypatch
