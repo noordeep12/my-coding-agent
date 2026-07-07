@@ -9,10 +9,9 @@ its cost is captured like any other call, and returns a ``JudgeVerdict``
 carrying a rationale per criterion so bias (verbosity/confidence preference)
 is inspectable rather than hidden behind a single number.
 
-This module does not yet register against the eval harness's scorer registry
-or ``EvalScore``/``Scorer`` contract (`openspec/changes/eval-harness-core/`)
-because that contract has not landed in code yet; it is registered once it
-does (see `openspec/changes/llm-as-judge/tasks.md` item 2.3).
+``JudgeScorer`` adapts a ``JudgeVerdict`` to the eval harness's ``Scorer``
+contract (``evals.scoring``) and is registered under the ``"judge"`` ref by
+this module's import (see ``evals/__init__.py``).
 """
 
 import json
@@ -21,8 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..engine.llm import LLM
 from ..engine.llm.schema import CALL_KIND_JUDGE
 from ..utils.parsing import extract_message
+from .schema import EvalCase, EvalScore
+from .scoring import RunResult, register_scorer
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -449,3 +451,70 @@ def calibrate(
         judge_scores=tuple(judge_scores),
         human_scores=tuple(human_scores),
     )
+
+
+# --- Scorer registration --------------------------------------------------
+
+
+class JudgeScorer:
+    """Adapts the rubric judge to the eval harness's ``Scorer`` contract.
+
+    ``case.expected`` must carry:
+        - ``rubric``: path to the rubric JSON artifact.
+        - ``pass_threshold``: minimum ``overall_score`` to pass the case.
+
+    An errored agent run, a missing/malformed rubric, or an unparseable
+    judge response are all recorded as a failed case with the reason in
+    ``EvalScore.detail`` — never a crashed run.
+    """
+
+    def __init__(self, llm: Any | None = None) -> None:
+        self._llm = llm if llm is not None else LLM()
+
+    def score(self, case: EvalCase, run_result: RunResult) -> EvalScore:
+        if run_result.errored:
+            return EvalScore(
+                case_id=case.id,
+                passed=False,
+                metrics={},
+                detail={"reason": "agent run errored"},
+            )
+
+        rubric_ref = case.expected.get("rubric")
+        if not rubric_ref:
+            return EvalScore(
+                case_id=case.id,
+                passed=False,
+                metrics={},
+                detail={"reason": "case.expected missing 'rubric'"},
+            )
+        threshold = case.expected.get("pass_threshold")
+        if threshold is None:
+            return EvalScore(
+                case_id=case.id,
+                passed=False,
+                metrics={},
+                detail={"reason": "case.expected missing 'pass_threshold'"},
+            )
+
+        try:
+            rubric = load_rubric(Path(rubric_ref))
+            verdict = score_with_judge(
+                self._llm, rubric, case.task, run_result.final_output
+            )
+        except (RubricError, JudgeError) as exc:
+            return EvalScore(
+                case_id=case.id, passed=False, metrics={}, detail={"reason": str(exc)}
+            )
+
+        metrics = {"overall_score": verdict.overall_score}
+        metrics.update({f"{c.name}_score": float(c.score) for c in verdict.criteria})
+        return EvalScore(
+            case_id=case.id,
+            passed=verdict.overall_score >= float(threshold),
+            metrics=metrics,
+            detail=verdict.to_dict(),
+        )
+
+
+register_scorer("judge", JudgeScorer())

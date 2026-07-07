@@ -2,12 +2,14 @@
 and calibration against human labels."""
 
 import json
+from pathlib import Path
 
 import pytest
 
 from my_coding_agent.evals.judge import (
     CriterionVerdict,
     JudgeError,
+    JudgeScorer,
     JudgeVerdict,
     LabelledCase,
     RubricError,
@@ -16,6 +18,8 @@ from my_coding_agent.evals.judge import (
     load_rubric,
     score_with_judge,
 )
+from my_coding_agent.evals.schema import EvalCase
+from my_coding_agent.evals.scoring import RunResult, resolve_scorer
 
 # --- fixtures ------------------------------------------------------------
 
@@ -292,3 +296,109 @@ def test_calibrate_unknown_criterion_raises(mocker, tmp_path):
     fake_llm = _fake_llm(mocker, _judge_json_response({"correctness": 5, "tone": 5}))
     with pytest.raises(JudgeError, match="no criterion"):
         calibrate(fake_llm, rubric, labelled, criterion_name="nonexistent")
+
+
+# --- JudgeScorer (eval harness Scorer contract) ----------------------------
+
+
+def _run_result(output, errored=False):
+    return RunResult(
+        final_output=output,
+        session_dir=Path("/tmp/session"),
+        session_id="sess1",
+        errored=errored,
+    )
+
+
+def test_judge_scorer_registered_under_judge_ref():
+    assert isinstance(resolve_scorer("judge"), JudgeScorer)
+
+
+def test_judge_scorer_passes_when_overall_score_meets_threshold(mocker, tmp_path):
+    rubric_path = _write_rubric(tmp_path, _well_formed_rubric_data())
+    fake_llm = _fake_llm(
+        mocker, _judge_json_response({"correctness": 5, "tone": 5}, overall_score=4.0)
+    )
+    scorer = JudgeScorer(llm=fake_llm)
+    case = EvalCase(
+        id="c1",
+        task="2+2?",
+        scorer="judge",
+        expected={"rubric": str(rubric_path), "pass_threshold": 3.5},
+    )
+
+    score = scorer.score(case, _run_result("4"))
+
+    assert score.passed is True
+    assert score.metrics["overall_score"] == 4.0
+    assert score.metrics["correctness_score"] == 5.0
+    assert "overall_rationale" in score.detail
+
+
+def test_judge_scorer_fails_when_overall_score_below_threshold(mocker, tmp_path):
+    rubric_path = _write_rubric(tmp_path, _well_formed_rubric_data())
+    fake_llm = _fake_llm(
+        mocker, _judge_json_response({"correctness": 1, "tone": 1}, overall_score=1.0)
+    )
+    scorer = JudgeScorer(llm=fake_llm)
+    case = EvalCase(
+        id="c1",
+        task="2+2?",
+        scorer="judge",
+        expected={"rubric": str(rubric_path), "pass_threshold": 3.5},
+    )
+
+    score = scorer.score(case, _run_result("banana"))
+    assert score.passed is False
+
+
+def test_judge_scorer_errored_run_fails_without_calling_judge(mocker, tmp_path):
+    rubric_path = _write_rubric(tmp_path, _well_formed_rubric_data())
+    fake_llm = mocker.Mock()
+    scorer = JudgeScorer(llm=fake_llm)
+    case = EvalCase(
+        id="c1",
+        task="q",
+        scorer="judge",
+        expected={"rubric": str(rubric_path), "pass_threshold": 3.5},
+    )
+
+    score = scorer.score(case, _run_result("", errored=True))
+
+    assert score.passed is False
+    assert score.detail["reason"] == "agent run errored"
+    fake_llm.chat_completion.assert_not_called()
+
+
+def test_judge_scorer_missing_rubric_field_fails_clearly(mocker):
+    scorer = JudgeScorer(llm=mocker.Mock())
+    case = EvalCase(id="c1", task="q", scorer="judge", expected={"pass_threshold": 3})
+    score = scorer.score(case, _run_result("a"))
+    assert score.passed is False
+    assert "rubric" in score.detail["reason"]
+
+
+def test_judge_scorer_missing_threshold_field_fails_clearly(mocker, tmp_path):
+    rubric_path = _write_rubric(tmp_path, _well_formed_rubric_data())
+    scorer = JudgeScorer(llm=mocker.Mock())
+    case = EvalCase(
+        id="c1", task="q", scorer="judge", expected={"rubric": str(rubric_path)}
+    )
+    score = scorer.score(case, _run_result("a"))
+    assert score.passed is False
+    assert "pass_threshold" in score.detail["reason"]
+
+
+def test_judge_scorer_malformed_rubric_fails_clearly(mocker, tmp_path):
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("not json")
+    scorer = JudgeScorer(llm=mocker.Mock())
+    case = EvalCase(
+        id="c1",
+        task="q",
+        scorer="judge",
+        expected={"rubric": str(bad_path), "pass_threshold": 3},
+    )
+    score = scorer.score(case, _run_result("a"))
+    assert score.passed is False
+    assert "not valid JSON" in score.detail["reason"]
