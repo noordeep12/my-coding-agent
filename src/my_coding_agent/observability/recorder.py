@@ -42,6 +42,7 @@ SANDBOX_ACTIVATION = "sandbox_activation"
 SANDBOX_DENIAL = "sandbox_denial"
 PROVENANCE = "provenance"
 EXFIL = "exfil"
+HOOK = "hook"
 SKILL_INDEX = "skill_index"
 SUPERSESSION = "supersession"
 # Run-resilience (D2): additive events for the LLM outage-recovery loop.
@@ -599,6 +600,35 @@ class Recorder:
                 "tool_name": tool_name,
                 "host": host,
                 "matched_list": matched_list,
+                "reason": reason,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_hook(
+        self,
+        event: str,
+        hook_name: str,
+        outcome: str,
+        step: int,
+        tool_name: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Record one lifecycle-hook firing (passive: reports what fired/blocked).
+
+        Follows ``record_refusal``'s template with a true wall-clock
+        ``started_at``. The recorder never participates in the hook's
+        decision — it only appends what the hook mechanism (``engine.hooks``)
+        already decided, via the executor / ``AgentNode``.
+        """
+        self._emit(
+            {
+                "type": HOOK,
+                "event": event,
+                "hook_name": hook_name,
+                "tool_name": tool_name,
+                "outcome": outcome,
                 "reason": reason,
                 "step": step,
                 "started_at": _now(),

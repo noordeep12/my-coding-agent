@@ -21,6 +21,7 @@ from my_coding_agent.engine.checkpoint import (
     find_last_resumable,
     save_checkpoint,
 )
+from my_coding_agent.engine.hooks import Hooks
 from my_coding_agent.engine.llm import LLM
 from my_coding_agent.engine.llm.errors import LLMHTTPStatusError, LLMTransportError
 from my_coding_agent.engine.schema import REPORT_SOURCE_FALLBACK
@@ -63,6 +64,7 @@ def _make_agent(silent_logger, **overrides):
     agent.skills = {}
     agent.loaded_skills = set()
     agent._rendered_index = None
+    agent.hooks = Hooks()
     # Resume/resilience state (run-resilience) normally set by __init__.
     agent.resumed_from = None
     agent._resume_step = 0
