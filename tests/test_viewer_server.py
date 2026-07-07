@@ -100,7 +100,7 @@ class TestRoutes:
         tree_group_src = html[
             html.index("function TreeGroup") : html.index("function TreeLeaf")
         ]
-        assert "addedText(node.ctx_state)" in tree_group_src
+        assert "addedParts(node.ctx_state)" in tree_group_src
         assert "tleaf-sub" in tree_group_src
 
     def test_multiline_bash_badge_detection_source(self, server):
