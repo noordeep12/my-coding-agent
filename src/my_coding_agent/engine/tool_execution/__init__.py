@@ -637,6 +637,27 @@ class ToolExecutor:
             )
         return env, status, record
 
+    def _apply_provenance(
+        self, func_name: str, args: dict, env: dict[str, Any]
+    ) -> None:
+        """Demarcate a freshly-tagged untrusted result and update the
+        freshly-cloned-repo state from a completed ``bash`` call — the two
+        pieces of run-scoped state :func:`provenance.check_reduction` reads.
+        Called only from the success path of :meth:`after_tool_call`.
+        """
+        if env["ok"] and env["metadata"].get("provenance") == provenance.UNTRUSTED:
+            provenance.note_untrusted_content()
+            env["output"] = provenance.demarcate(env["output"])
+            if self.llm._recorder is not None:
+                self.llm._recorder.record_provenance(
+                    kind=PROVENANCE_KIND_MARK,
+                    tool_name=func_name,
+                    reason=f"{func_name} result tagged untrusted at ingestion",
+                    step=self.step_num,
+                )
+        if func_name == "bash":
+            provenance.note_bash_command(args.get("command", ""), env["ok"])
+
     def after_tool_call(
         self,
         tool_call_id: str,
@@ -723,19 +744,7 @@ class ToolExecutor:
             status, record = call_record(
                 func_name, args, tool_call_id, env, is_artifact, is_truncated
             )
-
-            if env["ok"] and env["metadata"].get("provenance") == provenance.UNTRUSTED:
-                provenance.note_untrusted_content()
-                env["output"] = provenance.demarcate(env["output"])
-                if self.llm._recorder is not None:
-                    self.llm._recorder.record_provenance(
-                        kind=PROVENANCE_KIND_MARK,
-                        tool_name=func_name,
-                        reason=f"{func_name} result tagged untrusted at ingestion",
-                        step=self.step_num,
-                    )
-            if func_name == "bash":
-                provenance.note_bash_command(args.get("command", ""), env["ok"])
+            self._apply_provenance(func_name, args, env)
 
         env["metadata"]["lang"] = resolve_lang(func_name, args, env)
         serialized = json.dumps(validate_tool_result(env), default=str)

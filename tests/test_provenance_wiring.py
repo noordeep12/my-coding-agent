@@ -184,7 +184,9 @@ class TestCloneAndBuildReduction:
             env = json.loads(content)
             assert env["ok"] is False
             assert status == "error"
-            assert env["metadata"]["reduction"]["rule_id"] == "clone_and_build_untrusted"
+            assert (
+                env["metadata"]["reduction"]["rule_id"] == "clone_and_build_untrusted"
+            )
             assert env["metadata"]["reduction"]["safer_alternative"]
             # Steerable: the error text names the reason so the model can adapt.
             assert "npm install" in env["error"]
@@ -236,10 +238,10 @@ class TestCloneAndBuildReduction:
             provenance.note_bash_command(
                 "git clone https://example.com/evil.git", ok=True
             )
-            raw, failure = bare_executor.invoke_tool(
-                "c4", "bash", {"command": "make"}
+            raw, failure = bare_executor.invoke_tool("c4", "bash", {"command": "make"})
+            bare_executor.after_tool_call(
+                "c4", "bash", {"command": "make"}, raw, failure
             )
-            bare_executor.after_tool_call("c4", "bash", {"command": "make"}, raw, failure)
             assert len(recorder.provenance_calls) == 1
             call = recorder.provenance_calls[0]
             assert call["kind"] == "reduction_refusal"
