@@ -24,7 +24,7 @@ from pathlib import Path
 
 import httpx
 
-from .schema import EgressConfig, SOURCES
+from .schema import SOURCES, EgressConfig
 
 logger = logging.getLogger(__name__)
 

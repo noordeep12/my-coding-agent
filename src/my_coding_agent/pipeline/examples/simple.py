@@ -28,13 +28,12 @@ from my_coding_agent import (
     __version__,
     tool,
 )
-from my_coding_agent.engine import OMLX_MODEL
+from my_coding_agent.engine import OMLX_MODEL, egress
 from my_coding_agent.engine.checkpoint import (
     CheckpointError,
     find_last_resumable,
     load_checkpoint,
 )
-from my_coding_agent.engine import egress
 from my_coding_agent.engine.tool_execution import policy
 from my_coding_agent.engine.tool_registry import discover_skills
 

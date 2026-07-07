@@ -547,8 +547,7 @@ class ToolExecutor:
         gate that made the decision (:mod:`engine.egress`) stays recorder-free.
         """
         error_text = (
-            f"Blocked (not a failure): destination {block.host!r} — "
-            f"{block.reason}"
+            f"Blocked (not a failure): destination {block.host!r} — {block.reason}"
         )
         metadata = {
             "reason": "egress_blocked",
