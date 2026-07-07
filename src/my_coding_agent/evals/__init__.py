@@ -1,7 +1,16 @@
-"""Evals — repeatable case runner, scorers, and result store for the agent."""
+"""Evals — repeatable case runner, scorers, result store, and versioned datasets."""
 
 from . import judge  # noqa: F401  (import registers the "judge" scorer)
 from .cases import load_case_set
+from .datasets import (
+    Dataset,
+    add_case,
+    add_failure_case,
+    create_dataset,
+    list_datasets,
+    load_dataset,
+    retire_case,
+)
 from .results import EvalRunResult, build_run_result, load_run_result, write_run_result
 from .runner import run_case_set
 from .schema import EvalCase, EvalScore
@@ -17,6 +26,7 @@ __all__ = [
     "Scorer",
     "TrajectoryScorer",
     "UnknownScorerError",
+    "Dataset",
     "load_case_set",
     "run_case_set",
     "build_run_result",
@@ -24,5 +34,11 @@ __all__ = [
     "load_run_result",
     "register_scorer",
     "resolve_scorer",
+    "create_dataset",
+    "load_dataset",
+    "add_case",
+    "retire_case",
+    "add_failure_case",
+    "list_datasets",
     "judge",
 ]
