@@ -41,6 +41,7 @@ EGRESS = "egress"
 SANDBOX_ACTIVATION = "sandbox_activation"
 SANDBOX_DENIAL = "sandbox_denial"
 PROVENANCE = "provenance"
+EXFIL = "exfil"
 SKILL_INDEX = "skill_index"
 SUPERSESSION = "supersession"
 # Run-resilience (D2): additive events for the LLM outage-recovery loop.
@@ -662,6 +663,27 @@ class Recorder:
                 "kind": kind,
                 "tool_name": tool_name,
                 "reason": reason,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_exfil(
+        self,
+        tool_name: str,
+        category: str,
+        step: int,
+    ) -> None:
+        """Record one exfiltration-guard block (passive: reports what the
+        guard blocked). Follows ``record_refusal``'s template — the recorder
+        never participates in the block decision, and never receives (so
+        never can leak) the matched secret value, only its category name.
+        """
+        self._emit(
+            {
+                "type": EXFIL,
+                "tool_name": tool_name,
+                "category": category,
                 "step": step,
                 "started_at": _now(),
             }

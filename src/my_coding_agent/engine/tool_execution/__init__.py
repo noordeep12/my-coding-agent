@@ -25,6 +25,8 @@ from ...observability.schema import (
     EGRESS_HOST,
     EGRESS_MATCHED_LIST,
     EGRESS_REASON,
+    EXFIL_CATEGORY,
+    EXFIL_TOOL_NAME,
     POSTURE_NOTE_TEXT,
     PROVENANCE_KIND_MARK,
     PROVENANCE_KIND_REDUCTION_REFUSAL,
@@ -37,7 +39,7 @@ from ...observability.schema import (
     REFUSAL_SAFER_ALTERNATIVE,
 )
 from ...utils import get_logger
-from .. import egress, provenance
+from .. import egress, exfil, provenance
 from . import args as arg_prep
 from . import policy
 from .concurrency import is_parallel_safe, max_tool_concurrency
@@ -434,10 +436,15 @@ class ToolExecutor:
         re-raise. Turning the raw result into the envelope is
         :meth:`after_tool_call`'s job.
 
-        Evaluated first, before any dispatch: a dangerous ``bash`` command line
+        Evaluated first, before any dispatch: a secret-exfiltration match on an
+        egress tool's outbound payload (:mod:`engine.exfil`, e.g. ``fetch_web``'s
+        ``url``) short-circuits to a ``reason: "exfil_blocked"`` descriptor
+        before anything else runs, since a blocked egress never needs a
+        bash-specific or destination check. Local reads are unaffected — only
+        egress tools are evaluated. Next, a dangerous ``bash`` command line
         matching :mod:`policy` never reaches ``getattr(self.registry, ...)`` or
         ``subprocess.run`` — it short-circuits to a ``reason: "refused"``
-        descriptor, one of six no-execution failure kinds alongside
+        descriptor, one of seven no-execution failure kinds alongside
         ``egress_blocked``/``reduced``/``not_found``/``wrong_args``/``raised``.
         A ``fetch_web`` call whose destination matches :mod:`engine.egress`'s
         known-malicious blocklist is checked next and short-circuits the same
@@ -450,6 +457,10 @@ class ToolExecutor:
         No gate makes a recorder call itself — that happens in
         :meth:`after_tool_call`, on the main thread, in call order.
         """
+        category = exfil.evaluate(func_name, args)
+        if category is not None:
+            return None, {"reason": "exfil_blocked", "category": category}
+
         refusal = policy.evaluate(func_name, args)
         if refusal is not None:
             return None, {"reason": "refused", "refusal": refusal}
@@ -592,6 +603,43 @@ class ToolExecutor:
             )
         return env, status, record
 
+    def _build_exfil_result(
+        self,
+        tool_call_id: str,
+        func_name: str,
+        args: dict,
+        category: str,
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Build the ``ok:false`` envelope for an exfiltration-guard block
+        (returns ``env, status, record``), and emit the WARNING log line and
+        the passive ``exfil`` event alongside it — follows
+        :meth:`_build_refusal_result`'s template. Names only the matched
+        category, never the secret value itself (design.md decision 3).
+        """
+        error_text = (
+            f"Blocked (not a failure): outbound payload for '{func_name}' "
+            f"matches a known-sensitive category ({category}) and was not "
+            "sent. Do not attempt to transmit this content off the machine."
+        )
+        metadata = {
+            "reason": "exfil_blocked",
+            "exfil": {EXFIL_TOOL_NAME: func_name, EXFIL_CATEGORY: category},
+        }
+        env = build_tool_result(func_name, False, "", error_text, metadata)
+        status = "error"
+        record = error_record(func_name, args, tool_call_id, error_text)
+
+        self.logger.warning(
+            "exfil blocked %s → %s: category=%s", tool_call_id, func_name, category
+        )
+        if self.llm._recorder is not None:
+            self.llm._recorder.record_exfil(
+                tool_name=func_name,
+                category=category,
+                step=self.step_num,
+            )
+        return env, status, record
+
     def _build_reduction_result(
         self,
         tool_call_id: str,
@@ -693,6 +741,10 @@ class ToolExecutor:
         if failure is not None and failure["reason"] == "refused":
             env, status, record = self._build_refusal_result(
                 tool_call_id, func_name, args, failure["refusal"]
+            )
+        elif failure is not None and failure["reason"] == "exfil_blocked":
+            env, status, record = self._build_exfil_result(
+                tool_call_id, func_name, args, failure["category"]
             )
         elif failure is not None and failure["reason"] == "egress_blocked":
             env, status, record = self._build_egress_blocked_result(

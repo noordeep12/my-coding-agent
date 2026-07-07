@@ -28,7 +28,7 @@ from my_coding_agent import (
     __version__,
     tool,
 )
-from my_coding_agent.engine import OMLX_MODEL, egress, sandbox
+from my_coding_agent.engine import OMLX_MODEL, egress, exfil, sandbox
 from my_coding_agent.engine.checkpoint import (
     CheckpointError,
     find_last_resumable,
@@ -200,6 +200,15 @@ def _read_interactive_prompt() -> str:
     ),
 )
 @click.option(
+    "--no-exfil-guard",
+    is_flag=True,
+    default=False,
+    help=(
+        "Disable the secret-exfiltration guard for this run "
+        "(same effect as MCA_DISABLE_EXFIL_GUARD=1). See SECURITY.md."
+    ),
+)
+@click.option(
     "--sandbox",
     "use_sandbox",
     is_flag=True,
@@ -219,6 +228,7 @@ def main(
     resume_last: bool,
     no_safety_gate: bool,
     no_egress_filter: bool,
+    no_exfil_guard: bool,
     use_sandbox: bool,
 ) -> None:
     """Run the coding-agent pipeline.
@@ -237,6 +247,16 @@ def main(
             "⚠ --no-safety-gate: the dangerous-command refusal gate is OFF for "
             "this run. Every bash command the model emits executes verbatim, "
             "with no pre-execution check. See SECURITY.md.",
+            fg="red",
+            bold=True,
+            err=True,
+        )
+    if no_exfil_guard:
+        os.environ[exfil.DISABLE_ENV_VAR] = "1"
+        click.secho(
+            "⚠ --no-exfil-guard: the secret-exfiltration guard is OFF for "
+            "this run. Outbound requests are never checked for known-sensitive "
+            "content, with no pre-send check. See SECURITY.md.",
             fg="red",
             bold=True,
             err=True,

@@ -99,6 +99,14 @@ PROVENANCE_STEP = "step"
 PROVENANCE_KIND_MARK = "mark"
 PROVENANCE_KIND_REDUCTION_REFUSAL = "reduction_refusal"
 
+# Keys of an "exfil" row (``Recorder.record_exfil``) and of the
+# ``metadata.exfil`` structure carried on a blocked tool call's envelope
+# (issue #127). Never carries the matched secret value — only the category
+# name the guard (``engine.exfil``) matched.
+EXFIL_TOOL_NAME = "tool_name"
+EXFIL_CATEGORY = "category"
+EXFIL_STEP = "step"
+
 # Keys of a "skill_index" row (``Recorder.record_skill_index``, issue #19),
 # emitted once per session start / continuation when a skill index is placed
 # into the opening user message. Absent entirely from a skill-free run.
