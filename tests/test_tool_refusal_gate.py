@@ -40,9 +40,7 @@ def _no_real_subprocess(monkeypatch):
 
 class TestGateBlocksExecution:
     def test_refused_command_spawns_no_subprocess_and_is_refused(self, bare_executor):
-        raw, failure = bare_executor.invoke_tool(
-            "c0", "bash", {"command": "rm -rf /"}
-        )
+        raw, failure = bare_executor.invoke_tool("c0", "bash", {"command": "rm -rf /"})
         assert raw is None
         assert failure is not None
         assert failure["reason"] == "refused"
@@ -116,9 +114,7 @@ class TestRefusalEnvelope:
 
 
 class TestBothDispatchPathsGated:
-    def test_sequential_dispatch_refuses_and_appends_error_result(
-        self, bare_executor
-    ):
+    def test_sequential_dispatch_refuses_and_appends_error_result(self, bare_executor):
         bare_executor.tool_calls = [
             _tool_call("bash", {"command": "rm -rf /"}, "c0"),
         ]

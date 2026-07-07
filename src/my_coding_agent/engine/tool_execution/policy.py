@@ -185,9 +185,7 @@ def _is_destructive_git_push(command: str) -> bool:
 
 # ── rule set ─────────────────────────────────────────────────────────────
 
-_CWE_78 = Reference(
-    "CWE-78", "https://cwe.mitre.org/data/definitions/78.html"
-)
+_CWE_78 = Reference("CWE-78", "https://cwe.mitre.org/data/definitions/78.html")
 _OWASP_CMD_INJECTION = Reference(
     "OWASP Command Injection",
     "https://owasp.org/www-community/attacks/Command_Injection",

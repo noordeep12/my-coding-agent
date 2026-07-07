@@ -10,6 +10,7 @@ Key ideas:
 - **Local-first**: targets OpenAI-compatible endpoints (MLX Server, Ollama) running on your machine
 - **Node-based pipeline**: the agentic loop is a DAG of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them
 - **Runtime anomaly detection**: while the run is live, a same-class tool-failure streak (e.g. the same tool failing 3+ times in a row with the same error class, regardless of args) is flagged the moment it happens — logged as a warning and recorded in the session's event stream, in main agents and subagents alike
+- **Dangerous-command refusal gate**: every `bash` call is checked against a deterministic, local rule set before it runs (recursive root/home deletes, remote-content-piped-to-shell, raw-device writes, fork bombs, permission blasts, credential exfiltration, destructive git force-pushes); a match never reaches the shell — the model gets back a structured refusal (reason + security-standard reference + safer alternative) so it can steer, and the refusal is logged and recorded for later review
 - **Decorator-based tools**: plain Python functions become LLM-callable tools
 - **Skills**: steer the agent's tool usage with plain-Markdown `SKILL.md` files, loaded on demand via `use_skill` — no Python edits, no system-prompt changes
 - **Context handoff**: when the context window fills up, the agent writes a structured summary of progress and spawns a fresh continuation — so long-running tasks don't get silently truncated
@@ -155,7 +156,7 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 |---|---|
 | `stderr.log` | Plain-text log of the full run |
 | `session_data.json` | Metrics, tool records, LLM call log, stop reason, usage rollup (own + delegated subagents, per call kind) |
-| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs, skill-index offers, outage waits/recovery) |
+| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs, skill-index offers, outage waits/recovery, dangerous-command refusals) |
 | `checkpoint.json` | Engine-owned per-step resume checkpoint (exact `messages` + step/token counters), written atomically after each completed step; consumed by `--resume` |
 | `artifacts/<tool_call_id>.<stream>.txt` | Full content of each offloaded large output stream (`stdout`/`stderr`), written at creation so bash can skim it during the run |
 | `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
@@ -188,6 +189,7 @@ Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, serve
 - The current **session id** is shown in the header (click to copy); the picker dropdown lists all sessions
 - Loop-detected tool calls are flagged inline
 - Detected failure streaks are flagged inline too (a distinct **anomaly** tag on the affected tool calls, alongside a dedicated anomaly node reporting the streak's length, signature, and tokens spent) — separate from the loop flag
+- A tool call refused by the dangerous-command gate carries its own distinct **refused** tag (tree row + detail header, alongside — never replacing — loop/anomaly) and a **🛑 refused** count in the stats bar; its detail panel spells out the reason, the matched rule, clickable security-standard reference links, and the safer alternative
 - A **Breakdown** toggle in the stats bar (shown whenever the session has token-usage data) reveals per-call-kind and per-agent token totals across the whole delegated tree
 - When a run used [skills](#skills), `use_skill` tool calls carry a **🧠 skill** badge and the stats bar shows an **offered / loaded** count; traces recorded before skills existed load and render unchanged
 

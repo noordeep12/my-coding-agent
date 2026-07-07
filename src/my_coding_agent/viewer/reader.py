@@ -1195,10 +1195,8 @@ def _compute_analytics(
             agent_agg["call_count"] += 1
         elif node.type == "tool_call":
             tool_count += 1
-            if node.loop_flag:
-                loop_count += 1
-            if node.refusal_flag:
-                refusal_count += 1
+            loop_count += int(node.loop_flag)
+            refusal_count += int(node.refusal_flag)
         elif node.type == "session_end":
             agent_agg = by_agent.setdefault(
                 node.agent, {"tokens": 0, "call_count": 0, "elapsed_s": None}

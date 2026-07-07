@@ -505,7 +505,10 @@ class ToolExecutor:
         record = error_record(func_name, args, tool_call_id, error_text)
 
         self.logger.warning(
-            "refused %s → %s(%s): rule=%s", tool_call_id, func_name, command,
+            "refused %s → %s(%s): rule=%s",
+            tool_call_id,
+            func_name,
+            command,
             refusal.rule_id,
         )
         if self.llm._recorder is not None:

@@ -52,15 +52,19 @@ def _refused_result() -> str:
 
 
 def _session_events(session_id: str, *, with_refusal: bool) -> list:
-    tool_result = _refused_result() if with_refusal else json.dumps(
-        {
-            "schema_version": 1,
-            "tool": "bash",
-            "ok": True,
-            "output": "hi",
-            "error": None,
-            "metadata": {},
-        }
+    tool_result = (
+        _refused_result()
+        if with_refusal
+        else json.dumps(
+            {
+                "schema_version": 1,
+                "tool": "bash",
+                "ok": True,
+                "output": "hi",
+                "error": None,
+                "metadata": {},
+            }
+        )
     )
     return [
         _ev(
