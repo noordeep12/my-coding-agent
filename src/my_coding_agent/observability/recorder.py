@@ -161,8 +161,14 @@ class Recorder:
             fh.write(json.dumps(event, default=str) + "\n")
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
-    def start(self, label: str, model: str, context_window: int) -> None:
-        """Emit the session-start event with run metadata."""
+    def start(self, label: str, model: str, context_window: int, posture: str) -> None:
+        """Emit the session-start event with run metadata.
+
+        ``posture`` is the run's protection posture ("sandboxed" or
+        "screened_only", see ``engine.tool_execution.policy.
+        get_protection_posture``) — recorded once per run, passively; it
+        changes no enforcement. Pre-change traces have no ``posture`` key.
+        """
         self._sampler.start()
         self._emit(
             {
@@ -173,6 +179,7 @@ class Recorder:
                 "label": label,
                 "model": model,
                 "context_window": context_window,
+                "posture": posture,
                 "started_at": _now(),
             }
         )

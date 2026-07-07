@@ -173,6 +173,7 @@ def load_session(
                 "started_at": start_ev.get("started_at", ""),
                 "parent_session_id": start_ev.get("parent_session_id"),
                 "resumed_from": start_ev.get("resumed_from"),
+                "posture": start_ev.get("posture"),
             },
         )
     )
@@ -229,6 +230,7 @@ def load_session(
         nodes=graph.nodes,
         order=graph.order,
         analytics=analytics,
+        posture=start_ev.get("posture"),
     )
 
 

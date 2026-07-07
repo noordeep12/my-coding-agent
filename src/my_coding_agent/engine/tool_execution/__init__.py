@@ -25,6 +25,8 @@ from ...observability.schema import (
     EGRESS_HOST,
     EGRESS_MATCHED_LIST,
     EGRESS_REASON,
+    POSTURE_NOTE_TEXT,
+    REFUSAL_POSTURE_NOTE,
     REFUSAL_REASON,
     REFUSAL_REFERENCE_STANDARD_ID,
     REFUSAL_REFERENCE_URL,
@@ -500,7 +502,8 @@ class ToolExecutor:
         ref_text = "; ".join(f"{r['standard_id']} ({r['url']})" for r in references)
         error_text = (
             f"Refused (not a failure): {command!r} — {refusal.reason} "
-            f"Reference: {ref_text}. Safer alternative: {refusal.safer_alternative}"
+            f"Reference: {ref_text}. Safer alternative: {refusal.safer_alternative} "
+            f"Note: {POSTURE_NOTE_TEXT}"
         )
         metadata = {
             "reason": "refused",
@@ -509,6 +512,7 @@ class ToolExecutor:
                 REFUSAL_REASON: refusal.reason,
                 REFUSAL_REFERENCES: references,
                 REFUSAL_SAFER_ALTERNATIVE: refusal.safer_alternative,
+                REFUSAL_POSTURE_NOTE: POSTURE_NOTE_TEXT,
             },
         }
         env = build_tool_result(func_name, False, "", error_text, metadata)
