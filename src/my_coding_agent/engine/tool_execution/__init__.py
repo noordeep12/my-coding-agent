@@ -26,6 +26,8 @@ from ...observability.schema import (
     EGRESS_MATCHED_LIST,
     EGRESS_REASON,
     POSTURE_NOTE_TEXT,
+    PROVENANCE_KIND_MARK,
+    PROVENANCE_KIND_REDUCTION_REFUSAL,
     REFUSAL_POSTURE_NOTE,
     REFUSAL_REASON,
     REFUSAL_REFERENCE_STANDARD_ID,
@@ -35,7 +37,7 @@ from ...observability.schema import (
     REFUSAL_SAFER_ALTERNATIVE,
 )
 from ...utils import get_logger
-from .. import egress
+from .. import egress, provenance
 from . import args as arg_prep
 from . import policy
 from .concurrency import is_parallel_safe, max_tool_concurrency
@@ -435,15 +437,18 @@ class ToolExecutor:
         Evaluated first, before any dispatch: a dangerous ``bash`` command line
         matching :mod:`policy` never reaches ``getattr(self.registry, ...)`` or
         ``subprocess.run`` — it short-circuits to a ``reason: "refused"``
-        descriptor, one of five no-execution failure kinds alongside
-        ``egress_blocked``/``not_found``/``wrong_args``/``raised``. A
-        ``fetch_web`` call whose destination matches :mod:`engine.egress`'s
+        descriptor, one of six no-execution failure kinds alongside
+        ``egress_blocked``/``reduced``/``not_found``/``wrong_args``/``raised``.
+        A ``fetch_web`` call whose destination matches :mod:`engine.egress`'s
         known-malicious blocklist is checked next and short-circuits the same
-        way with ``reason: "egress_blocked"``. This is the single dispatch
-        choke point both the sequential and concurrent paths funnel through, so
-        both gates cover both by construction (and subagents, which share the
-        same executor). Neither gate makes a recorder call itself — that
-        happens in :meth:`after_tool_call`, on the main thread, in call order.
+        way with ``reason: "egress_blocked"``. Next, a build/install command
+        subject to the untrusted-content capability reduction
+        (:mod:`provenance`) short-circuits to a ``reason: "reduced"``
+        descriptor. This is the single dispatch choke point both the
+        sequential and concurrent paths funnel through, so every gate covers
+        both by construction (and subagents, which share the same executor).
+        No gate makes a recorder call itself — that happens in
+        :meth:`after_tool_call`, on the main thread, in call order.
         """
         refusal = policy.evaluate(func_name, args)
         if refusal is not None:
@@ -452,6 +457,10 @@ class ToolExecutor:
         block = egress.evaluate(func_name, args)
         if block is not None:
             return None, {"reason": "egress_blocked", "block": block}
+
+        reduction = provenance.check_reduction(func_name, args)
+        if reduction is not None:
+            return None, {"reason": "reduced", "reduction": reduction}
 
         if not hasattr(self.registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
@@ -583,6 +592,72 @@ class ToolExecutor:
             )
         return env, status, record
 
+    def _build_reduction_result(
+        self,
+        tool_call_id: str,
+        func_name: str,
+        args: dict,
+        reduction: provenance.Reduction,
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Build the ``ok:false`` envelope for a crossed capability-reduction
+        boundary (returns ``env, status, record``), mirroring
+        :meth:`_build_refusal_result`. Emits the passive ``provenance`` event
+        (kind ``reduction_refusal``) alongside it.
+        """
+        command = args.get("command", "") if func_name == "bash" else str(args)
+        error_text = (
+            f"Refused (reduced capability, not a failure): {command!r} — "
+            f"{reduction.reason} Safer alternative: {reduction.safer_alternative}"
+        )
+        metadata = {
+            "reason": "reduced",
+            "reduction": {
+                "rule_id": reduction.rule_id,
+                "reason": reduction.reason,
+                "safer_alternative": reduction.safer_alternative,
+            },
+        }
+        env = build_tool_result(func_name, False, "", error_text, metadata)
+        status = "error"
+        record = error_record(func_name, args, tool_call_id, error_text)
+
+        self.logger.warning(
+            "reduced %s → %s(%s): rule=%s",
+            tool_call_id,
+            func_name,
+            command,
+            reduction.rule_id,
+        )
+        if self.llm._recorder is not None:
+            self.llm._recorder.record_provenance(
+                kind=PROVENANCE_KIND_REDUCTION_REFUSAL,
+                tool_name=func_name,
+                reason=reduction.reason,
+                step=self.step_num,
+            )
+        return env, status, record
+
+    def _apply_provenance(
+        self, func_name: str, args: dict, env: dict[str, Any]
+    ) -> None:
+        """Demarcate a freshly-tagged untrusted result and update the
+        freshly-cloned-repo state from a completed ``bash`` call — the two
+        pieces of run-scoped state :func:`provenance.check_reduction` reads.
+        Called only from the success path of :meth:`after_tool_call`.
+        """
+        if env["ok"] and env["metadata"].get("provenance") == provenance.UNTRUSTED:
+            provenance.note_untrusted_content()
+            env["output"] = provenance.demarcate(env["output"])
+            if self.llm._recorder is not None:
+                self.llm._recorder.record_provenance(
+                    kind=PROVENANCE_KIND_MARK,
+                    tool_name=func_name,
+                    reason=f"{func_name} result tagged untrusted at ingestion",
+                    step=self.step_num,
+                )
+        if func_name == "bash":
+            provenance.note_bash_command(args.get("command", ""), env["ok"])
+
     def after_tool_call(
         self,
         tool_call_id: str,
@@ -622,6 +697,10 @@ class ToolExecutor:
         elif failure is not None and failure["reason"] == "egress_blocked":
             env, status, record = self._build_egress_blocked_result(
                 tool_call_id, func_name, args, failure["block"]
+            )
+        elif failure is not None and failure["reason"] == "reduced":
+            env, status, record = self._build_reduction_result(
+                tool_call_id, func_name, args, failure["reduction"]
             )
         elif failure is not None:
             env = build_tool_result(
@@ -665,6 +744,7 @@ class ToolExecutor:
             status, record = call_record(
                 func_name, args, tool_call_id, env, is_artifact, is_truncated
             )
+            self._apply_provenance(func_name, args, env)
 
         env["metadata"]["lang"] = resolve_lang(func_name, args, env)
         serialized = json.dumps(validate_tool_result(env), default=str)

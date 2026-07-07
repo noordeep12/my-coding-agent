@@ -24,7 +24,7 @@ from ...observability.recorder import (
 from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
 from ...utils.parsing import extract_finish_reason, extract_message, extract_usage
-from .. import sandbox
+from .. import provenance, sandbox
 from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
 from ..schema import (
     REPORT_SOURCE_FALLBACK,
@@ -825,10 +825,12 @@ class ToolRegistry:
                 text = resp.text
                 transform = "none"
 
-            metadata: dict = {
-                "content_type": media_type or "unknown",
-                "transform": transform,
-            }
+            metadata: dict = provenance.mark_untrusted(
+                {
+                    "content_type": media_type or "unknown",
+                    "transform": transform,
+                }
+            )
 
             truncated = len(text) > PAGE_FETCH_MAX_CHARS
             if truncated:

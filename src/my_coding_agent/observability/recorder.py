@@ -40,6 +40,7 @@ REFUSAL = "refusal"
 EGRESS = "egress"
 SANDBOX_ACTIVATION = "sandbox_activation"
 SANDBOX_DENIAL = "sandbox_denial"
+PROVENANCE = "provenance"
 SKILL_INDEX = "skill_index"
 SUPERSESSION = "supersession"
 # Run-resilience (D2): additive events for the LLM outage-recovery loop.
@@ -637,6 +638,30 @@ class Recorder:
                 "command": command,
                 "exit_code": exit_code,
                 "stderr": stderr,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_provenance(
+        self,
+        kind: str,
+        tool_name: str,
+        reason: str,
+        step: int,
+    ) -> None:
+        """Record one provenance row: an ingestion-time untrusted mark, or a
+        capability-reduction boundary refusal (passive; issue #128).
+
+        Follows ``record_refusal``'s template. Never echoes the ingested
+        content itself — only the tool name and a short reason are captured.
+        """
+        self._emit(
+            {
+                "type": PROVENANCE,
+                "kind": kind,
+                "tool_name": tool_name,
+                "reason": reason,
                 "step": step,
                 "started_at": _now(),
             }
