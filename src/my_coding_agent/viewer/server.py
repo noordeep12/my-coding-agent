@@ -110,6 +110,9 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .loop-tag{font-size:10px;font-weight:600;color:var(--amber);background:#fff3e6;border-radius:5px;padding:1px 6px}
 .anomaly-tag{font-size:10px;font-weight:600;color:var(--neg);background:var(--neg-bg);border-radius:5px;padding:1px 6px}
 .refusal-tag{font-size:10px;font-weight:600;color:#fff;background:var(--neg);border-radius:5px;padding:1px 6px}
+.posture-tag{font-size:10px;font-weight:600;border-radius:5px;padding:1px 6px}
+.posture-tag.sandboxed{color:var(--pos);background:var(--pos-bg)}
+.posture-tag.screened-only{color:var(--amber);background:#fff3e6}
 
 /* ── tree ── */
 .tree{display:flex;flex-direction:column;gap:1px}
@@ -537,6 +540,8 @@ function Stats({data}){
       <span><b>${data.steps}</b> steps</span>
       <span><b>${fmtNum(a.total_tokens||0)}</b> tokens</span>
       <span><b>${cost}</b></span>
+      ${data.posture==='sandboxed' ? html`<span class="posture-tag sandboxed">🔒 sandboxed</span>` : null}
+      ${data.posture==='screened_only' ? html`<span class="posture-tag screened-only">🛡 screened only</span>` : null}
       ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
       ${a.anomaly_count ? html`<span class="warn">⚠ ${a.anomaly_count} anomaly(s)</span>` : null}
       ${a.refusal_count ? html`<span class="warn">🛑 ${a.refusal_count} refused</span>` : null}

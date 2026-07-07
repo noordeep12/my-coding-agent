@@ -88,6 +88,9 @@ class TraceSession:
             keyboard navigation, the Explorer rail, and the Tree view.
         analytics: Aggregate statistics — total_tokens, cost_usd, elapsed_s,
             loop_count, llm_call_count, tool_call_count.
+        posture: This run's command-protection posture — ``"sandboxed"`` or
+            ``"screened_only"`` (issue #130) — or ``None`` for a trace
+            recorded before posture capture existed, which renders unchanged.
     """
 
     session_id: str
@@ -100,6 +103,7 @@ class TraceSession:
     nodes: dict[str, TraceNode] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
     analytics: dict[str, Any] = field(default_factory=dict)
+    posture: str | None = None
 
 
 # Signature shared by every per-event-type node builder in ``reader.py``:
