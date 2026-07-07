@@ -143,7 +143,6 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tleaf-name{font-weight:500;font-size:12px;flex:none}
 .tleaf-badges{display:flex;gap:5px;align-items:center;flex:none;overflow:hidden}
 .tleaf-sub{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:40px}
-.tleaf-sub.neg{color:var(--neg)}
 
 /* Detail-panel Section accordion (Outputs/Inputs/Attributes). */
 .twist{display:inline-block;transition:transform .12s;color:var(--muted);font-size:10px}
@@ -595,24 +594,24 @@ const PHASE_LABELS = {
 };
 const phaseLabel = p => PHASE_LABELS[p] || p;
 
-// Short "+N role" / "−N role" summary of what a node added to (and retired
-// from) the context window — right-aligned in the tree row.
-function addedText(cs){
-  if(!cs) return '';
-  const parts = [];
+// "+N role" / "−N role" segments of what a node added to (and retired from)
+// the context window — rendered as separate colored spans in the tree row.
+function addedParts(cs){
+  if(!cs) return {added:'', removed:''};
   const a = cs.added||{};
   const addedRoles = ROLE_ORDER.filter(r=>a[r]);
-  if(addedRoles.length){
-    parts.push(addedRoles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  '));
-  }
+  const added = addedRoles.length
+    ? addedRoles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  ')
+    : '';
+  let removed = '';
   if(cs.removed){
     const rem = cs.removed_by_role||{};
     const remRoles = ROLE_ORDER.filter(r=>rem[r]);
-    parts.push(remRoles.length
+    removed = remRoles.length
       ? remRoles.map(r=>'−'+fmtNum(rem[r])+' '+ROLE_META[r].label).join('  ')
-      : '−'+fmtNum(cs.removed));
+      : '−'+fmtNum(cs.removed);
   }
-  return parts.join('  ');
+  return {added, removed};
 }
 
 // ISO timestamp → HH:MM:SS (best-effort; falls back to the raw value).
@@ -771,7 +770,7 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
   // e.g. read_tool_artifact's artifact_query) still contributes to the
   // context window itself — show the same "+N role" summary TreeLeaf shows,
   // so grouped nodes don't silently drop their own ctx-window contribution.
-  const summary = node.type!=='session' ? addedText(node.ctx_state) : '';
+  const summary = node.type!=='session' ? addedParts(node.ctx_state) : {added:'',removed:''};
   const onRowClick = ()=>{ onSel(node.id); toggle(node.id); };
   return html`<div class=${'agroup'+(isSubagentRoot?' sub':'')}>
     <div class=${'agent-head'+(node.id===sel?' sel':'')} onClick=${onRowClick}>
@@ -782,7 +781,11 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
       </span>` : null}
       ${isSubagentRoot ? html`<span class="sub-tag">subagent</span>` : null}
       ${node.refusal_flag ? html`<span class="refusal-tag">refused</span>` : null}
-      ${summary ? html`<span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary}</span>` : null}
+      ${(summary.added || summary.removed) ? html`<span class="tleaf-sub">
+        ${summary.added ? html`<span class="ctx-delta-add">${summary.added}</span>` : null}
+        ${summary.added && summary.removed ? '  ' : null}
+        ${summary.removed ? html`<span class="ctx-delta-rem">${summary.removed}</span>` : null}
+      </span>` : null}
     </div>
     ${open ? html`<div class="agroup-body">
       <${TreeNodes} entries=${kids} data=${data} sel=${sel} onSel=${onSel}
@@ -794,7 +797,7 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
 function TreeLeaf({node,sel,onSel}){
   const ref = useRef(), selected = node.id===sel, m = meta(node.type);
   useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
-  const summary = addedText(node.ctx_state);
+  const summary = addedParts(node.ctx_state);
   const badges = treeBadges(node);
   return html`<div ref=${ref} class=${'tleaf'+(selected?' sel':'')} onClick=${()=>onSel(node.id)}>
     <span class="row-dot sm" style=${{background:m.dot}}></span>
@@ -803,7 +806,12 @@ function TreeLeaf({node,sel,onSel}){
       ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge sm '+x.c}>${x.t}</span>`)}
     </span>` : null}
     ${node.refusal_flag ? html`<span class="refusal-tag">refused</span>` : null}
-    <span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary || '—'}</span>
+    <span class="tleaf-sub">
+      ${summary.added ? html`<span class="ctx-delta-add">${summary.added}</span>` : null}
+      ${summary.added && summary.removed ? '  ' : null}
+      ${summary.removed ? html`<span class="ctx-delta-rem">${summary.removed}</span>` : null}
+      ${(!summary.added && !summary.removed) ? '—' : null}
+    </span>
   </div>`;
 }
 
