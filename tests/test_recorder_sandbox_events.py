@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+from my_coding_agent.engine.tool_execution.policy import POSTURE_SCREENED_ONLY
 from my_coding_agent.observability.recorder import (
     SANDBOX_ACTIVATION,
     SANDBOX_DENIAL,
@@ -70,7 +71,12 @@ class TestRecordSandboxDenial:
 class TestSandboxOffEmitsNoEvents:
     def test_no_sandbox_rows_when_never_recorded(self, tmp_path):
         rec, path = _make_recorder(tmp_path)
-        rec.start(label="Main Agent", model="test-model", context_window=8192)
+        rec.start(
+            label="Main Agent",
+            model="test-model",
+            context_window=8192,
+            posture=POSTURE_SCREENED_ONLY,
+        )
         rec.finish(stop_reason="clean", steps=1, elapsed_s=0.1)
         events = _read_events(path)
         assert not any(

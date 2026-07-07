@@ -18,7 +18,7 @@ src/my_coding_agent/
 │   ├── tool_execution/          ← ToolExecutor + pure helpers
 │   │   ├── __init__.py          ← ToolExecutor: per-message run() (before/call/after; overlaps read-only groups)
 │   │   ├── concurrency.py       ← Read-only independence gate + bounded worker ceiling (issue #65)
-│   │   ├── policy.py            ← Dangerous-command refusal rule set + evaluate() (issue #124); a first-layer textual gate, not a complete boundary — get_protection_posture() (issue #130)
+│   │   ├── policy.py            ← Dangerous-command refusal rule set + evaluate() (issue #124); a first-layer textual gate, not a complete boundary — get_protection_posture() (issue #130) reads engine.sandbox.is_enabled() (lazy import) to distinguish sandboxed from screened_only
 │   │   ├── schema.py            ← Canonical envelope shapes (version, keys, preview descriptor)
 │   │   ├── envelope.py          ← Envelope builders: build/validate/normalize
 │   │   ├── args.py              ← Tool-call parse + alias remap + kwarg strip

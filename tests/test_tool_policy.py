@@ -7,12 +7,12 @@ reference with a URL, and non-empty safer-alternative guidance.
 
 import pytest
 
+from my_coding_agent.engine.sandbox import ENV_VAR as SANDBOX_ENV_VAR
 from my_coding_agent.engine.tool_execution.policy import (
     DISABLE_ENV_VAR,
     POSTURE_SANDBOXED,
     POSTURE_SCREENED_ONLY,
     RULES,
-    SANDBOX_ENV_VAR,
     evaluate,
     get_protection_posture,
     is_gate_disabled,

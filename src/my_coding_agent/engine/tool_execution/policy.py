@@ -37,12 +37,6 @@ def is_gate_disabled() -> bool:
     return raw.strip().lower() not in ("", "0", "false")
 
 
-# Placeholder signal for the not-yet-implemented OS sandbox (issue #25). Read
-# at call time, same pattern as ``DISABLE_ENV_VAR``. Until #25 lands this is
-# never set, so posture is always "screened_only" — the honest current state,
-# not an implied guarantee.
-SANDBOX_ENV_VAR = "MCA_SANDBOX_ACTIVE"
-
 POSTURE_SANDBOXED = "sandboxed"
 POSTURE_SCREENED_ONLY = "screened_only"
 
@@ -50,14 +44,21 @@ POSTURE_SCREENED_ONLY = "screened_only"
 def get_protection_posture() -> str:
     """Return this run's command-protection posture.
 
-    ``POSTURE_SANDBOXED`` when OS-level enforcement (the #25 sandbox) is
-    active, else ``POSTURE_SCREENED_ONLY`` — this textual gate is the only
-    protection in force. This gate is high-signal but not exhaustive
-    (obfuscation defeats it by design, see module docstring); the posture
-    lets a consumer know honestly which boundary actually applied.
+    ``POSTURE_SANDBOXED`` when OS-level enforcement (the #25 sandbox,
+    ``engine.sandbox``) is active, else ``POSTURE_SCREENED_ONLY`` — this
+    textual gate is the only protection in force. This gate is high-signal
+    but not exhaustive (obfuscation defeats it by design, see module
+    docstring); the posture lets a consumer know honestly which boundary
+    actually applied.
+
+    Imports ``engine.sandbox`` lazily (inside the function, not at module
+    load time): that module has no internal imports of its own, so this
+    stays cycle-safe, but importing at call time keeps this module's own
+    "stdlib-only leaf" property intact for every other function in it.
     """
-    raw = os.environ.get(SANDBOX_ENV_VAR, "")
-    if raw.strip().lower() not in ("", "0", "false"):
+    from ..sandbox import is_enabled as sandbox_is_enabled
+
+    if sandbox_is_enabled():
         return POSTURE_SANDBOXED
     return POSTURE_SCREENED_ONLY
 

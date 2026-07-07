@@ -17,11 +17,12 @@ complete boundary and not protection against a determined adversary or an
 obfuscated command (base64, `$IFS`, `eval` tricks are not de-obfuscated). Text
 can be written in more ways than any rule set can enumerate, so this gap is
 inherent, not a bug to patch with more rules. What closes it is OS-level
-enforcement beneath the shell (sandboxing, tracked in #25) — a boundary that
-doesn't depend on parsing the command at all. The existing system-prompt
-safety guidance still matters; this gate backs it up with something actually
-enforced, and every refusal carries a note saying exactly this, so neither the
-model nor an operator infers completeness from a refusal alone.
+enforcement beneath the shell — the [opt-in `--sandbox` flag](README.md#sandboxing)
+(#25), a boundary that doesn't depend on parsing the command at all. The
+existing system-prompt safety guidance still matters; this gate backs it up
+with something actually enforced, and every refusal carries a note saying
+exactly this, so neither the model nor an operator infers completeness from a
+refusal alone.
 
 Every refusal is recorded (`events.jsonl`, a `refusal` event) and logged
 (`stderr.log`, a WARNING line), and shows up in the [Trace Explorer](README.md#trace-explorer)
@@ -31,10 +32,10 @@ why after the fact.
 ### Protection posture: screened-only vs. sandboxed
 
 Because the gap above is real, the harness records — once per run, passively —
-which boundary was actually in force: `sandboxed` when OS-level enforcement
-(#25) is active, otherwise `screened_only`. Until #25 lands, every run is
-honestly `screened_only`. The posture is on the `session_start` event in
-`events.jsonl` and surfaced as a distinct tag in the
+which boundary was actually in force: `sandboxed` when the `--sandbox` flag's
+OS-level enforcement (#25) is active for the run, otherwise `screened_only` —
+this textual gate is the only protection in force. The posture is on the
+`session_start` event in `events.jsonl` and surfaced as a distinct tag in the
 [Trace Explorer](README.md#trace-explorer), so a screened-only run is never
 mistaken for a sandboxed one.
 
