@@ -7,7 +7,12 @@ reference with a URL, and non-empty safer-alternative guidance.
 
 import pytest
 
-from my_coding_agent.engine.tool_execution.policy import RULES, evaluate
+from my_coding_agent.engine.tool_execution.policy import (
+    DISABLE_ENV_VAR,
+    RULES,
+    evaluate,
+    is_gate_disabled,
+)
 
 
 @pytest.mark.parametrize(
@@ -82,3 +87,22 @@ def test_refusal_exposes_same_fields_as_its_rule():
     assert refusal.reason == rule.reason
     assert refusal.references == rule.references
     assert refusal.safer_alternative == rule.safer_alternative
+
+
+class TestDisableSwitch:
+    def test_gate_enabled_by_default(self, monkeypatch):
+        monkeypatch.delenv(DISABLE_ENV_VAR, raising=False)
+        assert is_gate_disabled() is False
+        assert evaluate("bash", {"command": "rm -rf /"}) is not None
+
+    @pytest.mark.parametrize("value", ["1", "true", "True", "yes", "anything"])
+    def test_gate_disabled_by_truthy_values(self, monkeypatch, value):
+        monkeypatch.setenv(DISABLE_ENV_VAR, value)
+        assert is_gate_disabled() is True
+        assert evaluate("bash", {"command": "rm -rf /"}) is None
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "False"])
+    def test_gate_stays_enabled_for_falsy_values(self, monkeypatch, value):
+        monkeypatch.setenv(DISABLE_ENV_VAR, value)
+        assert is_gate_disabled() is False
+        assert evaluate("bash", {"command": "rm -rf /"}) is not None

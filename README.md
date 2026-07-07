@@ -10,7 +10,7 @@ Key ideas:
 - **Local-first**: targets OpenAI-compatible endpoints (MLX Server, Ollama) running on your machine
 - **Node-based pipeline**: the agentic loop is a DAG of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them
 - **Runtime anomaly detection**: while the run is live, a same-class tool-failure streak (e.g. the same tool failing 3+ times in a row with the same error class, regardless of args) is flagged the moment it happens — logged as a warning and recorded in the session's event stream, in main agents and subagents alike
-- **Dangerous-command refusal gate**: every `bash` call is checked against a deterministic, local rule set before it runs (recursive root/home deletes, remote-content-piped-to-shell, raw-device writes, fork bombs, permission blasts, credential exfiltration, destructive git force-pushes); a match never reaches the shell — the model gets back a structured refusal (reason + security-standard reference + safer alternative) so it can steer, and the refusal is logged and recorded for later review
+- **Dangerous-command refusal gate**: every `bash` call is checked against a deterministic, local rule set before it runs (recursive root/home deletes, remote-content-piped-to-shell, raw-device writes, fork bombs, permission blasts, credential exfiltration, destructive git force-pushes); a match never reaches the shell — the model gets back a structured refusal (reason + security-standard reference + safer alternative) so it can steer, and the refusal is logged and recorded for later review. Extensible (see [`SECURITY.md`](SECURITY.md)) and can be disabled with `--no-safety-gate` if you really need to
 - **Decorator-based tools**: plain Python functions become LLM-callable tools
 - **Skills**: steer the agent's tool usage with plain-Markdown `SKILL.md` files, loaded on demand via `use_skill` — no Python edits, no system-prompt changes
 - **Context handoff**: when the context window fills up, the agent writes a structured summary of progress and spawns a fresh continuation — so long-running tasks don't get silently truncated
@@ -203,6 +203,7 @@ Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, serve
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the module layout, agent loop, tool dispatch, context handoff, and session persistence.
 - [`CONTRIBUTE.md`](CONTRIBUTE.md) — development standards, tooling, testing, and commit conventions.
+- [`SECURITY.md`](SECURITY.md) — the dangerous-command refusal gate: how to disable it (`--no-safety-gate` / `MCA_DISABLE_DANGEROUS_COMMAND_GATE`) and how to extend its rule set.
 
 ## Documentation
 

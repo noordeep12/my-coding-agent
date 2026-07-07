@@ -17,10 +17,24 @@ system prompt, not containment of a determined adversary.
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
+
+# Opt-out switch (off by default): set to any value other than ""/"0"/"false"
+# to disable the gate for the process. Read at call time (not import time) so
+# the CLI's ``--no-safety-gate`` flag — which just sets this var before the
+# first tool call — and a shell-exported var behave identically; whichever is
+# in effect when ``evaluate`` runs wins. See SECURITY.md before using this.
+DISABLE_ENV_VAR = "MCA_DISABLE_DANGEROUS_COMMAND_GATE"
+
+
+def is_gate_disabled() -> bool:
+    """Return ``True`` when the dangerous-command refusal gate is disabled."""
+    raw = os.environ.get(DISABLE_ENV_VAR, "")
+    return raw.strip().lower() not in ("", "0", "false")
 
 
 @dataclass(frozen=True)
@@ -328,7 +342,13 @@ def evaluate(func_name: str, args: dict) -> Refusal | None:
     (interface deliberately takes ``func_name`` so future non-bash rules slot
     in without a signature change). Local and deterministic: no LLM call, no
     network access, no side effect.
+
+    Returns ``None`` unconditionally when :func:`is_gate_disabled` is true —
+    see ``MCA_DISABLE_DANGEROUS_COMMAND_GATE`` / ``--no-safety-gate`` in
+    SECURITY.md.
     """
+    if is_gate_disabled():
+        return None
     if func_name != "bash":
         return None
     command = args.get("command", "")
