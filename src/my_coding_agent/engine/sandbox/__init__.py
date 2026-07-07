@@ -69,7 +69,10 @@ def probe_host_capability() -> HostCapability:
 # write into any other process's temp space, defeating the scope. Only the
 # process's own ``$TMPDIR`` (specific, e.g. ``/var/folders/<hash>/<hash>/T``)
 # and the classic world-writable ``/tmp`` are allowed.
-_TEMP_ALLOWLIST_CANDIDATES = ("/tmp", "/private/tmp")
+# nosec B108 — these are sandbox *allowlist* entries the profile permits
+# writes to, not a location this module itself writes a file to; the
+# hardcoded-tmp-dir check doesn't apply to this usage.
+_TEMP_ALLOWLIST_CANDIDATES = ("/tmp", "/private/tmp")  # nosec B108
 
 
 def default_scope(workspace_root: Path | str) -> SandboxScope:

@@ -73,4 +73,6 @@ class TestSandboxOffEmitsNoEvents:
         rec.start(label="Main Agent", model="test-model", context_window=8192)
         rec.finish(stop_reason="clean", steps=1, elapsed_s=0.1)
         events = _read_events(path)
-        assert not any(e["type"] in (SANDBOX_ACTIVATION, SANDBOX_DENIAL) for e in events)
+        assert not any(
+            e["type"] in (SANDBOX_ACTIVATION, SANDBOX_DENIAL) for e in events
+        )

@@ -89,9 +89,7 @@ class TestNetworkDenied:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         scope = sandbox.default_scope(workspace)
-        argv = sandbox.wrap_command(
-            "curl -sS --max-time 3 http://example.com", scope
-        )
+        argv = sandbox.wrap_command("curl -sS --max-time 3 http://example.com", scope)
         result = _run(argv)
         assert result.returncode != 0
 

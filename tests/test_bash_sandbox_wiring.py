@@ -137,7 +137,9 @@ class TestUnsupportedHostDegradation:
                 supported=False, reason="unsupported platform 'Linux'"
             ),
         )
-        run = mocker.patch("my_coding_agent.engine.tool_registry.registry.subprocess.run")
+        run = mocker.patch(
+            "my_coding_agent.engine.tool_registry.registry.subprocess.run"
+        )
         out = ToolsRegistry(base_dir=str(tmp_path)).bash("echo hi")
         parsed = json.loads(out)
         assert parsed["ok"] is False
