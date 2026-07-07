@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 
+from my_coding_agent.evals.schema import EvalCase
+from my_coding_agent.evals.scoring import RunResult, resolve_scorer
 from my_coding_agent.evals.trajectory import (
+    TRAJECTORY_SCORER_REF,
     CostRollup,
     EfficiencyBaseline,
+    TrajectoryScorer,
     load_trajectory,
     score_argument_validity,
     score_efficiency,
@@ -287,3 +291,77 @@ class TestEfficiency:
         spiral_score = score_efficiency(spiral_cost, spiral_records, baseline=baseline)
 
         assert spiral_score.value < lean_score.value
+
+
+class TestTrajectoryScorer:
+    def _case(self, **expected):
+        return EvalCase(
+            id="c1", task="do it", scorer=TRAJECTORY_SCORER_REF, expected=expected
+        )
+
+    def test_registers_under_trajectory_ref(self):
+        assert isinstance(resolve_scorer(TRAJECTORY_SCORER_REF), TrajectoryScorer)
+
+    def test_errored_run_scores_failed_without_reading_the_trace(self, tmp_path):
+        run_result = RunResult(
+            final_output="",
+            session_dir=tmp_path / "does-not-exist",
+            session_id="sess1",
+            errored=True,
+        )
+        score = TrajectoryScorer().score(self._case(), run_result)
+        assert score.passed is False
+        assert score.metrics["trajectory"] == 0.0
+
+    def test_clean_run_produces_a_per_dimension_score_and_passes(self, tmp_path):
+        rec, sdir = _make_session(tmp_path)
+        _record_step_boundary(rec, 1, [{"role": "user", "content": "do it"}])
+        _record_ok(rec, "read_file", {"file_path": "a.py"})
+        _record_ok(rec, "write_file", {"file_path": "a.py", "content": "x"})
+        tool_records = [
+            {"name": "read_file", "args": {}, "ok": True, "status": "success"},
+            {"name": "write_file", "args": {}, "ok": True, "status": "success"},
+        ]
+        _finish_and_write_session_data(rec, sdir, tool_records, steps=2, elapsed_s=1.0)
+
+        run_result = RunResult(
+            final_output="done", session_dir=sdir, session_id=sdir.name, errored=False
+        )
+        score = TrajectoryScorer().score(self._case(), run_result)
+
+        assert score.passed is True
+        assert score.metrics["trajectory"] == 1.0
+        for dimension in (
+            "tool_selection",
+            "argument_validity",
+            "error_handling",
+            "efficiency",
+        ):
+            assert dimension in score.metrics
+            assert dimension in score.detail
+
+    def test_broken_run_scores_lower_than_pass_threshold(self, tmp_path):
+        rec, sdir = _make_session(tmp_path)
+        _record_step_boundary(rec, 1, [{"role": "user", "content": "do it"}])
+        failing_error = "Error: tool 'bash' raised OSError: boom"
+        _record_fail(rec, "bash", {}, failing_error)
+        _record_fail(rec, "bash", {}, failing_error)
+        _record_fail(rec, "bash", {}, failing_error)
+        tool_records = [
+            {
+                "name": "bash",
+                "args": {},
+                "ok": False,
+                "error": failing_error,
+                "status": "error",
+            }
+        ] * 3
+        _finish_and_write_session_data(rec, sdir, tool_records, steps=3, elapsed_s=1.0)
+
+        run_result = RunResult(
+            final_output="done", session_dir=sdir, session_id=sdir.name, errored=False
+        )
+        score = TrajectoryScorer().score(self._case(), run_result)
+
+        assert score.metrics["error_handling"] < 1.0
+        assert score.metrics["error_handling"] < score.metrics["tool_selection"]
