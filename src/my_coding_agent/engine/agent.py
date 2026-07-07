@@ -11,6 +11,7 @@ from typing import Any
 
 from ..observability import Recorder, current_session_id
 from ..observability.recorder import current_agent_node, current_recorder
+from ..observability.schema import HOOK_OUTCOME_FIRED
 from ..pipeline.context import RunContext
 from ..pipeline.handoff import handoff_to_user_message, save_handoff
 from ..pipeline.node import BaseNode
@@ -29,6 +30,8 @@ from ..utils import (
 )
 from . import sandbox
 from .checkpoint import Checkpoint, remove_checkpoint, save_checkpoint
+from .hooks import Hooks
+from .hooks.schema import EVENT_SESSION_END, EVENT_SESSION_START, HookContext
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 from .llm.errors import LLMCallError
 from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
@@ -120,6 +123,10 @@ class AgentNode(BaseNode):
         )
         self.llm = LLM(api_url, api_key, model)
         self.llm._recorder = self.recorder
+        # Developer-configured lifecycle hooks (issue #129): zero-config (no
+        # MCA_HOOKS_CONFIG) yields an empty registry, so a hook-free run's
+        # session bookkeeping is byte-identical to before this seam existed.
+        self.hooks = Hooks.load()
         self.tool_artifacts: dict = {}
         self.label = label
         self.messages = messages or []
@@ -220,6 +227,7 @@ class AgentNode(BaseNode):
             self.label, self.llm.model, self.llm.context_window, posture
         )
         self._record_sandbox_activation_if_enabled()
+        self._fire_session_hook(EVENT_SESSION_START)
         if self._rendered_index is not None:
             # The *offered* record (D9): one skill-index event per session start /
             # continuation, only when an index was actually placed.
@@ -319,6 +327,7 @@ class AgentNode(BaseNode):
                 remove_checkpoint(self._session_dir)
                 if self.resumed_from is not None:
                     remove_checkpoint(Path(".my_coding_agent") / self.resumed_from)
+            self._fire_session_hook(EVENT_SESSION_END)
             self.recorder.finish(
                 self.stop_reason, self.step_num, round(self.elapsed_seconds, 3)
             )
@@ -327,6 +336,22 @@ class AgentNode(BaseNode):
             current_agent_node.reset(_node_token)
 
         return result if result else ctx.messages
+
+    def _fire_session_hook(self, event: str) -> None:
+        """Fire and record every hook matching a session-boundary event.
+
+        Runs once each, from ``execute``'s own session bookkeeping (issue
+        #129) — a ``SessionStart``/``SessionEnd`` hook has no veto capability,
+        so only the recorded ``fired`` outcome matters here.
+        """
+        ctx = HookContext(event=event, session_id=self.session_id, step=self.step_num)
+        for spec, result in self.hooks.fire(event, ctx):
+            self.recorder.record_hook(
+                event=spec.event,
+                hook_name=spec.name,
+                outcome=HOOK_OUTCOME_FIRED,
+                step=self.step_num,
+            )
 
     def _sync_from_ctx(self, ctx: RunContext, t_start: float) -> None:
         self.step_num = ctx.step_num

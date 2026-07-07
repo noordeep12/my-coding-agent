@@ -115,6 +115,22 @@ SKILL_INDEX_COUNT = "count"
 SKILL_INDEX_CHARS = "chars"
 SKILL_INDEX_TIER = "tier"
 
+# Keys of a "hook" row (``Recorder.record_hook``, issue #129) — one row per
+# lifecycle hook firing (PreToolUse/PostToolUse/SessionStart/SessionEnd), kept
+# here so consumers can reference the contract without importing the recorder
+# or engine.hooks modules directly.
+HOOK_EVENT = "event"
+HOOK_NAME = "hook_name"
+HOOK_TOOL_NAME = "tool_name"
+HOOK_OUTCOME = "outcome"
+HOOK_REASON = "reason"
+HOOK_STEP = "step"
+
+# The two possible values of ``HOOK_OUTCOME``: a hook either lets the call
+# proceed, or (``PreToolUse`` only) vetoes it with a reason.
+HOOK_OUTCOME_FIRED = "fired"
+HOOK_OUTCOME_BLOCKED = "blocked"
+
 # Keys of a machine-wide "resources" object, optionally attached to timed
 # events (``llm_call``, ``tool_call``, ``summarizer``) and to the run-level
 # rollup in ``session_data.json`` (node-resource-monitoring). Absent means
