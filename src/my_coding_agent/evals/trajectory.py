@@ -6,11 +6,8 @@ spiral of redundant re-checks after the task was already done (issue #140).
 This module reads a completed run's session directory and scores that path:
 process dimensions (tool-selection correctness, argument validity, error
 handling) and efficiency dimensions (steps/tokens/wall-clock, redundancy).
-
-Registration against the eval harness's ``Scorer`` contract and scorer
-registry (issue #139, ``evals/scoring.py``) lands once that package exists;
-until then, ``load_trajectory`` and the ``score_*`` functions below are
-usable standalone against any session directory.
+``TrajectoryScorer`` combines the four into one ``EvalScore`` and registers
+under the ``trajectory`` ref in the eval harness's scorer registry (#139).
 """
 
 from __future__ import annotations
@@ -23,6 +20,14 @@ from typing import Any
 from ..pipeline.anomaly import STREAK_THRESHOLD, trailing_streak
 from ..viewer.reader import load_session
 from ..viewer.schema import TraceSession
+from .schema import EvalCase, EvalScore
+from .scoring import RunResult, register_scorer
+
+TRAJECTORY_SCORER_REF = "trajectory"
+
+# Overall trajectory score at or above which a case passes, absent a
+# case-supplied ``pass_threshold``.
+DEFAULT_PASS_THRESHOLD = 0.7
 
 # Tools whose successful call mutates persistent state (the workspace). Used
 # by the redundancy dimension to find the last state-changing action. A
@@ -351,3 +356,61 @@ def score_efficiency(
             }
     value = sum(sub_scores) / len(sub_scores)
     return DimensionScore("efficiency", value, detail)
+
+
+def _efficiency_baseline_from_expected(
+    expected: dict[str, Any],
+) -> EfficiencyBaseline | None:
+    """Build an ``EfficiencyBaseline`` from ``expected["efficiency_baseline"]``."""
+    payload = expected.get("efficiency_baseline")
+    if not payload:
+        return None
+    return EfficiencyBaseline(
+        max_steps=payload.get("max_steps"),
+        max_total_tokens=payload.get("max_total_tokens"),
+        max_elapsed_s=payload.get("max_elapsed_s"),
+    )
+
+
+class TrajectoryScorer:
+    """Deterministic scorer measuring a run's execution path, not its answer.
+
+    Combines the process dimensions (tool selection, argument validity,
+    error handling) and the efficiency dimension (steps/tokens/wall-clock,
+    redundancy) into one overall score — the mean of the four dimension
+    values. ``case.expected`` supports two optional keys:
+        - ``pass_threshold``: overall score at/above which the case passes
+          (default ``DEFAULT_PASS_THRESHOLD``).
+        - ``efficiency_baseline``: ``{"max_steps", "max_total_tokens",
+          "max_elapsed_s"}`` limits to score cost figures against.
+    """
+
+    def score(self, case: EvalCase, run_result: RunResult) -> EvalScore:
+        if run_result.errored:
+            return EvalScore(
+                case_id=case.id,
+                passed=False,
+                metrics={"trajectory": 0.0},
+                detail={"reason": "agent run errored"},
+            )
+
+        trace = load_trajectory(run_result.session_dir)
+        baseline = _efficiency_baseline_from_expected(case.expected)
+        dimensions = [
+            score_tool_selection(trace.tool_records),
+            score_argument_validity(trace.tool_records),
+            score_error_handling(trace.tool_records),
+            score_efficiency(trace.cost, trace.tool_records, baseline=baseline),
+        ]
+        overall = sum(d.value for d in dimensions) / len(dimensions)
+        threshold = case.expected.get("pass_threshold", DEFAULT_PASS_THRESHOLD)
+
+        return EvalScore(
+            case_id=case.id,
+            passed=overall >= threshold,
+            metrics={"trajectory": overall, **{d.name: d.value for d in dimensions}},
+            detail={d.name: d.detail for d in dimensions},
+        )
+
+
+register_scorer(TRAJECTORY_SCORER_REF, TrajectoryScorer())
