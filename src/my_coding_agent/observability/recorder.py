@@ -37,6 +37,7 @@ FINISH_CHECK = "finish_check"
 SUMMARIZER = "summarizer"
 ANOMALY = "anomaly"
 REFUSAL = "refusal"
+EGRESS = "egress"
 SKILL_INDEX = "skill_index"
 SUPERSESSION = "supersession"
 # Run-resilience (D2): additive events for the LLM outage-recovery loop.
@@ -562,6 +563,32 @@ class Recorder:
                 "reason": reason,
                 "references": references,
                 "safer_alternative": safer_alternative,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_egress(
+        self,
+        tool_name: str,
+        host: str,
+        matched_list: str,
+        reason: str,
+        step: int,
+    ) -> None:
+        """Record one egress-denial row (passive: reports what the filter blocked).
+
+        Follows ``record_refusal``'s template: the recorder never participates
+        in the block decision — it only appends what ``engine.egress`` already
+        decided, via the executor.
+        """
+        self._emit(
+            {
+                "type": EGRESS,
+                "tool_name": tool_name,
+                "host": host,
+                "matched_list": matched_list,
+                "reason": reason,
                 "step": step,
                 "started_at": _now(),
             }

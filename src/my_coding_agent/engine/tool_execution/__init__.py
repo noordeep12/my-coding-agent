@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING, Any
 from ...observability import current_session_id
 from ...observability.recorder import _now
 from ...observability.schema import (
+    EGRESS_HOST,
+    EGRESS_MATCHED_LIST,
+    EGRESS_REASON,
     REFUSAL_REASON,
     REFUSAL_REFERENCE_STANDARD_ID,
     REFUSAL_REFERENCE_URL,
@@ -30,6 +33,7 @@ from ...observability.schema import (
     REFUSAL_SAFER_ALTERNATIVE,
 )
 from ...utils import get_logger
+from .. import egress
 from . import args as arg_prep
 from . import policy
 from .concurrency import is_parallel_safe, max_tool_concurrency
@@ -428,16 +432,23 @@ class ToolExecutor:
         Evaluated first, before any dispatch: a dangerous ``bash`` command line
         matching :mod:`policy` never reaches ``getattr(self.registry, ...)`` or
         ``subprocess.run`` — it short-circuits to a ``reason: "refused"``
-        descriptor, the fourth no-execution failure kind alongside
-        ``not_found``/``wrong_args``/``raised``. This is the single dispatch
+        descriptor, one of five no-execution failure kinds alongside
+        ``egress_blocked``/``not_found``/``wrong_args``/``raised``. A
+        ``fetch_web`` call whose destination matches :mod:`engine.egress`'s
+        known-malicious blocklist is checked next and short-circuits the same
+        way with ``reason: "egress_blocked"``. This is the single dispatch
         choke point both the sequential and concurrent paths funnel through, so
-        the gate covers both by construction (and subagents, which share the
-        same executor). The gate itself makes no recorder call — that happens
-        in :meth:`after_tool_call`, on the main thread, in call order.
+        both gates cover both by construction (and subagents, which share the
+        same executor). Neither gate makes a recorder call itself — that
+        happens in :meth:`after_tool_call`, on the main thread, in call order.
         """
         refusal = policy.evaluate(func_name, args)
         if refusal is not None:
             return None, {"reason": "refused", "refusal": refusal}
+
+        block = egress.evaluate(func_name, args)
+        if block is not None:
+            return None, {"reason": "egress_blocked", "block": block}
 
         if not hasattr(self.registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
@@ -523,6 +534,50 @@ class ToolExecutor:
             )
         return env, status, record
 
+    def _build_egress_blocked_result(
+        self,
+        tool_call_id: str,
+        func_name: str,
+        args: dict,
+        block: "egress.EgressBlock",
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Build the ``ok:false`` envelope for an egress block (returns ``env,
+        status, record``), mirroring :meth:`_build_refusal_result`: emits the
+        WARNING log line and the passive ``egress`` event alongside it. The
+        gate that made the decision (:mod:`engine.egress`) stays recorder-free.
+        """
+        error_text = (
+            f"Blocked (not a failure): destination {block.host!r} — {block.reason}"
+        )
+        metadata = {
+            "reason": "egress_blocked",
+            "egress": {
+                EGRESS_HOST: block.host,
+                EGRESS_MATCHED_LIST: block.matched_list,
+                EGRESS_REASON: block.reason,
+            },
+        }
+        env = build_tool_result(func_name, False, "", error_text, metadata)
+        status = "error"
+        record = error_record(func_name, args, tool_call_id, error_text)
+
+        self.logger.warning(
+            "egress blocked %s → %s: host=%s list=%s",
+            tool_call_id,
+            func_name,
+            block.host,
+            block.matched_list,
+        )
+        if self.llm._recorder is not None:
+            self.llm._recorder.record_egress(
+                tool_name=func_name,
+                host=block.host,
+                matched_list=block.matched_list,
+                reason=block.reason,
+                step=self.step_num,
+            )
+        return env, status, record
+
     def after_tool_call(
         self,
         tool_call_id: str,
@@ -558,6 +613,10 @@ class ToolExecutor:
         if failure is not None and failure["reason"] == "refused":
             env, status, record = self._build_refusal_result(
                 tool_call_id, func_name, args, failure["refusal"]
+            )
+        elif failure is not None and failure["reason"] == "egress_blocked":
+            env, status, record = self._build_egress_blocked_result(
+                tool_call_id, func_name, args, failure["block"]
             )
         elif failure is not None:
             env = build_tool_result(

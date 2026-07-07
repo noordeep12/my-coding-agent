@@ -160,6 +160,59 @@ uv run pytest tests/test_tool_policy.py -v
 
 ---
 
+## The network egress filter
+
+Every `fetch_web` call is checked against an actively-maintained, open-source
+blocklist of publicly-catalogued malicious domains — **before** the connection
+proceeds — in
+[`engine/egress/`](src/my_coding_agent/engine/egress/__init__.py). A
+destination whose host (or a parent domain) is on the list never reaches
+`httpx`. The model gets back a structured block instead: which host, and which
+blocklist it matched — so it can steer to a legitimate destination.
+
+The default posture is **deny known-bad, allow unknown**: a host absent from
+the blocklist proceeds exactly as before. This is a known-bad layer on top of
+whatever default-deny sandboxing exists elsewhere, not a novel-threat
+detector — a host the security community hasn't catalogued yet is not caught.
+
+The blocklist (primary source: [hagezi Threat-Intelligence-Feeds](https://github.com/hagezi/dns-blocklists);
+secondary: [abuse.ch URLhaus](https://urlhaus.abuse.ch/)) is fetched to a local
+cache (`~/.my_coding_agent/egress_cache/blocklist.txt` by default) and
+refreshed once the cache is more than 24 hours old. It is **offline-tolerant
+by design**: a refresh that fails falls back to the last-good cache, and a run
+with no cache at all and no working refresh proceeds with the filter *open*
+(a logged warning, not a hard failure) — a stale or unreachable blocklist
+never blocks all outbound work.
+
+Every block is recorded (`events.jsonl`, an `egress` event) and logged
+(`stderr.log`, a WARNING line), and shows up in the [Trace Explorer](README.md#trace-explorer)
+as an errored `fetch_web` tool dispatch with the host and matched list in its
+metadata.
+
+### Disabling the filter
+
+**CLI flag:**
+```bash
+uv run my-coding-agent --no-egress-filter --prompt "..."
+```
+Prints a loud warning to stderr every time it's used.
+
+**Environment variable:**
+```bash
+export MCA_DISABLE_EGRESS_FILTER=1
+uv run my-coding-agent --prompt "..."
+```
+Any value other than empty, `0`, or `false` disables the filter. When
+disabled, `fetch_web` behaves exactly as it did before this feature existed,
+and no `egress` events are recorded.
+
+**Selecting the blocklist source** (`hagezi` by default):
+```bash
+export MCA_EGRESS_FILTER_SOURCE=urlhaus
+```
+
+---
+
 ## Reporting a security issue
 
 If you find a way to bypass the gate that you think is worth fixing broadly
