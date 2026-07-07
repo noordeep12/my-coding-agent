@@ -40,10 +40,16 @@ def _final_output(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _run_case_in_workspace(case: EvalCase) -> RunResult:
-    """Run one case's agent turn inside a fresh temp workspace, isolated from
-    the real repo and from other cases (cwd + `.my_coding_agent/` session dir
-    both resolve under the temp dir)."""
+def _run_and_score_case(case: EvalCase) -> EvalScore:
+    """Run one case's agent turn inside a fresh temp workspace and score it.
+
+    Isolated from the real repo and from other cases (cwd + `.my_coding_agent/`
+    session dir both resolve under the temp dir). Scoring happens before the
+    temp workspace is torn down (the `with` block still open) so a scorer
+    that reads the run's trace via `RunResult.session_dir` (e.g. the
+    trajectory scorer, #140) finds `events.jsonl`/`session_data.json` still
+    on disk — the workspace and its session dir don't outlive this call.
+    """
     original_cwd = Path.cwd()
     with tempfile.TemporaryDirectory(prefix="mca-eval-") as workspace:
         try:
@@ -58,22 +64,31 @@ def _run_case_in_workspace(case: EvalCase) -> RunResult:
             )
             try:
                 messages = agent.execute()
+                run_result = RunResult(
+                    final_output=_final_output(messages),
+                    session_dir=Path(workspace) / ".my_coding_agent" / agent.session_id,
+                    session_id=agent.session_id,
+                    errored=agent.failure_error is not None,
+                )
             except Exception:
                 logger.exception("case %s: agent run errored", case.id)
-                return RunResult(
+                run_result = RunResult(
                     final_output="",
                     session_dir=Path(workspace) / ".my_coding_agent" / agent.session_id,
                     session_id=agent.session_id,
                     errored=True,
                 )
-            return RunResult(
-                final_output=_final_output(messages),
-                session_dir=Path(workspace) / ".my_coding_agent" / agent.session_id,
-                session_id=agent.session_id,
-                errored=agent.failure_error is not None,
-            )
         finally:
             os.chdir(original_cwd)
+
+        try:
+            scorer = resolve_scorer(case.scorer)
+        except UnknownScorerError as exc:
+            logger.error("case %s: %s", case.id, exc)
+            return EvalScore(
+                case_id=case.id, passed=False, metrics={}, detail={"reason": str(exc)}
+            )
+        return scorer.score(case, run_result)
 
 
 def run_case_set(cases: list[EvalCase]) -> tuple[list[EvalScore], dict[str, float]]:
@@ -87,23 +102,7 @@ def run_case_set(cases: list[EvalCase]) -> tuple[list[EvalScore], dict[str, floa
         Per-case scores (one per case, in input order) and aggregate metrics
         (currently `pass_rate`).
     """
-    scores: list[EvalScore] = []
-    for case in cases:
-        run_result = _run_case_in_workspace(case)
-        try:
-            scorer = resolve_scorer(case.scorer)
-        except UnknownScorerError as exc:
-            logger.error("case %s: %s", case.id, exc)
-            scores.append(
-                EvalScore(
-                    case_id=case.id,
-                    passed=False,
-                    metrics={},
-                    detail={"reason": str(exc)},
-                )
-            )
-            continue
-        scores.append(scorer.score(case, run_result))
+    scores = [_run_and_score_case(case) for case in cases]
 
     pass_rate = (
         sum(1 for score in scores if score.passed) / len(scores) if scores else 0.0
