@@ -116,6 +116,7 @@ Local model time is the run's real cost, so a transient LLM failure must not thr
 | `MCA_LLM_OUTAGE_TOLERANCE_S` | `300` | Seconds the client keeps probing a stalled/restarting LLM server (transport / HTTP 5xx / 429) before giving up with a classified, resumable stop; other 4xx fail fast |
 | `MCA_SUPERSESSION` | `1` | Set to `0` to disable retiring provably-superseded tool results (restores append-only conversation behavior byte-for-byte) |
 | `MCA_BASH_SANDBOX` | unset (off) | Set to `1` for the same effect as `--sandbox`; a shell-exported value and the flag are equivalent |
+| `MCA_HOOKS_CONFIG` | unset | Path to a JSON file of lifecycle hooks (see [Hooks](#hooks)); unset means no hooks — byte-identical to a run without this feature |
 
 ## Sandboxing
 
@@ -166,6 +167,31 @@ description: Commit staged changes and push with a Conventional Commits message.
 Treat them as templates: copy one into a new `.my_coding_agent/skills/<name>/SKILL.md` (or `~/.my_coding_agent/skills/` for a user-wide skill) and edit the frontmatter and body for your own task.
 
 
+## Hooks
+
+Lifecycle hooks are a deterministic seam where developer-configured, in-process Python code can observe — or, for `PreToolUse`, veto — what happens at defined points in a session, independent of what the model decides (issue #129).
+
+**Events** (fired by the engine, never by the model): `PreToolUse` (before a tool call is dispatched), `PostToolUse` (after it completes), `SessionStart` (once, at the start of a run), `SessionEnd` (once, at the end).
+
+**Veto contract** — a `PreToolUse` hook may return a block decision that prevents the tool from running at all (no subprocess, no side effect). The call resolves to the standard `ok:false` envelope — `error` carries model-facing prose and `metadata.hook_block` carries the hook's name and reason — reusing the same no-execution path the dangerous-command refusal gate (`SECURITY.md`) already uses, as a `blocked_by_hook` sibling of `refused`/`not_found`/`wrong_args`/`raised`. Any other event's hooks are observe-only.
+
+**Configuration** — set `MCA_HOOKS_CONFIG` to a JSON file listing hook entries:
+
+```json
+[
+  {
+    "name": "block-dangerous-sentinel",
+    "event": "PreToolUse",
+    "tool": "bash",
+    "callable": "my_project.hooks:deny_sentinel"
+  }
+]
+```
+
+`callable` is a `"module:attribute"` reference to a Python function taking a `HookContext` and returning `HookResult.block(reason)` to veto, or `None`/`HookResult.allow()` to let the call proceed. `tool` (optional) restricts a tool-event hook to one tool name. Hooks fire in the order listed; a `PreToolUse` block short-circuits any hooks after it. A malformed entry is skipped with a warning, never fails the run; a hook that raises is caught, logged, and treated as `allow` (fail-open — a buggy observability hook must not stall a run). No `MCA_HOOKS_CONFIG` set means zero hooks load, so behavior, prompts, and tool schemas are byte-identical to a run without this feature.
+
+Every firing (allowed or blocked) is recorded as a passive `hook` row in `events.jsonl`; hook-free runs emit none.
+
 ## Observability
 
 Every run automatically records a structured `events.jsonl` alongside the other session files under `.my_coding_agent/<session_id>/`. No configuration needed — capture is always on.
@@ -174,7 +200,7 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 |---|---|
 | `stderr.log` | Plain-text log of the full run |
 | `session_data.json` | Metrics, tool records, LLM call log, stop reason, usage rollup (own + delegated subagents, per call kind) |
-| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs, skill-index offers, outage waits/recovery, dangerous-command refusals, exfiltration-guard blocks, the run's protection posture) |
+| `events.jsonl` | Structured event stream (LLM calls, tool I/O, handoffs, skill-index offers, outage waits/recovery, dangerous-command refusals, exfiltration-guard blocks, the run's protection posture, lifecycle hook firings) |
 | `checkpoint.json` | Engine-owned per-step resume checkpoint (exact `messages` + step/token counters), written atomically after each completed step; consumed by `--resume` |
 | `artifacts/<tool_call_id>.<stream>.txt` | Full content of each offloaded large output stream (`stdout`/`stderr`), written at creation so bash can skim it during the run |
 | `tool_artifacts.json` | End-of-run audit dump of the in-memory artifact records |
