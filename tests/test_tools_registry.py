@@ -594,6 +594,7 @@ def test_fetch_web_converts_html(mocker):
     assert out[1]["metadata"] == {
         "content_type": "text/html",
         "transform": "html-to-markdown",
+        "provenance": "untrusted",
     }
 
 
@@ -672,6 +673,7 @@ def test_fetch_web_json_with_escapes_stays_parseable(mocker):
     assert out[1]["metadata"] == {
         "content_type": "application/json",
         "transform": "none",
+        "provenance": "untrusted",
     }
 
 
@@ -694,7 +696,11 @@ def test_fetch_web_missing_content_type_is_verbatim(mocker):
     )
     out = ToolsRegistry.fetch_web("https://example.com/unknown")
     assert out[1]["stdout"] == body
-    assert out[1]["metadata"] == {"content_type": "unknown", "transform": "none"}
+    assert out[1]["metadata"] == {
+        "content_type": "unknown",
+        "transform": "none",
+        "provenance": "untrusted",
+    }
 
 
 def test_fetch_web_binary_content_type_rejected(mocker):

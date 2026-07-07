@@ -85,6 +85,20 @@ SANDBOX_DENIAL_EXIT_CODE = "exit_code"
 SANDBOX_DENIAL_STDERR = "stderr"
 SANDBOX_DENIAL_STEP = "step"
 
+# Keys of a "provenance" row (``Recorder.record_provenance``, issue #128),
+# emitted when ingested content is marked untrusted at entry or when a
+# capability-reduction boundary refuses an action. Absent entirely from a
+# run that ingests no external untrusted content.
+PROVENANCE_KIND = "kind"
+PROVENANCE_TOOL_NAME = "tool_name"
+PROVENANCE_REASON = "reason"
+PROVENANCE_STEP = "step"
+
+# The two provenance-row kinds implemented in this change: an ingestion-time
+# mark, and a reduction-refusal when a reduced-capability boundary is crossed.
+PROVENANCE_KIND_MARK = "mark"
+PROVENANCE_KIND_REDUCTION_REFUSAL = "reduction_refusal"
+
 # Keys of a "skill_index" row (``Recorder.record_skill_index``, issue #19),
 # emitted once per session start / continuation when a skill index is placed
 # into the opening user message. Absent entirely from a skill-free run.
