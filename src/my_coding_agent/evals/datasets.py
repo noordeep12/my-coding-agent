@@ -6,10 +6,11 @@ versions are never overwritten — each mutation appends a new version record
 to the dataset's on-disk history, so an old version's membership stays
 recoverable for comparisons that need to know exactly what a past run used.
 
-Datasets reference cases by id only (not the case content). This keeps the
-dataset model decoupled from the eval case file format defined in the eval
-harness core change; a lister/runner that also has that format loaded can
-resolve case ids to full ``EvalCase`` records.
+Datasets reference cases by id only (not the case content). ``resolve_cases``
+resolves a dataset's ordered ids to loaded ``EvalCase`` records via the eval
+case loader, and ``run_dataset`` runs those cases through the eval harness
+runner and stamps the exact dataset id + version (``id@vVERSION``) onto the
+written result record.
 """
 
 from __future__ import annotations
@@ -20,6 +21,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from .cases import load_case_set
+from .results import EvalRunResult, build_run_result, write_run_result
+from .runner import run_case_set
+from .schema import EvalCase
 
 logger = logging.getLogger(__name__)
 
@@ -255,23 +261,24 @@ def add_failure_case(
     *,
     case_id: str,
     task: str,
-    scorer_ref: str,
+    scorer: str,
     expected: dict,
     base_dir: Path = DEFAULT_DATASETS_DIR,
     cases_dir: Path = DEFAULT_CASES_DIR,
 ) -> Dataset:
     """Turn a recorded run failure into a new regression case and add it.
 
-    Writes a case file (id, task, scorer ref, expected/threshold data — the
-    same fields an ``EvalCase`` loads from disk) under ``cases_dir``, then
-    adds its id to the dataset as a new version.
+    Writes a case file under ``cases_dir`` with the exact fields
+    `evals.cases.load_case_set` requires (id, task, scorer, expected — plus
+    the dataset back-reference), then adds its id to the dataset as a new
+    version.
 
     Args:
         dataset_id: The dataset to add the regression case to.
         case_id: Stable id for the new case (must be unique under
             ``cases_dir``).
         task: The task prompt that produced the failure.
-        scorer_ref: The scorer ref to judge the regression case.
+        scorer: The scorer ref (registry key) to judge the regression case.
         expected: The scorer's expected/threshold payload.
         base_dir: Directory holding one subdirectory per dataset.
         cases_dir: Directory eval cases load from.
@@ -294,8 +301,9 @@ def add_failure_case(
             {
                 "id": case_id,
                 "task": task,
-                "scorer_ref": scorer_ref,
+                "scorer": scorer,
                 "expected": expected,
+                "dataset": dataset_id,
             },
             indent=2,
         )
@@ -307,6 +315,73 @@ def add_failure_case(
         base_dir=base_dir,
         note=f"regression case from run failure ({case_id})",
     )
+
+
+def dataset_ref(dataset: Dataset) -> str:
+    """Return the exact id+version stamp recorded on a run's result record."""
+    return f"{dataset.id}@v{dataset.version}"
+
+
+def resolve_cases(
+    dataset: Dataset, *, cases_dir: Path = DEFAULT_CASES_DIR
+) -> list[EvalCase]:
+    """Resolve a dataset's ordered case ids to loaded `EvalCase` records.
+
+    Args:
+        dataset: The dataset whose case ids to resolve.
+        cases_dir: Directory `EvalCase`s load from (`cases.load_case_set`).
+
+    Returns:
+        Loaded cases in the dataset's order. A case id with no matching case
+        file is skipped with a warning, consistent with the loader's
+        skip-malformed-not-fatal behavior.
+    """
+    by_id = {case.id: case for case in load_case_set(cases_dir)}
+    cases = []
+    for case_id in dataset.case_ids:
+        case = by_id.get(case_id)
+        if case is None:
+            logger.warning(
+                "dataset %s: case '%s' not found under %s",
+                dataset.id,
+                case_id,
+                cases_dir,
+            )
+            continue
+        cases.append(case)
+    return cases
+
+
+def run_dataset(
+    dataset: Dataset,
+    *,
+    cases_dir: Path = DEFAULT_CASES_DIR,
+    results_root: Path | None = None,
+) -> EvalRunResult:
+    """Run the harness against a dataset and stamp its id+version on the result.
+
+    Resolves the dataset's cases, runs them through the eval harness runner,
+    and writes a result record whose `dataset` field carries the exact
+    dataset id and version this run executed against (`id@vVERSION`), so a
+    downstream comparison can tell whether two runs are comparable.
+
+    Args:
+        dataset: The dataset version to run.
+        cases_dir: Directory `EvalCase`s load from.
+        results_root: Where to write the result record; defaults to the
+            runner's standard `.my_coding_agent/evals/` location.
+
+    Returns:
+        The written run result record.
+    """
+    cases = resolve_cases(dataset, cases_dir=cases_dir)
+    scores, aggregate_metrics = run_case_set(cases)
+    result = build_run_result(dataset_ref(dataset), scores, aggregate_metrics)
+    if results_root is None:
+        write_run_result(result)
+    else:
+        write_run_result(result, root=results_root)
+    return result
 
 
 def list_datasets(*, base_dir: Path = DEFAULT_DATASETS_DIR) -> list[Dataset]:

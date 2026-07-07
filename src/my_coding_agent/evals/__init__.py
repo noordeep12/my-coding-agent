@@ -7,9 +7,12 @@ from .datasets import (
     add_case,
     add_failure_case,
     create_dataset,
+    dataset_ref,
     list_datasets,
     load_dataset,
+    resolve_cases,
     retire_case,
+    run_dataset,
 )
 from .results import EvalRunResult, build_run_result, load_run_result, write_run_result
 from .runner import run_case_set
@@ -40,5 +43,8 @@ __all__ = [
     "retire_case",
     "add_failure_case",
     "list_datasets",
+    "resolve_cases",
+    "run_dataset",
+    "dataset_ref",
     "judge",
 ]
