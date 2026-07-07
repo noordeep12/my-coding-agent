@@ -110,6 +110,23 @@ def test_check_reduction_fires_when_cloned_and_untrusted_and_build_command():
     _in_context(run)
 
 
+def test_check_reduction_fires_on_relative_script_after_cd():
+    """Regression: `\\b\\./` never matches when preceded by whitespace (both
+    sides of that position are non-word), so a command like `cd repo &&
+    ./install.sh` — exactly what a steered model retries with after a `sh
+    <path>/install.sh` refusal — must still be caught."""
+
+    def run():
+        provenance.note_untrusted_content()
+        provenance.note_bash_command("git clone https://example.com/repo.git", ok=True)
+        reduction = provenance.check_reduction(
+            "bash", {"command": "cd /tmp/cloned_repo && ./install.sh"}
+        )
+        assert reduction is not None
+
+    _in_context(run)
+
+
 def test_check_reduction_ignores_non_bash_tools():
     def run():
         provenance.note_untrusted_content()

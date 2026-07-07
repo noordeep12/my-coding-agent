@@ -86,10 +86,18 @@ def is_freshly_cloned() -> bool:
 # narrow and high-signal, the same bias as `tool_execution.policy`: a false
 # positive here blocks legitimate work, so this only matches the concrete
 # clone-and-build pattern (design.md decision 3 / the 0DIN incident).
+#
+# The `./script.sh` branch cannot share the leading `\b` used by the other
+# alternatives: `.` is a non-word character, so `\b` immediately before it
+# never matches when preceded by whitespace (both sides of that position are
+# non-word) — `\b\./` would silently never fire on `... && ./install.sh`.
+# It instead requires start-of-string or a shell-metacharacter/space just
+# before the `./`.
 _INSTALL_BUILD_RE = re.compile(
     r"\b(npm\s+(install|ci)|yarn\s+install|pip3?\s+install|make\b|"
-    r"\./configure\b|\bsh\s+\S+\.sh\b|\bbash\s+\S+\.sh\b|\./\S+\.sh\b|"
     r"cargo\s+build|python3?\s+setup\.py)"
+    r"|(?:^|[\s;&|(])\./(?:\S+\.sh\b|configure\b)"
+    r"|\b(?:sh|bash)\s+\S+\.sh\b"
 )
 
 
