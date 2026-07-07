@@ -455,6 +455,56 @@ class ToolExecutor:
             self.llm._recorder.before_tool(func_name, args)
         return args
 
+    def _pre_dispatch_gate(
+        self,
+        func_name: str,
+        args: dict,
+        hook_firings: list[tuple[HookSpec, HookResult]] | None,
+    ) -> dict | None:
+        """Run every no-execution gate ahead of dispatch; return the first
+        failure descriptor, or ``None`` when every gate allows the call.
+
+        Order: ``PreToolUse`` hooks, then exfiltration, refusal, egress, and
+        provenance-reduction — see :meth:`invoke_tool`'s docstring for why
+        each one is checked in this order and covers both dispatch paths.
+        """
+        pre_ctx = HookContext(
+            event=EVENT_PRE_TOOL_USE,
+            session_id=current_session_id.get() or "",
+            step=self.step_num,
+            tool_name=func_name,
+            args=args,
+        )
+        firings = self.hooks.fire(EVENT_PRE_TOOL_USE, pre_ctx)
+        if hook_firings is not None:
+            hook_firings.extend(firings)
+        blocking = next((result for _, result in firings if result.blocked), None)
+        if blocking is not None:
+            blocking_spec = next(spec for spec, result in firings if result.blocked)
+            return {
+                "reason": BLOCKED_BY_HOOK_REASON,
+                "hook_name": blocking_spec.name,
+                "block_reason": blocking.reason,
+            }
+
+        category = exfil.evaluate(func_name, args)
+        if category is not None:
+            return {"reason": "exfil_blocked", "category": category}
+
+        refusal = policy.evaluate(func_name, args)
+        if refusal is not None:
+            return {"reason": "refused", "refusal": refusal}
+
+        block = egress.evaluate(func_name, args)
+        if block is not None:
+            return {"reason": "egress_blocked", "block": block}
+
+        reduction = provenance.check_reduction(func_name, args)
+        if reduction is not None:
+            return {"reason": "reduced", "reduction": reduction}
+
+        return None
+
     def invoke_tool(
         self,
         tool_call_id: str,
@@ -501,40 +551,9 @@ class ToolExecutor:
         No gate makes a recorder call itself — that happens in
         :meth:`after_tool_call`, on the main thread, in call order.
         """
-        pre_ctx = HookContext(
-            event=EVENT_PRE_TOOL_USE,
-            session_id=current_session_id.get() or "",
-            step=self.step_num,
-            tool_name=func_name,
-            args=args,
-        )
-        firings = self.hooks.fire(EVENT_PRE_TOOL_USE, pre_ctx)
-        if hook_firings is not None:
-            hook_firings.extend(firings)
-        blocking = next((result for _, result in firings if result.blocked), None)
-        if blocking is not None:
-            blocking_spec = next(spec for spec, result in firings if result.blocked)
-            return None, {
-                "reason": BLOCKED_BY_HOOK_REASON,
-                "hook_name": blocking_spec.name,
-                "block_reason": blocking.reason,
-            }
-
-        category = exfil.evaluate(func_name, args)
-        if category is not None:
-            return None, {"reason": "exfil_blocked", "category": category}
-
-        refusal = policy.evaluate(func_name, args)
-        if refusal is not None:
-            return None, {"reason": "refused", "refusal": refusal}
-
-        block = egress.evaluate(func_name, args)
-        if block is not None:
-            return None, {"reason": "egress_blocked", "block": block}
-
-        reduction = provenance.check_reduction(func_name, args)
-        if reduction is not None:
-            return None, {"reason": "reduced", "reduction": reduction}
+        gate_failure = self._pre_dispatch_gate(func_name, args, hook_firings)
+        if gate_failure is not None:
+            return None, gate_failure
 
         if not hasattr(self.registry, func_name):
             self.logger.error("not found: '%s' is not registered", func_name)
@@ -823,6 +842,84 @@ class ToolExecutor:
                 reason=result.reason,
             )
 
+    def _build_failure_result(
+        self, tool_call_id: str, func_name: str, args: dict, failure: dict
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Dispatch a ``failure`` descriptor to its envelope builder by ``reason``."""
+        reason = failure["reason"]
+        if reason == "refused":
+            return self._build_refusal_result(
+                tool_call_id, func_name, args, failure["refusal"]
+            )
+        if reason == BLOCKED_BY_HOOK_REASON:
+            return self._build_blocked_by_hook_result(
+                tool_call_id,
+                func_name,
+                args,
+                failure["hook_name"],
+                failure["block_reason"],
+            )
+        if reason == "exfil_blocked":
+            return self._build_exfil_result(
+                tool_call_id, func_name, args, failure["category"]
+            )
+        if reason == "egress_blocked":
+            return self._build_egress_blocked_result(
+                tool_call_id, func_name, args, failure["block"]
+            )
+        if reason == "reduced":
+            return self._build_reduction_result(
+                tool_call_id, func_name, args, failure["reduction"]
+            )
+        env = build_tool_result(
+            func_name, False, "", failure["error"], {"reason": reason}
+        )
+        status = "error"
+        record = error_record(func_name, args, tool_call_id, failure["error"])
+        return env, status, record
+
+    def _build_success_result(
+        self, tool_call_id: str, func_name: str, args: dict, raw_result: Any
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Turn a successful raw tool return into (env, status, record)."""
+        is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
+        preview: dict[str, Any] | None = None
+        error: str | None = None
+        duplicate_of: dict[str, Any] | None = None
+        if is_artifact:
+            _, artifact = raw_result
+            self.tool_artifacts[tool_call_id] = artifact
+            result, error, preview, duplicate_of = self._offload_streams(
+                tool_call_id, artifact
+            )
+        else:
+            result = raw_result
+        if not isinstance(result, str):
+            result = str(result)
+        pre_len = len(result)
+        result = validate_tool_output(
+            result, func_name, self.llm._session_log_path, is_summary=is_artifact
+        )
+        is_truncated = not is_artifact and len(result) < pre_len
+
+        self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
+        env = result_envelope(
+            func_name,
+            result,
+            is_artifact,
+            is_truncated,
+            tool_call_id,
+            self.tool_artifacts.get(tool_call_id),
+            preview=preview,
+            error=error,
+            duplicate_of=duplicate_of,
+        )
+        status, record = call_record(
+            func_name, args, tool_call_id, env, is_artifact, is_truncated
+        )
+        self._apply_provenance(func_name, args, env)
+        return env, status, record
+
     def after_tool_call(
         self,
         tool_call_id: str,
@@ -856,73 +953,14 @@ class ToolExecutor:
                 )
             return content
 
-        if failure is not None and failure["reason"] == "refused":
-            env, status, record = self._build_refusal_result(
-                tool_call_id, func_name, args, failure["refusal"]
+        if failure is not None:
+            env, status, record = self._build_failure_result(
+                tool_call_id, func_name, args, failure
             )
-        elif failure is not None and failure["reason"] == BLOCKED_BY_HOOK_REASON:
-            env, status, record = self._build_blocked_by_hook_result(
-                tool_call_id,
-                func_name,
-                args,
-                failure["hook_name"],
-                failure["block_reason"],
-            )
-        elif failure is not None and failure["reason"] == "exfil_blocked":
-            env, status, record = self._build_exfil_result(
-                tool_call_id, func_name, args, failure["category"]
-            )
-        elif failure is not None and failure["reason"] == "egress_blocked":
-            env, status, record = self._build_egress_blocked_result(
-                tool_call_id, func_name, args, failure["block"]
-            )
-        elif failure is not None and failure["reason"] == "reduced":
-            env, status, record = self._build_reduction_result(
-                tool_call_id, func_name, args, failure["reduction"]
-            )
-        elif failure is not None:
-            env = build_tool_result(
-                func_name, False, "", failure["error"], {"reason": failure["reason"]}
-            )
-            status = "error"
-            record = error_record(func_name, args, tool_call_id, failure["error"])
         else:
-            is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
-            preview: dict[str, Any] | None = None
-            error: str | None = None
-            duplicate_of: dict[str, Any] | None = None
-            if is_artifact:
-                _, artifact = raw_result
-                self.tool_artifacts[tool_call_id] = artifact
-                result, error, preview, duplicate_of = self._offload_streams(
-                    tool_call_id, artifact
-                )
-            else:
-                result = raw_result
-            if not isinstance(result, str):
-                result = str(result)
-            pre_len = len(result)
-            result = validate_tool_output(
-                result, func_name, self.llm._session_log_path, is_summary=is_artifact
+            env, status, record = self._build_success_result(
+                tool_call_id, func_name, args, raw_result
             )
-            is_truncated = not is_artifact and len(result) < pre_len
-
-            self.logger.tool("%s → %s: %s", tool_call_id, func_name, result)
-            env = result_envelope(
-                func_name,
-                result,
-                is_artifact,
-                is_truncated,
-                tool_call_id,
-                self.tool_artifacts.get(tool_call_id),
-                preview=preview,
-                error=error,
-                duplicate_of=duplicate_of,
-            )
-            status, record = call_record(
-                func_name, args, tool_call_id, env, is_artifact, is_truncated
-            )
-            self._apply_provenance(func_name, args, env)
 
         self._record_hook_firings(hook_firings or [], func_name)
         post_ctx = HookContext(
