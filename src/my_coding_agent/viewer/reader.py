@@ -990,6 +990,7 @@ def _assign_ctx_state(
         if own_window:
             window = own_window
 
+        prior_composition = dict(comp)
         added, removed, removed_by_role, estimated = _node_added(
             node, comp, first_snap, tpc
         )
@@ -1003,6 +1004,9 @@ def _assign_ctx_state(
             "window": window,
             "pct": pct,
             "composition": {r: comp[r] for r in _ROLES if comp[r]},
+            "prior_composition": {
+                r: prior_composition[r] for r in _ROLES if prior_composition[r]
+            },
             "added": added,
             "added_total": sum(added.values()),
             "removed": removed,

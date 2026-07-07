@@ -735,12 +735,15 @@ class TestLoadSession:
         sess = session.nodes[f"{sid}::session"]
         assert sess.ctx_state["composition"] == {"system": 80, "user": 20}
         assert sess.ctx_state["added"] == {"system": 80, "user": 20}
+        assert sess.ctx_state["prior_composition"] == {}
 
-        # The LLM call appends its own assistant output (completion tokens).
+        # The LLM call appends its own assistant output (completion tokens);
+        # prior_composition is the window as it stood before this node ran.
         llm1 = session.nodes[f"{sid}::step1::llm::1"]
         assert llm1.ctx_state["added"] == {"assistant": 50}
         assert llm1.ctx_state["composition"]["assistant"] == 50
         assert llm1.ctx_state["window"] == 8192
+        assert llm1.ctx_state["prior_composition"] == {"system": 80, "user": 20}
 
         # A tool dispatch appends an estimated tool-result token figure.
         tool1 = session.nodes[f"{sid}::step1::tool::1"]

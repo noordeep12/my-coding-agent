@@ -184,9 +184,16 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .ctx-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px}
 .bd-li{display:flex;align-items:center;gap:6px;font-size:11px}
 .bd-sw{width:9px;height:9px;border-radius:3px;display:inline-block}
-.ctx-delta{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:11px}
+.ctx-delta{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:11px;align-items:center}
 .ctx-delta-add{color:var(--pos)}
 .ctx-delta-rem{color:var(--neg)}
+.ctx-diff-btn{margin-left:auto;font-family:var(--font);font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer}
+.ctx-diff-btn:hover{color:var(--accent);border-color:var(--accent)}
+.ctx-diff{font-family:var(--mono);font-size:11px;margin-top:9px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ctx-diff-line{padding:2px 8px;white-space:pre}
+.ctx-diff-line.ctx-diff-ctx{color:var(--muted)}
+.ctx-diff-line.ctx-diff-add{color:var(--pos);background:var(--pos-bg)}
+.ctx-diff-line.ctx-diff-rem{color:var(--neg);background:var(--neg-bg)}
 
 /* ── sections ── */
 .section{border-bottom:1px solid var(--line)}
@@ -253,7 +260,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 <script>/*__VENDOR__*/</script>
 <script>
 'use strict';
-const { h, render } = window.preact;
+const { h, render, Fragment } = window.preact;
 const { useState, useEffect, useRef, useMemo, useCallback } = window.preactHooks;
 const html = window.htm.bind(h);
 
@@ -1013,6 +1020,45 @@ function CodeBox({value, lang:hint}){
   </div>`;
 }
 
+// Git-diff-style lines comparing a node's composition before/after it ran,
+// role by role: unchanged roles render as plain context lines, a role whose
+// count changed renders as a "-old" line followed by a "+new" line, and a
+// role that only exists on one side renders as a single +/- line.
+function ctxDiffLines(cs){
+  const prior = cs.prior_composition || {}, after = cs.composition || {};
+  const added = cs.added || {}, removedByRole = cs.removed_by_role || {};
+  const roles = ROLE_ORDER.filter(r=>prior[r]||after[r]);
+  const lines = [];
+  for(const r of roles){
+    const label = ROLE_META[r].label;
+    // Only a role this node actually added to or retired from (per the
+    // already-computed added/removed_by_role signal) counts as "changed" —
+    // system/user composition can drift a token or two between calls purely
+    // from re-anchoring's char-share estimate, which isn't a real edit and
+    // would otherwise show as a spurious -/+ pair.
+    if(!added[r] && !removedByRole[r]){
+      lines.push({cls:'ctx-diff-ctx', text:'  '+label+'  '+fmtNum(after[r]||prior[r]||0)});
+      continue;
+    }
+    const before = prior[r]||0, now = after[r]||0;
+    if(before) lines.push({cls:'ctx-diff-rem', text:'- '+label+'  '+fmtNum(before)});
+    if(now) lines.push({cls:'ctx-diff-add', text:'+ '+label+'  '+fmtNum(now)});
+  }
+  return lines;
+}
+
+function CtxDiff({cs}){
+  const [open,setOpen] = useState(false);
+  const lines = useMemo(()=>ctxDiffLines(cs), [cs]);
+  if(!lines.length) return null;
+  return html`<${Fragment}>
+    <button class="ctx-diff-btn" onClick=${()=>setOpen(!open)}>${open?'hide diff':'diff'}</button>
+    ${open ? html`<div class="ctx-diff">
+      ${lines.map((l,i)=>html`<div key=${i} class=${'ctx-diff-line '+l.cls}>${l.text}</div>`)}
+    </div>` : null}
+  <//>`;
+}
+
 function CtxCard({cs,agent}){
   if(!cs || cs.tokens==null) return null;
   const comp = cs.composition || {};
@@ -1048,6 +1094,7 @@ function CtxCard({cs,agent}){
         −${fmtNum(cs.removed)} retired
         <span class="muted">(${removedRoles.map(r=>ROLE_META[r].label+' '+fmtNum(removedByRole[r])).join(', ')})</span>
       </span>` : null}
+      <${CtxDiff} cs=${cs}/>
     </div>` : null}
   </div>`;
 }
