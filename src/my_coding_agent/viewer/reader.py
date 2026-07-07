@@ -212,7 +212,7 @@ def load_session(
     # Only this session's own nodes; embedded sub-agent nodes already carry the
     # ctx_state computed by their own recursive load, with their own window.
     _assign_ctx_state(
-        graph.nodes, graph.order, start_ev.get("context_window"), session_id
+        graph.nodes, graph.order, start_ev.get("context_window"), session_id, events
     )
     analytics = _compute_analytics(graph.nodes, model, end_ev, events)
     resource_rollup = _read_resource_rollup(session_dir)
@@ -959,11 +959,79 @@ def _node_added(
     return {}, 0, {}, False
 
 
+def _supersession_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return every raw ``supersession`` event, in the order they were recorded."""
+    return [ev for ev in events if ev.get("type") == "supersession"]
+
+
+def _find_retirement_detail(
+    ev: dict[str, Any],
+    tool_nodes: list[TraceNode],
+    claimed: set[int],
+    cur_messages: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Recover one retirement's exact before/after content from *ev*.
+
+    The "before" text is the retired tool_call's own recorded output — always
+    captured in full at dispatch time, independent of any later retirement —
+    identified by matching *ev*'s ``tool_name`` and ``retired_size`` (the
+    retired message's exact character length, computed the same way by
+    ``supersession.find_retirements``) against an as-yet-unclaimed
+    ``tool_call`` node's result. ``claimed`` tracks node ids already matched
+    to an earlier retirement so two same-size same-name results are never
+    both attributed to the first match.
+
+    The "after" text is the literal stub that replaced it, recovered by
+    scanning *cur_messages* (the llm_call node's own recorded input snapshot,
+    which already reflects the retirement) for the tool-role message whose
+    content embeds this retirement's ``tool_call_id`` — the exact substring
+    ``build_stub`` always writes into the stub text.
+
+    Returns:
+        ``{"tool_call_id", "before", "after"}``, or ``None`` when either side
+        can't be recovered (e.g. an old trace predating this field).
+    """
+    tool_name = ev.get("tool_name", "")
+    retired_size = ev.get("retired_size")
+    tool_call_id = ev.get("tool_call_id", "")
+    match = None
+    for node in tool_nodes:
+        if id(node) in claimed or node.attributes.get("name") != tool_name:
+            continue
+        result = node.outputs.get("result", "")
+        if isinstance(result, str) and len(result) == retired_size:
+            match = node
+            break
+    if match is None:
+        return None
+    needle = f"tool_call_id={tool_call_id!r}"
+    after = next(
+        (
+            m.get("content")
+            for m in cur_messages
+            if m.get("role") == "tool" and needle in (m.get("content") or "")
+        ),
+        None,
+    )
+    if after is None:
+        # The stub hasn't reached a "main" call's message snapshot yet (still
+        # pending in a later step); leave the candidate node unclaimed so a
+        # later call can resolve it once its stub is visible.
+        return None
+    claimed.add(id(match))
+    return {
+        "tool_call_id": tool_call_id,
+        "before": match.outputs.get("result", ""),
+        "after": after,
+    }
+
+
 def _assign_ctx_state(
     nodes: dict[str, TraceNode],
     order: list[str],
     default_window: int | None,
     owner: str,
+    events: list[dict[str, Any]],
 ) -> None:
     """Compute *owner*'s context-window composition, in execution order.
 
@@ -978,24 +1046,47 @@ def _assign_ctx_state(
         order: Node IDs in execution order (may include sub-agent nodes).
         default_window: Session context window size used when a node omits it.
         owner: Session id whose nodes this call should process.
+        events: Raw session events, scanned once for ``supersession`` rows so
+            each retirement's before/after content can be attached to the
+            ``main`` llm_call node whose removed-token figure it explains.
     """
     own = [nodes[nid] for nid in order if nodes.get(nid) and nodes[nid].agent == owner]
     tpc = _tokens_per_char(own)
     first_snap = _first_input_split(own)
     comp = {r: 0 for r in _ROLES}
     window = default_window
+    tool_nodes_seen: list[TraceNode] = []
+    supersession_evs = _supersession_events(events)
+    claimed: set[int] = set()
+    resolved: set[int] = set()
 
     for node in own:
         own_window = node.attributes.get("context_window")
         if own_window:
             window = own_window
 
-        prior_composition = dict(comp)
         added, removed, removed_by_role, estimated = _node_added(
             node, comp, first_snap, tpc
         )
         for role, tok in added.items():
             comp[role] = comp.get(role, 0) + tok
+
+        if node.type == "tool_call":
+            tool_nodes_seen.append(node)
+
+        retirements: list[dict[str, Any]] = []
+        is_main_call = node.type == "llm_call" and node.attributes.get("kind") == "main"
+        if is_main_call and removed_by_role.get("tool"):
+            cur_messages = node.inputs.get("messages") or []
+            for i, ev in enumerate(supersession_evs):
+                if i in resolved:
+                    continue
+                detail = _find_retirement_detail(
+                    ev, tool_nodes_seen, claimed, cur_messages
+                )
+                if detail is not None:
+                    retirements.append(detail)
+                    resolved.add(i)
 
         tokens = sum(comp.values())
         pct = round(tokens / window * 100, 1) if window else None
@@ -1004,14 +1095,12 @@ def _assign_ctx_state(
             "window": window,
             "pct": pct,
             "composition": {r: comp[r] for r in _ROLES if comp[r]},
-            "prior_composition": {
-                r: prior_composition[r] for r in _ROLES if prior_composition[r]
-            },
             "added": added,
             "added_total": sum(added.values()),
             "removed": removed,
             "removed_by_role": removed_by_role,
             "estimated": estimated,
+            "retirements": retirements,
         }
 
 

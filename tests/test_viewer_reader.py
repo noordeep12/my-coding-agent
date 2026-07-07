@@ -735,15 +735,12 @@ class TestLoadSession:
         sess = session.nodes[f"{sid}::session"]
         assert sess.ctx_state["composition"] == {"system": 80, "user": 20}
         assert sess.ctx_state["added"] == {"system": 80, "user": 20}
-        assert sess.ctx_state["prior_composition"] == {}
 
-        # The LLM call appends its own assistant output (completion tokens);
-        # prior_composition is the window as it stood before this node ran.
+        # The LLM call appends its own assistant output (completion tokens).
         llm1 = session.nodes[f"{sid}::step1::llm::1"]
         assert llm1.ctx_state["added"] == {"assistant": 50}
         assert llm1.ctx_state["composition"]["assistant"] == 50
         assert llm1.ctx_state["window"] == 8192
-        assert llm1.ctx_state["prior_composition"] == {"system": 80, "user": 20}
 
         # A tool dispatch appends an estimated tool-result token figure.
         tool1 = session.nodes[f"{sid}::step1::tool::1"]
@@ -765,7 +762,11 @@ class TestLoadSession:
         sdir.mkdir()
         ep = sdir / "events.jsonl"
         big_tool_msg = {"role": "tool", "content": "X" * 4000}
-        stub_tool_msg = {"role": "tool", "content": "[Superseded]"}
+        stub_tool_msg = {
+            "role": "tool",
+            "content": "[Superseded] bash result (tool_call_id='call_abc') "
+            "retired as identical_call, superseded by tool_call_id='call_xyz'.",
+        }
         events = [
             _ev(
                 "session_start",
@@ -828,6 +829,16 @@ class TestLoadSession:
                 started_at="2026-01-01T10:00:03",
             ),
             _ev(
+                "supersession",
+                tool_call_id="call_abc",
+                tool_name="bash",
+                case="identical_call",
+                superseding_tool_call_id="call_xyz",
+                retired_size=len(big_tool_msg["content"]),
+                step=2,
+                started_at="2026-01-01T10:00:03",
+            ),
+            _ev(
                 "llm_call",
                 call=3,
                 kind="main",
@@ -863,6 +874,20 @@ class TestLoadSession:
         llm3 = session.nodes[f"{sid}::step3::llm::1"]
         assert llm3.ctx_state["removed"] > 0
         assert llm3.ctx_state["removed_by_role"].get("tool", 0) > 0
+
+        # The retirement's exact before/after content is recovered from the
+        # recorded `supersession` event: "before" is the original tool_call's
+        # own output (matched by tool_name + exact retired_size), "after" is
+        # the stub text found in this call's own message snapshot.
+        retirements = llm3.ctx_state["retirements"]
+        assert len(retirements) == 1
+        assert retirements[0]["tool_call_id"] == "call_abc"
+        assert retirements[0]["before"] == big_tool_msg["content"]
+        assert retirements[0]["after"] == stub_tool_msg["content"]
+
+        # Nodes that didn't retire anything carry an empty retirements list.
+        llm2 = session.nodes[f"{sid}::step2::llm::1"]
+        assert llm2.ctx_state["retirements"] == []
 
     def test_circular_delegate_guard(self, tmp_path):
         sid = "aabbccdd1234"

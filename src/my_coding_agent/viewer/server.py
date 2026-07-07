@@ -187,13 +187,20 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .ctx-delta{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:11px;align-items:center}
 .ctx-delta-add{color:var(--pos)}
 .ctx-delta-rem{color:var(--neg)}
-.ctx-diff-btn{margin-left:auto;font-family:var(--font);font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer}
-.ctx-diff-btn:hover{color:var(--accent);border-color:var(--accent)}
-.ctx-diff{font-family:var(--mono);font-size:11px;margin-top:9px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.ctx-diff-line{padding:2px 8px;white-space:pre}
-.ctx-diff-line.ctx-diff-ctx{color:var(--muted)}
-.ctx-diff-line.ctx-diff-add{color:var(--pos);background:var(--pos-bg)}
-.ctx-diff-line.ctx-diff-rem{color:var(--neg);background:var(--neg-bg)}
+.ctx-delta-rem.clickable{cursor:pointer;text-decoration:underline dotted}
+.retire-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000}
+.retire-modal{background:var(--bg);border:1px solid var(--line);border-radius:10px;max-width:820px;width:90%;max-height:80vh;overflow:auto;padding:20px}
+.retire-modal-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.retire-modal-title{font-weight:600;font-size:14px}
+.retire-close{cursor:pointer;background:none;border:1px solid var(--line);border-radius:6px;padding:2px 10px;font-size:12px;color:var(--muted);font-family:var(--font)}
+.retire-close:hover{color:var(--accent);border-color:var(--accent)}
+.retire-item{border:1px solid var(--line);border-radius:8px;margin-bottom:14px;overflow:hidden}
+.retire-item:last-child{margin-bottom:0}
+.retire-item-head{font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+.retire-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;padding:8px 12px 0;color:var(--muted)}
+.retire-before,.retire-after{font-family:var(--mono);font-size:11px;padding:8px 12px 12px;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0}
+.retire-before{background:var(--neg-bg);color:var(--neg)}
+.retire-after{background:var(--pos-bg);color:var(--pos)}
 
 /* ── sections ── */
 .section{border-bottom:1px solid var(--line)}
@@ -260,7 +267,7 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 <script>/*__VENDOR__*/</script>
 <script>
 'use strict';
-const { h, render, Fragment } = window.preact;
+const { h, render } = window.preact;
 const { useState, useEffect, useRef, useMemo, useCallback } = window.preactHooks;
 const html = window.htm.bind(h);
 
@@ -1020,46 +1027,29 @@ function CodeBox({value, lang:hint}){
   </div>`;
 }
 
-// Git-diff-style lines comparing a node's composition before/after it ran,
-// role by role: unchanged roles render as plain context lines, a role whose
-// count changed renders as a "-old" line followed by a "+new" line, and a
-// role that only exists on one side renders as a single +/- line.
-function ctxDiffLines(cs){
-  const prior = cs.prior_composition || {}, after = cs.composition || {};
-  const added = cs.added || {}, removedByRole = cs.removed_by_role || {};
-  const roles = ROLE_ORDER.filter(r=>prior[r]||after[r]);
-  const lines = [];
-  for(const r of roles){
-    const label = ROLE_META[r].label;
-    // Only a role this node actually added to or retired from (per the
-    // already-computed added/removed_by_role signal) counts as "changed" —
-    // system/user composition can drift a token or two between calls purely
-    // from re-anchoring's char-share estimate, which isn't a real edit and
-    // would otherwise show as a spurious -/+ pair.
-    if(!added[r] && !removedByRole[r]){
-      lines.push({cls:'ctx-diff-ctx', text:'  '+label+'  '+fmtNum(after[r]||prior[r]||0)});
-      continue;
-    }
-    const before = prior[r]||0, now = after[r]||0;
-    if(before) lines.push({cls:'ctx-diff-rem', text:'- '+label+'  '+fmtNum(before)});
-    if(now) lines.push({cls:'ctx-diff-add', text:'+ '+label+'  '+fmtNum(now)});
-  }
-  return lines;
-}
-
-function CtxDiff({cs}){
-  const [open,setOpen] = useState(false);
-  const lines = useMemo(()=>ctxDiffLines(cs), [cs]);
-  if(!lines.length) return null;
-  return html`<${Fragment}>
-    <button class="ctx-diff-btn" onClick=${()=>setOpen(!open)}>${open?'hide diff':'diff'}</button>
-    ${open ? html`<div class="ctx-diff">
-      ${lines.map((l,i)=>html`<div key=${i} class=${'ctx-diff-line '+l.cls}>${l.text}</div>`)}
-    </div>` : null}
-  <//>`;
+// Popup showing exactly what a supersession retirement replaced: the full
+// original tool-result text next to the short stub that now stands in for
+// it in the conversation sent to the model.
+function RetirementModal({retirements,onClose}){
+  return html`<div class="retire-overlay" onClick=${onClose}>
+    <div class="retire-modal" onClick=${e=>e.stopPropagation()}>
+      <div class="retire-modal-top">
+        <span class="retire-modal-title">Retired tool results</span>
+        <button class="retire-close" onClick=${onClose}>close</button>
+      </div>
+      ${retirements.map((r,i)=>html`<div key=${i} class="retire-item">
+        <div class="retire-item-head">${r.tool_call_id ? 'tool_call_id: '+r.tool_call_id : 'message #'+r.index}</div>
+        <div class="retire-label">Before (retired)</div>
+        <pre class="retire-before">${r.before}</pre>
+        <div class="retire-label">After (replaced with)</div>
+        <pre class="retire-after">${r.after}</pre>
+      </div>`)}
+    </div>
+  </div>`;
 }
 
 function CtxCard({cs,agent}){
+  const [showRetired,setShowRetired] = useState(false);
   if(!cs || cs.tokens==null) return null;
   const comp = cs.composition || {};
   const total = cs.tokens || 0;
@@ -1068,6 +1058,7 @@ function CtxCard({cs,agent}){
   const addedRoles = ROLE_ORDER.filter(r=>added[r]);
   const removedByRole = cs.removed_by_role || {};
   const removedRoles = ROLE_ORDER.filter(r=>removedByRole[r]);
+  const retirements = cs.retirements || [];
   return html`<div class=${'ctxcard'+(agent?' sub':'')}>
     <div class="ctx-top">
       <span class="ctx-label">Context window${agent ? html` <span class="ctx-sub">· subagent ${agent.slice(0,8)}</span>` : null}</span>
@@ -1090,12 +1081,14 @@ function CtxCard({cs,agent}){
         +${fmtNum(cs.added_total)} added
         <span class="muted">(${addedRoles.map(r=>ROLE_META[r].label+' '+fmtNum(added[r])).join(', ')})</span>
       </span>` : null}
-      ${removedRoles.length ? html`<span class="ctx-delta-rem">
+      ${removedRoles.length ? html`<span class=${'ctx-delta-rem'+(retirements.length?' clickable':'')}
+          title=${retirements.length?'Click to see what was retired':null}
+          onClick=${retirements.length?()=>setShowRetired(true):null}>
         −${fmtNum(cs.removed)} retired
         <span class="muted">(${removedRoles.map(r=>ROLE_META[r].label+' '+fmtNum(removedByRole[r])).join(', ')})</span>
       </span>` : null}
-      <${CtxDiff} cs=${cs}/>
     </div>` : null}
+    ${showRetired ? html`<${RetirementModal} retirements=${retirements} onClose=${()=>setShowRetired(false)}/>` : null}
   </div>`;
 }
 
