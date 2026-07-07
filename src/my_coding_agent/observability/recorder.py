@@ -38,6 +38,8 @@ SUMMARIZER = "summarizer"
 ANOMALY = "anomaly"
 REFUSAL = "refusal"
 EGRESS = "egress"
+SANDBOX_ACTIVATION = "sandbox_activation"
+SANDBOX_DENIAL = "sandbox_denial"
 SKILL_INDEX = "skill_index"
 SUPERSESSION = "supersession"
 # Run-resilience (D2): additive events for the LLM outage-recovery loop.
@@ -596,6 +598,45 @@ class Recorder:
                 "host": host,
                 "matched_list": matched_list,
                 "reason": reason,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_sandbox_activation(
+        self, workspace_root: str, extra_write_paths: list[str]
+    ) -> None:
+        """Record that this run's ``bash`` subprocesses are OS-sandboxed.
+
+        Emitted once, at session start, only when the sandbox is enabled — a
+        sandbox-off run emits no row, so its ``events.jsonl`` stays byte-
+        identical to a pre-change trace. Passive: reports the scope the
+        sandbox module already computed, never influences enforcement.
+        """
+        self._emit(
+            {
+                "type": SANDBOX_ACTIVATION,
+                "workspace_root": workspace_root,
+                "extra_write_paths": extra_write_paths,
+                "started_at": _now(),
+            }
+        )
+
+    def record_sandbox_denial(
+        self, command: str, exit_code: int, stderr: str, step: int
+    ) -> None:
+        """Record one sandboxed ``bash`` call the OS denied.
+
+        Follows ``record_refusal``'s template. The recorder never decides
+        what counts as a denial — the caller (``registry.bash``) already
+        classified the failed, sandboxed command before calling this.
+        """
+        self._emit(
+            {
+                "type": SANDBOX_DENIAL,
+                "command": command,
+                "exit_code": exit_code,
+                "stderr": stderr,
                 "step": step,
                 "started_at": _now(),
             }

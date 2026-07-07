@@ -28,7 +28,7 @@ from my_coding_agent import (
     __version__,
     tool,
 )
-from my_coding_agent.engine import OMLX_MODEL, egress
+from my_coding_agent.engine import OMLX_MODEL, egress, sandbox
 from my_coding_agent.engine.checkpoint import (
     CheckpointError,
     find_last_resumable,
@@ -199,6 +199,17 @@ def _read_interactive_prompt() -> str:
         "MCA_DISABLE_EGRESS_FILTER=1). See SECURITY.md."
     ),
 )
+@click.option(
+    "--sandbox",
+    "use_sandbox",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run every bash subprocess inside an OS-level sandbox (macOS Seatbelt): "
+        "writes confined to the workspace + temp allowlist, network denied by "
+        "default. Refuses to run bash unsandboxed if unsupported on this host."
+    ),
+)
 @click.version_option(version=__version__, prog_name="my-coding-agent")
 def main(
     prompt: str | None,
@@ -208,6 +219,7 @@ def main(
     resume_last: bool,
     no_safety_gate: bool,
     no_egress_filter: bool,
+    use_sandbox: bool,
 ) -> None:
     """Run the coding-agent pipeline.
 
@@ -240,6 +252,27 @@ def main(
             bold=True,
             err=True,
         )
+
+    if use_sandbox:
+        os.environ[sandbox.ENV_VAR] = "1"
+        capability = sandbox.probe_host_capability()
+        if not capability.supported:
+            click.secho(
+                f"✗ --sandbox: unavailable on this host ({capability.reason}). "
+                "Refusing to run bash unsandboxed — every bash call this run "
+                "will fail rather than execute unconfined.",
+                fg="red",
+                bold=True,
+                err=True,
+            )
+        else:
+            click.secho(
+                "🔒 --sandbox: bash subprocesses run inside an OS-level sandbox "
+                "for this run (writes confined to the workspace + temp "
+                "allowlist, network denied by default).",
+                fg="cyan",
+                err=True,
+            )
 
     if resume_id or resume_last:
         agent = _build_resumed_agent(resume_id, resume_last)

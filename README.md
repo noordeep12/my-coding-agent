@@ -12,6 +12,7 @@ Key ideas:
 - **Runtime anomaly detection**: while the run is live, a same-class tool-failure streak (e.g. the same tool failing 3+ times in a row with the same error class, regardless of args) is flagged the moment it happens — logged as a warning and recorded in the session's event stream, in main agents and subagents alike
 - **Dangerous-command refusal gate**: every `bash` call is checked against a deterministic, local rule set before it runs (recursive root/home deletes, remote-content-piped-to-shell, raw-device writes, fork bombs, permission blasts, credential exfiltration, destructive git force-pushes); a match never reaches the shell — the model gets back a structured refusal (reason + security-standard reference + safer alternative) so it can steer, and the refusal is logged and recorded for later review. This is a high-signal first layer, not a complete boundary — obfuscated commands can evade textual matching by design, which is why the harness also records each run's protection posture (`screened_only` vs. `sandboxed`, see [`SECURITY.md`](SECURITY.md)) rather than implying completeness. Extensible and can be disabled with `--no-safety-gate` if you really need to
 - **Network egress filter**: every `fetch_web` destination is checked against an actively-maintained, open-source blocklist of publicly-catalogued malicious domains (hagezi Threat-Intelligence-Feeds, cached and refreshed offline-tolerantly) before the connection proceeds; a known-bad host is denied with a structured, steerable block instead of connecting, an unknown host is unaffected. See [`SECURITY.md`](SECURITY.md); disable with `--no-egress-filter` if you really need to
+- **OS-level bash sandbox** (opt-in, macOS): pass `--sandbox` and every `bash` subprocess runs inside an Apple Seatbelt sandbox (`sandbox-exec` with a generated profile) — filesystem writes are default-deny outside the workspace directory plus a small temp allowlist, and all outbound network is default-deny, enforced by the OS beneath the shell regardless of how the command is phrased. Off by default (byte-identical to a non-sandboxed run); enabling it on a host without `sandbox-exec` (i.e. non-macOS) refuses to run `bash` rather than silently executing unconfined. This is what the refusal gate's protection posture reports as `sandboxed`
 - **Decorator-based tools**: plain Python functions become LLM-callable tools
 - **Skills**: steer the agent's tool usage with plain-Markdown `SKILL.md` files, loaded on demand via `use_skill` — no Python edits, no system-prompt changes
 - **Context handoff**: when the context window fills up, the agent writes a structured summary of progress and spawns a fresh continuation — so long-running tasks don't get silently truncated
@@ -99,6 +100,8 @@ Local model time is the run's real cost, so a transient LLM failure must not thr
 | `--max-steps` | `50` | Maximum pipeline step iterations |
 | `--resume` | — | Resume a dead session from its last checkpoint (`--resume <session_id>`); starts a new session linked back to the dead one |
 | `--resume-last` | `False` | Resume the most recently checkpointed session |
+| `--no-safety-gate` | `False` | Disable the dangerous-command refusal gate for this run |
+| `--sandbox` | `False` | Run every `bash` subprocess inside an OS-level sandbox (macOS Seatbelt); see [Sandboxing](#sandboxing) |
 
 ## Configuration
 
@@ -110,7 +113,19 @@ Local model time is the run's real cost, so a transient LLM failure must not thr
 | `MCA_TOOL_MAX_CONCURRENCY` | `4` | Max read-only tool calls overlapped per assistant message (`1` disables overlap) |
 | `MCA_LLM_OUTAGE_TOLERANCE_S` | `300` | Seconds the client keeps probing a stalled/restarting LLM server (transport / HTTP 5xx / 429) before giving up with a classified, resumable stop; other 4xx fail fast |
 | `MCA_SUPERSESSION` | `1` | Set to `0` to disable retiring provably-superseded tool results (restores append-only conversation behavior byte-for-byte) |
+| `MCA_BASH_SANDBOX` | unset (off) | Set to `1` for the same effect as `--sandbox`; a shell-exported value and the flag are equivalent |
 
+## Sandboxing
+
+Pass `--sandbox` and every `bash` subprocess for that run — including a delegated subagent's, which shares the same process — runs inside an Apple Seatbelt sandbox (`sandbox-exec` with a profile generated fresh per run):
+
+- **Filesystem**: writes are default-deny outside the workspace directory (the `bash` tool's `base_dir`, normally the CWD) plus a small temp allowlist (`/tmp`, `/private/tmp`, `$TMPDIR`); reads are allowed broadly (system dirs and dependencies tools need to run). The scope is fixed at the start of the run and never expands based on what a command asks for. The allowlist deliberately excludes macOS's broader per-user temp *parent* (e.g. `/private/var/folders`) — that directory is shared machine-wide across every process's own temp subdirectory, so allowing the whole parent would let a sandboxed command write into another process's temp space, defeating the point of the scope.
+- **Network**: all outbound network access from the subprocess is denied by default. (A future egress allow/deny policy can layer selective re-permission on top of this boundary — not yet implemented.)
+- **Mechanism**: macOS only, via `sandbox-exec` — the same approach Claude Code's sandbox-runtime and OpenAI Codex ship. Off by default; a run without the flag is byte-identical to today, with no sandbox wrapping and no sandbox events.
+- **Degradation**: enabling `--sandbox` on a host without `sandbox-exec` (non-macOS, or the binary missing) refuses to run `bash` — every `bash` call fails with an explicit error — rather than silently executing unconfined.
+- **Observability**: sandbox activation (once per run) and each denied command are recorded as passive rows in `events.jsonl` (`sandbox_activation` / `sandbox_denial`), same template as the refusal gate's events — never influences enforcement, which the OS already applied unconditionally.
+
+A denied command surfaces to the model as an ordinary failed `bash` call (`ok: false`, non-zero `exit_code`) — no approval prompt, no notification loop; the model reads the failure and steers.
 
 ## Skills
 
@@ -206,6 +221,7 @@ Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, serve
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the module layout, agent loop, tool dispatch, context handoff, and session persistence.
 - [`CONTRIBUTE.md`](CONTRIBUTE.md) — development standards, tooling, testing, and commit conventions.
 - [`SECURITY.md`](SECURITY.md) — the dangerous-command refusal gate (how to disable it, `--no-safety-gate` / `MCA_DISABLE_DANGEROUS_COMMAND_GATE`, and how to extend its rule set) and the network egress filter (how to disable it, `--no-egress-filter` / `MCA_DISABLE_EGRESS_FILTER`, and how to pick a blocklist source).
+- [Sandboxing](#sandboxing) — the opt-in OS-level `bash` sandbox (`--sandbox` / `MCA_BASH_SANDBOX`): scope, mechanism, and degradation.
 
 ## Documentation
 

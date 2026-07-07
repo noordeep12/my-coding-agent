@@ -27,6 +27,7 @@ from ..utils import (
     print_banner,
     print_run_summary,
 )
+from . import sandbox
 from .checkpoint import Checkpoint, remove_checkpoint, save_checkpoint
 from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
 from .llm.errors import LLMCallError
@@ -189,6 +190,17 @@ class AgentNode(BaseNode):
         ctx.last_prompt_tokens = self.last_prompt_tokens
         ctx.signal = "STOP"
 
+    def _record_sandbox_activation_if_enabled(self) -> None:
+        """Emit the once-per-run sandbox_activation event when the bash sandbox
+        is on (bash-os-sandbox, issue #25); a no-op, no-event call when off."""
+        if not sandbox.is_enabled():
+            return
+        scope = sandbox.default_scope(Path.cwd())
+        self.recorder.record_sandbox_activation(
+            workspace_root=str(scope.workspace_root),
+            extra_write_paths=[str(p) for p in scope.extra_write_paths],
+        )
+
     def execute(self, max_steps: int = DEFAULT_MAX_STEPS) -> list[dict[str, Any]]:
         """Drive the agentic pipeline and return the final message list."""
         from ..pipeline import build_default_pipeline
@@ -207,6 +219,7 @@ class AgentNode(BaseNode):
         self.recorder.start(
             self.label, self.llm.model, self.llm.context_window, posture
         )
+        self._record_sandbox_activation_if_enabled()
         if self._rendered_index is not None:
             # The *offered* record (D9): one skill-index event per session start /
             # continuation, only when an index was actually placed.

@@ -71,6 +71,19 @@ POSTURE = "posture"
 POSTURE_SANDBOXED = "sandboxed"
 POSTURE_SCREENED_ONLY = "screened_only"
 
+# Keys of a "sandbox_activation" row (``Recorder.record_sandbox_activation``,
+# issue #25), emitted once per run when the bash sandbox is enabled. Absent
+# entirely when the sandbox is off, so sandbox-off runs and pre-change traces
+# load unchanged.
+SANDBOX_WORKSPACE_ROOT = "workspace_root"
+SANDBOX_EXTRA_WRITE_PATHS = "extra_write_paths"
+
+# Keys of a "sandbox_denial" row (``Recorder.record_sandbox_denial``), one per
+# sandboxed ``bash`` call the OS denied.
+SANDBOX_DENIAL_COMMAND = "command"
+SANDBOX_DENIAL_EXIT_CODE = "exit_code"
+SANDBOX_DENIAL_STDERR = "stderr"
+SANDBOX_DENIAL_STEP = "step"
 
 # Keys of a "skill_index" row (``Recorder.record_skill_index``, issue #19),
 # emitted once per session start / continuation when a skill index is placed

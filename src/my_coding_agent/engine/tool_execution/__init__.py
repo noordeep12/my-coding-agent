@@ -266,6 +266,7 @@ class ToolExecutor:
             llm=llm,
             skills=skills,
             loaded_skills=loaded_skills,
+            step_num=step_num,
         )
 
     def run(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
