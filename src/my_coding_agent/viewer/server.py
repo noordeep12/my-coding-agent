@@ -143,7 +143,6 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .tleaf-name{font-weight:500;font-size:12px;flex:none}
 .tleaf-badges{display:flex;gap:5px;align-items:center;flex:none;overflow:hidden}
 .tleaf-sub{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:40px}
-.tleaf-sub.neg{color:var(--neg)}
 
 /* Detail-panel Section accordion (Outputs/Inputs/Attributes). */
 .twist{display:inline-block;transition:transform .12s;color:var(--muted);font-size:10px}
@@ -185,9 +184,23 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .ctx-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px}
 .bd-li{display:flex;align-items:center;gap:6px;font-size:11px}
 .bd-sw{width:9px;height:9px;border-radius:3px;display:inline-block}
-.ctx-delta{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:11px}
+.ctx-delta{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:11px;align-items:center}
 .ctx-delta-add{color:var(--pos)}
 .ctx-delta-rem{color:var(--neg)}
+.ctx-delta-rem.clickable{cursor:pointer;text-decoration:underline dotted}
+.retire-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000}
+.retire-modal{background:var(--bg);border:1px solid var(--line);border-radius:10px;max-width:820px;width:90%;max-height:80vh;overflow:auto;padding:20px}
+.retire-modal-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.retire-modal-title{font-weight:600;font-size:14px}
+.retire-close{cursor:pointer;background:none;border:1px solid var(--line);border-radius:6px;padding:2px 10px;font-size:12px;color:var(--muted);font-family:var(--font)}
+.retire-close:hover{color:var(--accent);border-color:var(--accent)}
+.retire-item{border:1px solid var(--line);border-radius:8px;margin-bottom:14px;overflow:hidden}
+.retire-item:last-child{margin-bottom:0}
+.retire-item-head{font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+.retire-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;padding:8px 12px 0;color:var(--muted)}
+.retire-before,.retire-after{font-family:var(--mono);font-size:11px;padding:8px 12px 12px;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0}
+.retire-before{background:var(--neg-bg);color:var(--neg)}
+.retire-after{background:var(--pos-bg);color:var(--pos)}
 
 /* ── sections ── */
 .section{border-bottom:1px solid var(--line)}
@@ -595,24 +608,24 @@ const PHASE_LABELS = {
 };
 const phaseLabel = p => PHASE_LABELS[p] || p;
 
-// Short "+N role" / "−N role" summary of what a node added to (and retired
-// from) the context window — right-aligned in the tree row.
-function addedText(cs){
-  if(!cs) return '';
-  const parts = [];
+// "+N role" / "−N role" segments of what a node added to (and retired from)
+// the context window — rendered as separate colored spans in the tree row.
+function addedParts(cs){
+  if(!cs) return {added:'', removed:''};
   const a = cs.added||{};
   const addedRoles = ROLE_ORDER.filter(r=>a[r]);
-  if(addedRoles.length){
-    parts.push(addedRoles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  '));
-  }
+  const added = addedRoles.length
+    ? addedRoles.map(r=>'+'+fmtNum(a[r])+' '+ROLE_META[r].label).join('  ')
+    : '';
+  let removed = '';
   if(cs.removed){
     const rem = cs.removed_by_role||{};
     const remRoles = ROLE_ORDER.filter(r=>rem[r]);
-    parts.push(remRoles.length
+    removed = remRoles.length
       ? remRoles.map(r=>'−'+fmtNum(rem[r])+' '+ROLE_META[r].label).join('  ')
-      : '−'+fmtNum(cs.removed));
+      : '−'+fmtNum(cs.removed);
   }
-  return parts.join('  ');
+  return {added, removed};
 }
 
 // ISO timestamp → HH:MM:SS (best-effort; falls back to the raw value).
@@ -771,7 +784,7 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
   // e.g. read_tool_artifact's artifact_query) still contributes to the
   // context window itself — show the same "+N role" summary TreeLeaf shows,
   // so grouped nodes don't silently drop their own ctx-window contribution.
-  const summary = node.type!=='session' ? addedText(node.ctx_state) : '';
+  const summary = node.type!=='session' ? addedParts(node.ctx_state) : {added:'',removed:''};
   const onRowClick = ()=>{ onSel(node.id); toggle(node.id); };
   return html`<div class=${'agroup'+(isSubagentRoot?' sub':'')}>
     <div class=${'agent-head'+(node.id===sel?' sel':'')} onClick=${onRowClick}>
@@ -782,7 +795,11 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
       </span>` : null}
       ${isSubagentRoot ? html`<span class="sub-tag">subagent</span>` : null}
       ${node.refusal_flag ? html`<span class="refusal-tag">refused</span>` : null}
-      ${summary ? html`<span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary}</span>` : null}
+      ${(summary.added || summary.removed) ? html`<span class="tleaf-sub">
+        ${summary.added ? html`<span class="ctx-delta-add">${summary.added}</span>` : null}
+        ${summary.added && summary.removed ? '  ' : null}
+        ${summary.removed ? html`<span class="ctx-delta-rem">${summary.removed}</span>` : null}
+      </span>` : null}
     </div>
     ${open ? html`<div class="agroup-body">
       <${TreeNodes} entries=${kids} data=${data} sel=${sel} onSel=${onSel}
@@ -794,7 +811,7 @@ function TreeGroup({node,kids,data,sel,onSel,collapsed,toggle}){
 function TreeLeaf({node,sel,onSel}){
   const ref = useRef(), selected = node.id===sel, m = meta(node.type);
   useEffect(()=>{ if(selected && ref.current) ref.current.scrollIntoView({block:'nearest'}); },[selected]);
-  const summary = addedText(node.ctx_state);
+  const summary = addedParts(node.ctx_state);
   const badges = treeBadges(node);
   return html`<div ref=${ref} class=${'tleaf'+(selected?' sel':'')} onClick=${()=>onSel(node.id)}>
     <span class="row-dot sm" style=${{background:m.dot}}></span>
@@ -803,7 +820,12 @@ function TreeLeaf({node,sel,onSel}){
       ${badges.map((x,i)=>html`<span key=${i} class=${'nbadge sm '+x.c}>${x.t}</span>`)}
     </span>` : null}
     ${node.refusal_flag ? html`<span class="refusal-tag">refused</span>` : null}
-    <span class=${'tleaf-sub'+(node.ctx_state&&node.ctx_state.removed?' neg':'')}>${summary || '—'}</span>
+    <span class="tleaf-sub">
+      ${summary.added ? html`<span class="ctx-delta-add">${summary.added}</span>` : null}
+      ${summary.added && summary.removed ? '  ' : null}
+      ${summary.removed ? html`<span class="ctx-delta-rem">${summary.removed}</span>` : null}
+      ${(!summary.added && !summary.removed) ? '—' : null}
+    </span>
   </div>`;
 }
 
@@ -1005,7 +1027,29 @@ function CodeBox({value, lang:hint}){
   </div>`;
 }
 
+// Popup showing exactly what a supersession retirement replaced: the full
+// original tool-result text next to the short stub that now stands in for
+// it in the conversation sent to the model.
+function RetirementModal({retirements,onClose}){
+  return html`<div class="retire-overlay" onClick=${onClose}>
+    <div class="retire-modal" onClick=${e=>e.stopPropagation()}>
+      <div class="retire-modal-top">
+        <span class="retire-modal-title">Retired tool results</span>
+        <button class="retire-close" onClick=${onClose}>close</button>
+      </div>
+      ${retirements.map((r,i)=>html`<div key=${i} class="retire-item">
+        <div class="retire-item-head">${r.tool_call_id ? 'tool_call_id: '+r.tool_call_id : 'message #'+r.index}</div>
+        <div class="retire-label">Before (retired)</div>
+        <pre class="retire-before">${r.before}</pre>
+        <div class="retire-label">After (replaced with)</div>
+        <pre class="retire-after">${r.after}</pre>
+      </div>`)}
+    </div>
+  </div>`;
+}
+
 function CtxCard({cs,agent}){
+  const [showRetired,setShowRetired] = useState(false);
   if(!cs || cs.tokens==null) return null;
   const comp = cs.composition || {};
   const total = cs.tokens || 0;
@@ -1014,6 +1058,7 @@ function CtxCard({cs,agent}){
   const addedRoles = ROLE_ORDER.filter(r=>added[r]);
   const removedByRole = cs.removed_by_role || {};
   const removedRoles = ROLE_ORDER.filter(r=>removedByRole[r]);
+  const retirements = cs.retirements || [];
   return html`<div class=${'ctxcard'+(agent?' sub':'')}>
     <div class="ctx-top">
       <span class="ctx-label">Context window${agent ? html` <span class="ctx-sub">· subagent ${agent.slice(0,8)}</span>` : null}</span>
@@ -1036,11 +1081,14 @@ function CtxCard({cs,agent}){
         +${fmtNum(cs.added_total)} added
         <span class="muted">(${addedRoles.map(r=>ROLE_META[r].label+' '+fmtNum(added[r])).join(', ')})</span>
       </span>` : null}
-      ${removedRoles.length ? html`<span class="ctx-delta-rem">
+      ${removedRoles.length ? html`<span class=${'ctx-delta-rem'+(retirements.length?' clickable':'')}
+          title=${retirements.length?'Click to see what was retired':null}
+          onClick=${retirements.length?()=>setShowRetired(true):null}>
         −${fmtNum(cs.removed)} retired
         <span class="muted">(${removedRoles.map(r=>ROLE_META[r].label+' '+fmtNum(removedByRole[r])).join(', ')})</span>
       </span>` : null}
     </div>` : null}
+    ${showRetired ? html`<${RetirementModal} retirements=${retirements} onClose=${()=>setShowRetired(false)}/>` : null}
   </div>`;
 }
 

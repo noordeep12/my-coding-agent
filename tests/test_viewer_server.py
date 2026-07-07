@@ -100,8 +100,30 @@ class TestRoutes:
         tree_group_src = html[
             html.index("function TreeGroup") : html.index("function TreeLeaf")
         ]
-        assert "addedText(node.ctx_state)" in tree_group_src
+        assert "addedParts(node.ctx_state)" in tree_group_src
         assert "tleaf-sub" in tree_group_src
+
+    def test_retired_tokens_open_a_before_after_modal(self, server):
+        """The right-pane "retired" figure is clickable only when the node
+        carries retirements, opening RetirementModal to show each retired
+        message's original content next to the stub that replaced it — the
+        "added" figure stays plain text, never a button, per product intent
+        (added content is already visible in the node's own output)."""
+        port, _ = server
+        status, body = _get(port, "/")
+        html = body.decode()
+        assert "function RetirementModal" in html
+        assert "retire-before" in html and "retire-after" in html
+        ctx_card_src = html[html.index("function CtxCard") :]
+        assert "retirements.length?()=>setShowRetired(true):null" in ctx_card_src
+        assert "ctx-delta-add" in ctx_card_src
+        # The added span must never gain an onClick — it stays plain text.
+        added_span = ctx_card_src[
+            ctx_card_src.index('class="ctx-delta-add"') : ctx_card_src.index(
+                "ctx-delta-rem"
+            )
+        ]
+        assert "onClick" not in added_span
 
     def test_multiline_bash_badge_detection_source(self, server):
         """Regression: bash-stdin-delivery — the multi-line badge must be
