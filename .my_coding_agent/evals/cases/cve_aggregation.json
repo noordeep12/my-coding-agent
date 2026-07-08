@@ -4,7 +4,8 @@
   "scorer": "judge",
   "expected": {
     "rubric": ".my_coding_agent/evals/rubrics/cve_aggregation_rubric.json",
-    "pass_threshold": 3.5
+    "pass_threshold": 3.5,
+    "max_tokens": 6000
   },
   "dataset": "example",
   "tags": ["subagent-delegation", "live-network"]
