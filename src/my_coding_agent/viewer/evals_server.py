@@ -92,11 +92,11 @@ pre{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size
 </head>
 <body>
 <div id="app"></div>
-/*__VENDOR__*/
+<script>/*__VENDOR__*/</script>
 <script>
-const {h, render} = preact;
-const {useState, useEffect} = preactHooks;
-const html = htm.bind(h);
+const {h, render} = window.preact;
+const {useState, useEffect} = window.preactHooks;
+const html = window.htm.bind(h);
 
 function getJSON(url){ return fetch(url).then(r => r.json()); }
 
@@ -199,7 +199,7 @@ function RunBreakdown({runId, back}){
   if(view.error) return html`<div class="card"><div class="empty">Run not found.</div></div>`;
   const s = view.summary;
   return html`
-    <span class="back" onClick=${back}>&larr; Run history</span>
+    <span class="back" onClick=${back}>← Run history</span>
     <div class="card">
       <h2>Run ${s.run_id}</h2>
       <div class="metrics">
