@@ -25,6 +25,7 @@ from typing import Any
 import click
 
 from ..utils.exceptions import MyCodingAgentError
+from .evals_server import eval_dashboard_html, handle_eval_api_route
 from .reader import list_sessions, load_session
 from .sumcheck import check_tree
 
@@ -1189,12 +1190,20 @@ class _TraceHandler(BaseHTTPRequestHandler):
             ``/``                        → embedded HTML viewer
             ``/api/sessions``            → session index JSON
             ``/api/session/{session_id}``→ full trace JSON
+            ``/evals``                   → embedded eval dashboard UI
+            ``/api/evals/...``           → eval dashboard JSON (see evals_server.py)
         """
         path = self.path.split("?")[0]
+        eval_html = eval_dashboard_html(path)
         if path == "/":
             self._send_html()
+        elif eval_html is not None:
+            self._send_html(eval_html)
         elif path == "/api/sessions":
             self._send_json(list_sessions(self.base_dir))
+        elif path.startswith("/api/evals/"):
+            if not handle_eval_api_route(self, path, self.base_dir.resolve() / "evals"):
+                self._send_json({"error": "not found"}, status=404)
         else:
             match = re.fullmatch(r"/api/session/([^/]+)", path)
             if match:
@@ -1241,9 +1250,13 @@ class _TraceHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_html(self) -> None:
-        """Write the embedded HTML viewer (with vendored libs) as the response."""
-        body = _full_html().encode()
+    def _send_html(self, html: str | None = None) -> None:
+        """Write the embedded HTML viewer (with vendored libs) as the response.
+
+        Args:
+            html: Page body to serve; defaults to the Trace Explorer page.
+        """
+        body = (html or _full_html()).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

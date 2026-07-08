@@ -135,9 +135,7 @@ def load_run(
             metrics=score.metrics,
             detail=score.detail,
             task=by_id[score.case_id].task if score.case_id in by_id else None,
-            expected=by_id[score.case_id].expected
-            if score.case_id in by_id
-            else None,
+            expected=by_id[score.case_id].expected if score.case_id in by_id else None,
         )
         for score in result.scores
     ]
