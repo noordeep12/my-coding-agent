@@ -22,12 +22,12 @@ from typing import Any
 
 from ..engine.llm import LLM
 from ..engine.llm.schema import CALL_KIND_JUDGE
-from ..utils.parsing import extract_message
+from ..utils.parsing import extract_finish_reason, extract_message
 from .schema import EvalCase, EvalScore
 from .scoring import RunResult, register_scorer
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 # Default cap on the judge's completion — a verdict is a small structured
 # JSON payload, not free-form prose.
@@ -241,11 +241,30 @@ def _build_judge_prompt(rubric: Rubric, task: str, output: str) -> str:
     )
 
 
+def _extract_json_candidate(content: str) -> str:
+    """Pick the JSON candidate substring out of a judge response.
+
+    Prefers the last fenced ```json block (the model's actual answer, which
+    follows any illustrative example it may have echoed earlier in its
+    reasoning), falls back to the outermost ``{...}`` span, and raises if
+    neither is present rather than guessing at a boundary.
+    """
+    fenced: list[str] = _FENCED_JSON_RE.findall(content)
+    if fenced:
+        return fenced[-1]
+
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise JudgeError("Judge response contains no JSON object")
+    return content[start : end + 1]
+
+
 def _parse_judge_response(content: str, rubric: Rubric) -> JudgeVerdict:
     cleaned = _THINK_RE.sub("", content).strip()
-    cleaned = _FENCE_RE.sub("", cleaned).strip()
+    candidate = _extract_json_candidate(cleaned)
     try:
-        data = json.loads(cleaned)
+        data = json.loads(candidate)
     except json.JSONDecodeError as exc:
         raise JudgeError(f"Judge response was not valid JSON: {exc}") from exc
 
@@ -330,8 +349,9 @@ def score_with_judge(
         A ``JudgeVerdict`` with a score + rationale per criterion.
 
     Raises:
-        JudgeError: The judge's response could not be parsed into a verdict
-            matching the rubric. Never silently degrades to a guessed score.
+        JudgeError: The judge's response was truncated before completion, or
+            could not be parsed into a verdict matching the rubric. Never
+            silently degrades to a guessed score.
     """
     prompt = _build_judge_prompt(rubric, task, output)
     resp = llm.chat_completion(
@@ -340,6 +360,12 @@ def score_with_judge(
         kind=CALL_KIND_JUDGE,
         max_tokens=max_tokens,
     )
+    if extract_finish_reason(resp) == "length":
+        raise JudgeError(
+            "Judge response was truncated (finish_reason=length) before "
+            "completing its verdict; raise max_tokens rather than trusting "
+            "a partial response"
+        )
     content = extract_message(resp).get("content") or ""
     return _parse_judge_response(content, rubric)
 

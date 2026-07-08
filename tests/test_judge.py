@@ -61,10 +61,17 @@ def _judge_json_response(criteria_scores, overall_score=4.0):
     return json.dumps(body)
 
 
-def _fake_llm(mocker, content):
+def _fake_llm(mocker, content, finish_reason="stop"):
     fake_llm = mocker.Mock()
     fake_llm.chat_completion.return_value = mocker.Mock(
-        json=lambda: {"choices": [{"message": {"content": content}}]}
+        json=lambda: {
+            "choices": [
+                {
+                    "message": {"content": content},
+                    "finish_reason": finish_reason,
+                }
+            ]
+        }
     )
     return fake_llm
 
@@ -178,6 +185,13 @@ def test_score_with_judge_rationale_present_for_bias_inspection(mocker, tmp_path
 def test_score_with_judge_malformed_json_raises(mocker, tmp_path):
     rubric = load_rubric(_write_rubric(tmp_path, _well_formed_rubric_data()))
     fake_llm = _fake_llm(mocker, "not json at all")
+    with pytest.raises(JudgeError, match="no JSON object"):
+        score_with_judge(fake_llm, rubric, "q", "a")
+
+
+def test_score_with_judge_json_like_but_invalid_raises(mocker, tmp_path):
+    rubric = load_rubric(_write_rubric(tmp_path, _well_formed_rubric_data()))
+    fake_llm = _fake_llm(mocker, "here: {not: valid, json}")
     with pytest.raises(JudgeError, match="not valid JSON"):
         score_with_judge(fake_llm, rubric, "q", "a")
 
@@ -206,6 +220,52 @@ def test_score_with_judge_strips_think_tags_and_fences(mocker, tmp_path):
 
     verdict = score_with_judge(fake_llm, rubric, "q", "a")
     assert verdict.overall_score == 4.0
+
+
+def test_score_with_judge_truncated_response_raises(mocker, tmp_path):
+    rubric = load_rubric(_write_rubric(tmp_path, _well_formed_rubric_data()))
+    raw = _judge_json_response({"correctness": 5, "tone": 5})
+    fake_llm = _fake_llm(mocker, raw, finish_reason="length")
+    with pytest.raises(JudgeError, match="truncated"):
+        score_with_judge(fake_llm, rubric, "q", "a")
+
+
+def test_score_with_judge_truncated_cot_example_not_mistaken_for_verdict(
+    mocker, tmp_path
+):
+    # A truncated response whose unclosed <think> block contains an
+    # illustrative example JSON snippet must never be parsed as the real
+    # verdict — truncation is caught before any JSON extraction is attempted.
+    rubric = load_rubric(_write_rubric(tmp_path, _well_formed_rubric_data()))
+    example = _judge_json_response({"correctness": 1, "tone": 1}, overall_score=1.0)
+    wrapped = (
+        "<think>For example, a bad answer might score like this: "
+        f"```json\n{example}\n``` Now let me actually grade the a"
+    )
+    fake_llm = _fake_llm(mocker, wrapped, finish_reason="length")
+    with pytest.raises(JudgeError, match="truncated"):
+        score_with_judge(fake_llm, rubric, "q", "a")
+
+
+def test_extract_json_candidate_prefers_last_fenced_block():
+    from my_coding_agent.evals.judge import _extract_json_candidate
+
+    content = 'intro ```json\n{"a": 1}\n``` middle text ```json\n{"a": 2}\n``` trailing'
+    assert json.loads(_extract_json_candidate(content)) == {"a": 2}
+
+
+def test_extract_json_candidate_falls_back_to_outermost_braces():
+    from my_coding_agent.evals.judge import _extract_json_candidate
+
+    content = 'here is the answer: {"a": 1, "b": {"c": 2}} thanks'
+    assert json.loads(_extract_json_candidate(content)) == {"a": 1, "b": {"c": 2}}
+
+
+def test_extract_json_candidate_no_json_raises():
+    from my_coding_agent.evals.judge import _extract_json_candidate
+
+    with pytest.raises(JudgeError, match="no JSON object"):
+        _extract_json_candidate("no json here at all")
 
 
 # --- calibration -----------------------------------------------------------
