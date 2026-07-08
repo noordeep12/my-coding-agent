@@ -2,6 +2,15 @@
 
 from . import judge  # noqa: F401  (import registers the "judge" scorer)
 from .cases import load_case_set
+from .compare import (
+    CaseFlip,
+    ComparisonResult,
+    DatasetVersionMismatchError,
+    ThresholdConfig,
+    Verdict,
+    compare_runs,
+    evaluate_verdict,
+)
 from .datasets import (
     Dataset,
     add_case,
@@ -47,4 +56,11 @@ __all__ = [
     "run_dataset",
     "dataset_ref",
     "judge",
+    "CaseFlip",
+    "ComparisonResult",
+    "DatasetVersionMismatchError",
+    "ThresholdConfig",
+    "Verdict",
+    "compare_runs",
+    "evaluate_verdict",
 ]
