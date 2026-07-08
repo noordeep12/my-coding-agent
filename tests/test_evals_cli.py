@@ -106,9 +106,7 @@ def test_compare_by_run_id_under_default_results_root(tmp_path, monkeypatch):
     write_run_result(baseline)
     write_run_result(candidate)
 
-    result = CliRunner().invoke(
-        main, ["compare", baseline.run_id, candidate.run_id]
-    )
+    result = CliRunner().invoke(main, ["compare", baseline.run_id, candidate.run_id])
 
     assert result.exit_code == 0, result.output
 

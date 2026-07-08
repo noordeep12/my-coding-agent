@@ -116,12 +116,8 @@ def test_metric_floor_violation_fails_verdict():
 
 
 def test_strict_improvement_passes():
-    baseline = _result(
-        "smoke@v1", [EvalScore("a", True, {}, {})], {"pass_rate": 0.5}
-    )
-    candidate = _result(
-        "smoke@v1", [EvalScore("a", True, {}, {})], {"pass_rate": 0.9}
-    )
+    baseline = _result("smoke@v1", [EvalScore("a", True, {}, {})], {"pass_rate": 0.5})
+    candidate = _result("smoke@v1", [EvalScore("a", True, {}, {})], {"pass_rate": 0.9})
     comparison = compare_runs(baseline, candidate)
     thresholds = ThresholdConfig(metric_floors={"pass_rate": 0.8})
 
@@ -152,12 +148,8 @@ def test_single_regressed_case_fails_no_regression_rule():
 
 
 def test_no_regression_rule_can_be_disabled():
-    baseline = _result(
-        "smoke@v1", [EvalScore("a", True, {}, {})], {"pass_rate": 1.0}
-    )
-    candidate = _result(
-        "smoke@v1", [EvalScore("a", False, {}, {})], {"pass_rate": 0.0}
-    )
+    baseline = _result("smoke@v1", [EvalScore("a", True, {}, {})], {"pass_rate": 1.0})
+    candidate = _result("smoke@v1", [EvalScore("a", False, {}, {})], {"pass_rate": 0.0})
     comparison = compare_runs(baseline, candidate)
     thresholds = ThresholdConfig(no_case_regressed=False)
 
