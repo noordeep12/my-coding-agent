@@ -1,0 +1,33 @@
+{
+  "name": "cve_aggregation_rubric",
+  "scale": {"min": 1, "max": 5},
+  "criteria": [
+    {
+      "name": "subagent_delegation",
+      "description": "Were both CVE lookups delegated to two separate subagents, rather than performed inline by the main agent? Look for two distinct reports in the final answer, one per source, rather than a single undifferentiated block of research.",
+      "anchors": {
+        "1": "Both lookups appear to have been done directly by the main agent; no evidence of delegation.",
+        "3": "Only one of the two lookups shows clear evidence of subagent delegation.",
+        "5": "Both lookups show clear evidence of having been delegated to separate subagents."
+      }
+    },
+    {
+      "name": "source_correctness",
+      "description": "Does the CISA KEV portion of the answer reflect the vulnerability.circl.lu CISA KEV endpoint, and does the GitHub Advisories portion reflect the api.github.com advisories endpoint, without either being substituted, guessed, or fabricated?",
+      "anchors": {
+        "1": "Neither source is correctly grounded; content appears fabricated or from the wrong source.",
+        "3": "One source is correctly grounded, the other is substituted, guessed, or fabricated.",
+        "5": "Both sources are correctly grounded in their assigned endpoint with plausible, source-consistent CVE data."
+      }
+    },
+    {
+      "name": "synthesis_quality",
+      "description": "Does the final answer contain one well-formed markdown table combining rows from both sources?",
+      "anchors": {
+        "1": "No markdown table, or a table containing only one source's data.",
+        "3": "A markdown table exists but is malformed, missing a source's rows, or hard to read.",
+        "5": "One well-formed markdown table with rows drawn from both sources."
+      }
+    }
+  ]
+}
