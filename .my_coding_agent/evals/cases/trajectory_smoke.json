@@ -1,0 +1,10 @@
+{
+  "id": "trajectory_smoke",
+  "task": "Use the bash tool to list the files in the current directory, then state you're done.",
+  "scorer": "trajectory",
+  "expected": {
+    "pass_threshold": 0.7
+  },
+  "dataset": "example",
+  "tags": ["smoke", "trajectory"]
+}
