@@ -27,6 +27,7 @@ dependencies = [
 [project.scripts]
 my-coding-agent = "my_coding_agent.pipeline.examples.simple:main"
 my-coding-agent-traces = "my_coding_agent.viewer.server:_cli"
+my-coding-agent-eval = "my_coding_agent.evals.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/my_coding_agent"]

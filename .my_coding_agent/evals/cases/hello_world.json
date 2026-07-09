@@ -1,0 +1,10 @@
+{
+  "id": "hello_world",
+  "task": "Say exactly the word 'pong' and nothing else.",
+  "scorer": "exact_match",
+  "expected": {
+    "contains": "pong"
+  },
+  "dataset": "example",
+  "tags": ["smoke"]
+}

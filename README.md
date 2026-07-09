@@ -238,6 +238,30 @@ Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, serve
 - A **Breakdown** toggle in the stats bar (shown whenever the session has token-usage data) reveals per-call-kind and per-agent token totals across the whole delegated tree
 - When a run used [skills](#skills), `use_skill` tool calls carry a **🧠 skill** badge and the stats bar shows an **offered / loaded** count; traces recorded before skills existed load and render unchanged
 
+## Evals
+
+Run the agent against a fixed, named set of tasks and get back a repeatable, scored result — instead of "I tried it and it looked good".
+
+An eval **case** is a plain JSON file: a task prompt, a scorer ref, and the scorer's expected/threshold data.
+
+```json
+{
+  "id": "hello_world",
+  "task": "Say exactly the word 'pong' and nothing else.",
+  "scorer": "exact_match",
+  "expected": { "contains": "pong" }
+}
+```
+
+Run a case set (defaults to the bundled example under `.my_coding_agent/evals/cases/`):
+
+```bash
+my-coding-agent-eval
+my-coding-agent-eval --cases path/to/case/dir
+```
+
+Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores the final output with the case's scorer (`exact_match` ships as the one baseline deterministic scorer; `evals.scoring.register_scorer` is the extension point for future scorers). A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`.
+
 ## Requirements
 
 - Python 3.12+
