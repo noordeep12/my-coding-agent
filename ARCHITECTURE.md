@@ -310,4 +310,32 @@ When the `bash` tool's combined stdout/stderr exceeds the artifact threshold, th
 
 The Trace Explorer's machine-wide resource badge (`🖥 cpu/ram/gpu`, node-resource-monitoring) renders only in the node detail panel, not the tree rows — it carries its own `res` badge class (distinct from `lat`) so `TREE_BADGE` can exclude it, keeping the tree scannable.
 
+---
+
+## Evals: datasets (issue #141)
+
+`evals/datasets.py` (leaf module, no dependency on `engine`/`pipeline`) models a
+**dataset** — a named, ordered collection of eval case ids with a stable id
+and a **version** that bumps on every membership change. Each dataset lives
+under `.my_coding_agent/evals/datasets/<dataset_id>/versions.jsonl`, an
+append-only log of version records (`version`, `case_ids`, `op`, `note`,
+`created_at`); mutating a dataset (`add_case`, `retire_case`,
+`add_failure_case`) never rewrites history — it appends a new version record,
+so any prior version's membership stays loadable via
+`load_dataset(id, version=...)`. `add_failure_case` additionally writes a new
+case file (id, task, scorer ref, expected data) under
+`.my_coding_agent/evals/cases/`, turning a recorded run failure into a
+regression case. `list_datasets` enumerates every dataset at its current
+version for runner/comparison/dashboard consumers. Datasets reference cases
+by id only, not case content; `resolve_cases` resolves a dataset's ordered
+ids to loaded `EvalCase` records via `evals.cases.load_case_set` (#139), and
+`run_dataset` runs those cases through `evals.runner.run_case_set` and
+writes the result via `evals.results.write_run_result`, stamping the exact
+dataset id + version onto `EvalRunResult.dataset` as `"<id>@v<version>"` —
+the string the eval harness core result-record contract (#139) already
+reserves for the run's dataset reference — so a downstream comparison (#142)
+can tell whether two runs used the same dataset version. One example
+dataset (`example`, version 1, wrapping the `hello_world` example case) ships
+committed under `.my_coding_agent/evals/datasets/example/versions.jsonl`.
+
 

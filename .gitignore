@@ -38,6 +38,8 @@ docs/_build/
 .my_coding_agent/evals/*
 !.my_coding_agent/evals/cases/
 !.my_coding_agent/evals/cases/**
+!.my_coding_agent/evals/datasets/
+!.my_coding_agent/evals/datasets/**
 .claude/
 .codex/
 
