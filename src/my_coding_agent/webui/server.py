@@ -2,9 +2,9 @@
 
 Serves a persistent-nav single-page shell at ``/`` that mounts the existing
 Trace Explorer and Eval Dashboard (reusing their render helpers, not
-re-implementing them) under ``/traces`` and ``/evals``, plus a placeholder
-``/builder`` tab. State (last-visited route, per-tab selection) is persisted
-to the local SQLite store (`store.py`) and restored on load.
+re-implementing them) under ``/traces`` and ``/evals``. State (last-visited
+route, per-tab selection) is persisted to the local SQLite store
+(`store.py`) and restored on load.
 
 Entry point::
 
@@ -30,12 +30,6 @@ from ..viewer.reader import list_sessions, load_session
 from ..viewer.server import _check_vendor_assets, _full_html
 from ..viewer.sumcheck import check_tree
 from .admin import admin_html, masked_llm_settings, save_llm_settings
-from .builder import (
-    RunRegistry,
-    builder_html,
-    handle_builder_api_get,
-    handle_builder_api_write,
-)
 from .evals_config import handle_eval_config_route
 from .store import Store, default_db_path
 
@@ -43,10 +37,8 @@ logger = logging.getLogger(__name__)
 
 _SID_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
-#: Tab-registration contract: route -> nav label. "builder" is mounted by
-#: #153, "admin" by #155.
+#: Tab-registration contract: route -> nav label. "admin" is mounted by #155.
 NAV_TABS: tuple[tuple[str, str], ...] = (
-    ("builder", "Builder"),
     ("traces", "Traces"),
     ("evals", "Evals"),
     ("admin", "Admin"),
@@ -115,9 +107,8 @@ function tabUrl(route, selection){
   return '/' + route + (qs ? ('?' + qs) : '');
 }
 
-// Cross-tab navigation: the Builder tab asks the shell to switch tabs (e.g.
-// "open trace" after a run finishes) via postMessage, same channel used for
-// selection sync.
+// Cross-tab navigation: a mounted tab asks the shell to switch tabs via
+// postMessage, same channel used for selection sync.
 function useCrossTabNavigate(setRoute){
   useEffect(()=>{
     const onMessage = e=>{
@@ -131,8 +122,7 @@ function useCrossTabNavigate(setRoute){
 }
 
 // Tab-registration contract: each entry in TABS is [route, navLabel]; a route
-// renders via an <iframe> mounting the existing standalone page at that path
-// (Builder is a placeholder until #153 registers a real one).
+// renders via an <iframe> mounting the existing standalone page at that path.
 function App(){
   const [route, setRoute] = useState(DEFAULT_TAB);
   const [selection, setSelection] = useState({});
@@ -228,10 +218,6 @@ def _serve_evals(handler: _WebUIHandler) -> None:
     handler._send_html(eval_dashboard_html("/evals") or "")
 
 
-def _serve_builder(handler: _WebUIHandler) -> None:
-    handler._send_html(builder_html("/builder") or "")
-
-
 def _serve_admin(handler: _WebUIHandler) -> None:
     handler._send_html(admin_html())
 
@@ -254,7 +240,6 @@ _STATIC_GET_HANDLERS: dict[str, Any] = {
     "/": _serve_shell,
     "/traces": _serve_traces,
     "/evals": _serve_evals,
-    "/builder": _serve_builder,
     "/admin": _serve_admin,
     "/api/sessions": _serve_sessions_api,
     "/api/webui/state": _serve_webui_state_api,
@@ -267,7 +252,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
 
     base_dir: Path  # session/eval data root, set before serve_forever()
     store: Store  # set before serve_forever()
-    run_registry: RunRegistry  # set before serve_forever()
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
@@ -283,8 +267,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
             return self._handle_eval_config("GET")
         if path.startswith("/api/evals/"):
             return handle_eval_api_route(self, path, self.base_dir.resolve() / "evals")
-        if path.startswith("/api/builder/"):
-            return handle_builder_api_get(self, path, self.store, self.run_registry)
         match = re.fullmatch(r"/api/session/([^/]+)", path)
         if match:
             self._handle_session(match.group(1))
@@ -323,17 +305,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
             save_llm_settings(self.store, payload)
             self._send_json({"ok": True})
             return
-        if path.startswith("/api/builder/") and isinstance(payload, dict):
-            if handle_builder_api_write(
-                self,
-                method,
-                path,
-                self.store,
-                self.run_registry,
-                self.base_dir,
-                payload,
-            ):
-                return
         self._send_json({"error": "not found"}, status=404)
 
     def _read_json_body(self) -> Any | None:
@@ -407,7 +378,6 @@ def run_server(
     store = Store(default_db_path(base))
     _WebUIHandler.base_dir = base
     _WebUIHandler.store = store
-    _WebUIHandler.run_registry = RunRegistry()
     server = HTTPServer((host, port), _WebUIHandler)
     click.echo(f"my-coding-agent web UI → http://{host}:{port}")
     try:
