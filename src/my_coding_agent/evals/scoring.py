@@ -105,3 +105,38 @@ def resolve_scorer(scorer_ref: str) -> Scorer:
 def register_scorer(scorer_ref: str, scorer: Scorer) -> None:
     """Register a scorer under ``scorer_ref``, the registry's single extension point."""
     _REGISTRY[scorer_ref] = scorer
+
+
+def list_scorer_refs() -> list[str]:
+    """Return the registered scorer refs, sorted."""
+    return sorted(_REGISTRY)
+
+
+#: Required `expected` keys per built-in scorer ref, used only for pre-save
+#: validation in the UI config layer — the scorers themselves already fail
+#: gracefully (as a failed case, not a crash) on a missing key at run time.
+#: `exact_match` needs exactly one of two alternative keys, so it is checked
+#: separately rather than listed here.
+_REQUIRED_EXPECTED_KEYS: dict[str, tuple[str, ...]] = {
+    "judge": ("rubric", "pass_threshold"),
+}
+
+
+def validate_expected(scorer_ref: str, expected: dict) -> list[str]:
+    """Check ``expected`` against the selected scorer's known shape.
+
+    Returns a list of human-readable problems (empty if valid). Only checks
+    the built-in scorers' documented required keys; an unrecognized scorer
+    ref (e.g. one registered outside this module) is not validated here.
+    """
+    if scorer_ref not in _REGISTRY:
+        return [f"unknown scorer {scorer_ref!r}"]
+
+    if scorer_ref == "exact_match":
+        if "equals" not in expected and "contains" not in expected:
+            return ["exact_match requires 'equals' or 'contains' in expected"]
+        return []
+
+    required = _REQUIRED_EXPECTED_KEYS.get(scorer_ref, ())
+    missing = [key for key in required if key not in expected]
+    return [f"{scorer_ref} requires '{key}' in expected" for key in missing]
