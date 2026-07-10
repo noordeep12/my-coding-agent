@@ -211,7 +211,7 @@ Since the LLM runs locally, machine load *is* the run's real cost. A background 
 
 ### Web UI
 
-One local, offline server hosts the whole interface behind a persistent navigation bar (**Builder** · **Traces** · **Evals** · **Admin**):
+One local, offline server hosts the whole interface behind a persistent navigation bar (**Traces** · **Evals** · **Admin**):
 
 ```bash
 my-coding-agent-webui          # defaults: port 7474, dir .my_coding_agent
@@ -315,7 +315,7 @@ The **Admin** tab of the [Web UI](#web-ui) is a viewable, editable, persisted su
 
 - **Resolution order**: saved setting → environment variable → documented default. An untouched field keeps showing/using the env var or default, so existing env-var setups keep working unchanged; a saved value takes precedence.
 - **Persistence**: settings are saved to the same local SQLite store as the rest of the shell (`.my_coding_agent/webui/webui.db`) and survive a restart.
-- **Effect**: interface-launched work (builder runs, eval runs) builds its LLM client from the resolved settings, so a saved change takes effect immediately, without restarting the process.
+- **Effect**: interface-launched eval runs build their LLM client from the resolved settings, so a saved change takes effect immediately, without restarting the process.
 - **Secret handling**: the API key is masked by default and revealed only on explicit user action; it is never written to logs.
 
 ## Requirements

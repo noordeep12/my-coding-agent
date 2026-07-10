@@ -70,8 +70,8 @@ def masked_llm_settings(store: Store) -> dict[str, Any]:
 def build_llm_client(store: Store, **overrides: Any) -> LLM:
     """Construct an `LLM` client from resolved settings.
 
-    Interface-launched runs (builder, eval) call this instead of `LLM()`
-    directly, so a saved setting takes effect without a process restart.
+    Interface-launched eval runs call this instead of `LLM()` directly,
+    so a saved setting takes effect without a process restart.
     """
     resolved = resolve_llm_settings(store)
     resolved.update(overrides)
