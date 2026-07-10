@@ -1,5 +1,6 @@
-"""Evals — repeatable case runner and result store for the agent."""
+"""Evals — repeatable case runner, scorers, and result store for the agent."""
 
+from . import judge  # noqa: F401  (import registers the "judge" scorer)
 from .cases import load_case_set
 from .results import EvalRunResult, build_run_result, load_run_result, write_run_result
 from .runner import run_case_set
@@ -19,4 +20,5 @@ __all__ = [
     "load_run_result",
     "register_scorer",
     "resolve_scorer",
+    "judge",
 ]

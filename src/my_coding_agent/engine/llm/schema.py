@@ -7,6 +7,7 @@ CALL_KIND_REPORT = "report"
 CALL_KIND_TOOL_ROUTER = "tool_router"
 CALL_KIND_TOOL_ARG_CORRECTION = "tool_arg_correction"
 CALL_KIND_ARTIFACT_QUERY = "artifact_query"
+CALL_KIND_JUDGE = "judge"
 
 # Usage dict keys returned by the server.
 USAGE_PROMPT = "prompt_tokens"
