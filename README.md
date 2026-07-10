@@ -260,7 +260,7 @@ my-coding-agent-eval
 my-coding-agent-eval --cases path/to/case/dir
 ```
 
-Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores the final output with the case's scorer (`exact_match` ships as the one baseline deterministic scorer; `evals.scoring.register_scorer` is the extension point for future scorers). A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`.
+Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores it with the case's scorer (`evals.scoring.register_scorer` is the extension point for scorers). Two ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output), and `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number. A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`.
 
 ## Requirements
 

@@ -1,0 +1,12 @@
+{
+  "id": "cve_aggregation",
+  "task": "Use subagents to achieve this task:\nsubagent1: collect the most recently added CVEs in the CISA KEV database via https://vulnerability.circl.lu/api/cisa_kev/ (expected_report: the CVE ids and summary you found, as a short list)\nsubagent2: collect the most recently added CVEs in the GitHub Advisories database via https://api.github.com/advisories (expected_report: the CVE ids and summary you found, as a short list)\nThen summarize both into one markdown table.",
+  "scorer": "judge",
+  "expected": {
+    "rubric": ".my_coding_agent/evals/rubrics/cve_aggregation_rubric.json",
+    "pass_threshold": 3.5,
+    "max_tokens": 6000
+  },
+  "dataset": "example",
+  "tags": ["subagent-delegation", "live-network"]
+}

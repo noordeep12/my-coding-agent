@@ -489,6 +489,12 @@ class JudgeScorer:
         - ``rubric``: path to the rubric JSON artifact.
         - ``pass_threshold``: minimum ``overall_score`` to pass the case.
 
+    ``case.expected`` may optionally carry:
+        - ``max_tokens``: override for the judge's completion cap (default
+          ``DEFAULT_JUDGE_MAX_TOKENS``). A verbose reasoning model can exceed
+          the default while producing a multi-criterion verdict; raising this
+          per-case is preferable to a truncated response being discarded.
+
     An errored agent run, a missing/malformed rubric, or an unparseable
     judge response are all recorded as a failed case with the reason in
     ``EvalScore.detail`` — never a crashed run.
@@ -523,10 +529,16 @@ class JudgeScorer:
                 detail={"reason": "case.expected missing 'pass_threshold'"},
             )
 
+        max_tokens = int(case.expected.get("max_tokens", DEFAULT_JUDGE_MAX_TOKENS))
+
         try:
             rubric = load_rubric(Path(rubric_ref))
             verdict = score_with_judge(
-                self._llm, rubric, case.task, run_result.final_output
+                self._llm,
+                rubric,
+                case.task,
+                run_result.final_output,
+                max_tokens=max_tokens,
             )
         except (RubricError, JudgeError) as exc:
             return EvalScore(
