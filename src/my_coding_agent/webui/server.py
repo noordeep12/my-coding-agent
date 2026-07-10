@@ -29,6 +29,7 @@ from ..viewer.evals_server import eval_dashboard_html, handle_eval_api_route
 from ..viewer.reader import list_sessions, load_session
 from ..viewer.server import _check_vendor_assets, _full_html
 from ..viewer.sumcheck import check_tree
+from .admin import admin_html, masked_llm_settings, save_llm_settings
 from .builder import (
     RunRegistry,
     builder_html,
@@ -41,12 +42,13 @@ logger = logging.getLogger(__name__)
 
 _SID_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
-#: Tab-registration contract: route -> nav label. #154/#155 add their own
-#: entries here as their tabs land; "builder" is mounted by #153.
+#: Tab-registration contract: route -> nav label. "builder" is mounted by
+#: #153, "admin" by #155.
 NAV_TABS: tuple[tuple[str, str], ...] = (
     ("builder", "Builder"),
     ("traces", "Traces"),
     ("evals", "Evals"),
+    ("admin", "Admin"),
 )
 _DEFAULT_TAB = "traces"
 
@@ -229,12 +231,20 @@ def _serve_builder(handler: _WebUIHandler) -> None:
     handler._send_html(builder_html("/builder") or "")
 
 
+def _serve_admin(handler: _WebUIHandler) -> None:
+    handler._send_html(admin_html())
+
+
 def _serve_sessions_api(handler: _WebUIHandler) -> None:
     handler._send_json(list_sessions(handler.base_dir))
 
 
 def _serve_webui_state_api(handler: _WebUIHandler) -> None:
     handler._send_json(handler.store.get_ui_state(_UI_STATE_KEY) or {})
+
+
+def _serve_admin_settings_api(handler: _WebUIHandler) -> None:
+    handler._send_json(masked_llm_settings(handler.store))
 
 
 #: Static GET routes (no path params), dispatched by exact-path lookup so
@@ -244,8 +254,10 @@ _STATIC_GET_HANDLERS: dict[str, Any] = {
     "/traces": _serve_traces,
     "/evals": _serve_evals,
     "/builder": _serve_builder,
+    "/admin": _serve_admin,
     "/api/sessions": _serve_sessions_api,
     "/api/webui/state": _serve_webui_state_api,
+    "/api/admin/settings": _serve_admin_settings_api,
 }
 
 
@@ -295,6 +307,13 @@ class _WebUIHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "invalid payload"}, status=400)
                 return
             self.store.set_ui_state(_UI_STATE_KEY, payload)
+            self._send_json({"ok": True})
+            return
+        if method == "POST" and path == "/api/admin/settings":
+            if not isinstance(payload, dict):
+                self._send_json({"error": "invalid payload"}, status=400)
+                return
+            save_llm_settings(self.store, payload)
             self._send_json({"ok": True})
             return
         if path.startswith("/api/builder/") and isinstance(payload, dict):

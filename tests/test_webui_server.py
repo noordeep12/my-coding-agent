@@ -121,3 +121,29 @@ def test_unknown_route_404(server):
     port, _ = server
     status, _body = _get(port, "/api/nope")
     assert status == 404
+
+
+def test_admin_route_returns_settings_form(server):
+    port, _ = server
+    status, body = _get(port, "/admin")
+    assert status == 200
+    assert b"LLM Connection Settings" in body
+
+
+def test_admin_settings_api_round_trips_and_masks_key(server):
+    port, _ = server
+    status, body = _get(port, "/api/admin/settings")
+    assert status == 200
+    data = json.loads(body)
+    assert "api_url" in data and "model" in data
+
+    payload = {"api_url": "http://saved-host:9999/v1", "model": "saved-model", "api_key": "topsecret"}
+    status, body = _post(port, "/api/admin/settings", payload)
+    assert status == 200
+
+    status, body = _get(port, "/api/admin/settings")
+    data = json.loads(body)
+    assert data["api_url"] == "http://saved-host:9999/v1"
+    assert data["model"] == "saved-model"
+    assert data["api_key"] == "********"
+    assert b"topsecret" not in body
