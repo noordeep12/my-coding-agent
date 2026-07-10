@@ -209,17 +209,23 @@ Every run automatically records a structured `events.jsonl` alongside the other 
 
 Since the LLM runs locally, machine load *is* the run's real cost. A background sampler (no sudo required) records **machine-wide** RAM/CPU/GPU/network/disk figures — what the Mac was doing, not per-process attribution — for the execution window of every timed event (`llm_call`, `tool_call`, `summarizer`), and a session-wide rollup (peaks/averages, byte totals) is persisted in `session_data.json` alongside the token/time totals. These figures are explicitly labeled `machine_wide: true` since other processes on the machine (e.g. a browser) count toward them too. Capture is passive (never throttles or aborts the run) and degrades gracefully: if the GPU reading is unavailable (non-macOS, or the `ioreg` output changes) or the sampler ever fails, the affected field (or all `resources` data) is simply absent — the run and its trace are unaffected. Sessions recorded before this existed load and render unchanged. Both the terminal run summary and the Trace Explorer (node detail, session stats) show these figures whenever they were captured.
 
-### Trace Explorer
+### Web UI
 
-Visualise sessions in a browser with an interactive pipeline DAG:
+One local, offline server hosts the whole interface behind a persistent navigation bar (**Builder** · **Traces** · **Evals**; Admin arrives with a later change):
 
 ```bash
-my-coding-agent-traces          # defaults: port 7474, dir .my_coding_agent
-my-coding-agent-traces --port 8080 --dir /path/to/.my_coding_agent
-my-coding-agent-traces --dir .my_coding_agent --check <session_id>  # deterministic sum-check, no server; exit 0/1
+my-coding-agent-webui          # defaults: port 7474, dir .my_coding_agent
+my-coding-agent-webui --port 8080 --dir /path/to/.my_coding_agent
+my-coding-agent-webui --dir .my_coding_agent --check <session_id>  # deterministic sum-check, no server; exit 0/1
 ```
 
-Then open `http://localhost:7474`. The UI (an Apple-minimalist Preact app, served fully offline) shows:
+Then open `http://localhost:7474`. It remembers where you left off — last-visited tab and in-progress selection (e.g. the open session) persist to a local SQLite store under `.my_coding_agent/webui/` and are restored the next time you launch it, even after stopping the process.
+
+This supersedes the old standalone `my-coding-agent-traces` entrypoint (removed); its Trace Explorer rendering is unchanged, just mounted into the **Traces** tab below.
+
+#### Trace Explorer
+
+The **Traces** tab visualises sessions with an interactive pipeline DAG. The UI (an Apple-minimalist Preact app, served fully offline) shows:
 
 - **Left pane** — a nested **Tree** of the run: the Main Agent's pipeline, with each delegated **subagent** nested (collapsible, with a coloured rail and badge) where it was spawned; each node label summarises what it added to the context window (e.g. *+196 assistant*, *+1,501 tool*)
   - Navigate with **↑/↓ (or j/k)** arrow keys; the focused node auto-selects
@@ -286,13 +292,13 @@ my-coding-agent-eval compare <baseline_run_id> <candidate_run_id>
 my-coding-agent-eval compare <baseline_run_id> <candidate_run_id> --floor pass_rate=0.9
 ```
 
-Each argument is either a run id under `.my_coding_agent/evals/` or a path to a result directory. The comparison reports per-metric deltas *and* which individual cases flipped pass↔fail, so a flat aggregate can't hide a subset regression. It refuses to compare two runs stamped with different dataset id/version (`--allow-cross-version` downgrades this to a loud warning instead). A configurable `--floor METRIC=VALUE` (repeatable) and the default "no previously-passing case regressed" rule turn the comparison into a verdict; the command exits `0` on pass and non-zero on a regression — the same exit-code pattern as `my-coding-agent-traces --check` — always naming the violated floor or regressed case rather than failing silently.
+Each argument is either a run id under `.my_coding_agent/evals/` or a path to a result directory. The comparison reports per-metric deltas *and* which individual cases flipped pass↔fail, so a flat aggregate can't hide a subset regression. It refuses to compare two runs stamped with different dataset id/version (`--allow-cross-version` downgrades this to a loud warning instead). A configurable `--floor METRIC=VALUE` (repeatable) and the default "no previously-passing case regressed" rule turn the comparison into a verdict; the command exits `0` on pass and non-zero on a regression — the same exit-code pattern as `my-coding-agent-webui --check` — always naming the violated floor or regressed case rather than failing silently.
 
 `add_failure_case` turns a recorded run failure into a new regression case file and adds it to a dataset in one step. Every mutation appends a new version rather than rewriting history, so `load_dataset("smoke", version=1)` still recovers the original membership.
 
 ### Eval Dashboard
 
-The Trace Explorer (`my-coding-agent-traces`) also serves a read-only dashboard over persisted eval results — open `http://localhost:7474/evals`. It never runs or mutates an eval; it only renders result records already written under `.my_coding_agent/evals/`.
+The **Evals** tab of the [Web UI](#web-ui) (`my-coding-agent-webui`) serves a read-only dashboard over persisted eval results. It never runs or mutates an eval; it only renders result records already written under `.my_coding_agent/evals/`.
 
 - **Overview** — headline metrics for the latest run plus a trend of the score across runs over time
 - **Run history** — a browsable list of past runs (id, dataset, model, verdict, headline score)
