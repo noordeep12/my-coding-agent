@@ -13,6 +13,55 @@ logger = logging.getLogger(__name__)
 _REQUIRED_KEYS = ("id", "task", "scorer", "expected")
 
 
+class CaseNotFoundError(Exception):
+    """Raised when a case id has no file under the cases directory."""
+
+
+def _case_path(case_id: str, case_dir: Path) -> Path:
+    return case_dir / f"{case_id}.json"
+
+
+def save_case(case: EvalCase, case_dir: Path) -> Path:
+    """Create or overwrite the case file for ``case`` under ``case_dir``.
+
+    Args:
+        case: The case to write (id determines the file name).
+        case_dir: Directory holding one `*.json` file per case.
+
+    Returns:
+        The path written.
+    """
+    case_dir.mkdir(parents=True, exist_ok=True)
+    path = _case_path(case.id, case_dir)
+    path.write_text(
+        json.dumps(
+            {
+                "id": case.id,
+                "task": case.task,
+                "scorer": case.scorer,
+                "expected": case.expected,
+                "dataset": case.dataset,
+                "tags": list(case.tags),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return path
+
+
+def delete_case(case_id: str, case_dir: Path) -> None:
+    """Delete the case file for ``case_id`` under ``case_dir``.
+
+    Raises:
+        CaseNotFoundError: If no case file exists for ``case_id``.
+    """
+    path = _case_path(case_id, case_dir)
+    if not path.exists():
+        raise CaseNotFoundError(f"No case '{case_id}' found under {case_dir}")
+    path.unlink()
+
+
 def load_case_set(case_dir: Path) -> list[EvalCase]:
     """Load every case in ``case_dir`` (one `*.json` file per case).
 

@@ -35,6 +35,7 @@ from .builder import (
     handle_builder_api_get,
     handle_builder_api_write,
 )
+from .evals_config import handle_eval_config_route
 from .store import Store, default_db_path
 
 logger = logging.getLogger(__name__)
@@ -262,19 +263,21 @@ class _WebUIHandler(BaseHTTPRequestHandler):
         if static is not None:
             static(self)
             return
+        if not self._dispatch_get_api(path):
+            self._send_json({"error": "not found"}, status=404)
+
+    def _dispatch_get_api(self, path: str) -> bool:
+        if path.startswith("/api/evals/config"):
+            return self._handle_eval_config("GET")
         if path.startswith("/api/evals/"):
-            if not handle_eval_api_route(self, path, self.base_dir.resolve() / "evals"):
-                self._send_json({"error": "not found"}, status=404)
-            return
+            return handle_eval_api_route(self, path, self.base_dir.resolve() / "evals")
         if path.startswith("/api/builder/"):
-            if not handle_builder_api_get(self, path, self.store, self.run_registry):
-                self._send_json({"error": "not found"}, status=404)
-            return
+            return handle_builder_api_get(self, path, self.store, self.run_registry)
         match = re.fullmatch(r"/api/session/([^/]+)", path)
         if match:
             self._handle_session(match.group(1))
-        else:
-            self._send_json({"error": "not found"}, status=404)
+            return True
+        return False
 
     def do_POST(self) -> None:
         self._dispatch_write("POST")
@@ -287,6 +290,10 @@ class _WebUIHandler(BaseHTTPRequestHandler):
 
     def _dispatch_write(self, method: str) -> None:
         path = self.path.split("?")[0]
+        if path.startswith("/api/evals/config"):
+            if not self._handle_eval_config(method):
+                self._send_json({"error": "not found"}, status=404)
+            return
         payload = self._read_json_body()
         if payload is None:
             return
@@ -318,6 +325,20 @@ class _WebUIHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_json({"error": "invalid json"}, status=400)
             return None
+
+    def _handle_eval_config(self, method: str) -> bool:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length else b""
+        path = self.path.split("?")[0]
+        return handle_eval_config_route(
+            self,
+            method,
+            path,
+            raw,
+            evals_root=self.base_dir.resolve() / "evals",
+            sessions_root=self.base_dir.resolve(),
+            store=self.store,
+        )
 
     def _handle_session(self, session_id: str) -> None:
         if not _SID_RE.match(session_id):

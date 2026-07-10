@@ -355,4 +355,37 @@ can tell whether two runs used the same dataset version. One example
 dataset (`example`, version 1, wrapping the `hello_world` example case) ships
 committed under `.my_coding_agent/evals/datasets/example/versions.jsonl`.
 
+## Eval configuration and run-to-eval bridge (issue #154)
+
+`webui/evals_config.py` adds a CRUD front over the existing eval model to the
+Evals tab (extending #152's read-only dashboard, not replacing it) so
+datasets, cases, expectations, and scorer choice can be configured from the
+interface instead of by editing files or writing Python. It is a thin
+JSON-in/JSON-out dispatcher, wired into `webui/server.py`'s `do_GET`/
+`do_POST`/`do_DELETE` under `/api/evals/config/...`, that calls straight
+into `evals.datasets` (`create_dataset`/`add_case`/`retire_case`,
+version-preserving), `evals.cases` (`save_case`/`delete_case`, new thin
+writers alongside the existing `load_case_set` reader), and
+`evals.scoring` (`list_scorer_refs` for the offered scorer set,
+`validate_expected` — a new advisory check of a case's `expected` payload
+against the selected scorer's documented required keys, run before save;
+it never changes what a scorer does at run time, only what the UI accepts).
+A `POST /run` route triggers a real run of a chosen dataset through the
+same `evals.datasets.run_dataset` the CLI uses, so its result shows up in
+the pre-existing read-only Run History unchanged. UI-only draft/selection
+state (e.g. last-selected dataset) persists through #152's store via its
+generic `items` table — no schema migration needed for this change.
+
+The run-to-eval bridge (`POST /send-run`) reads a completed session's
+`events.jsonl` directly for its opening user message and final assistant
+message (mirroring the shape `evals.runner` already reads for a live case
+run), then calls `evals.datasets.add_failure_case` to turn that run into a
+new regression case and add it to a chosen dataset — the same function the
+CLI's own failure-capture path already uses — so sending a run to
+evaluation never requires re-typing its task or expected outcome by hand.
+The Evals tab's embedded Preact app (`viewer/evals_server.py`) gains a
+"Configure" nav entry (Datasets / Cases / Send run to eval) built from the
+same vendored Preact/htm bundle the rest of the dashboard uses, no new
+dependency.
+
 

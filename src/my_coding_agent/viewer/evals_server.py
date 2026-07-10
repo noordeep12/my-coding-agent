@@ -88,6 +88,15 @@ pre{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size
 
 .back{font-size:12px;color:var(--accent);cursor:pointer;margin-bottom:12px;display:inline-block}
 .stub{padding:32px;text-align:center;color:var(--muted)}
+.form-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.form-row label{font-size:11px;color:var(--muted);min-width:90px}
+input[type=text],textarea,select{font-family:var(--font);font-size:12px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--bg)}
+textarea{font-family:var(--mono);width:100%;min-height:70px}
+button.primary{font-family:var(--font);font-size:12px;font-weight:500;color:#fff;background:var(--accent);border:none;border-radius:6px;padding:7px 14px;cursor:pointer}
+button.primary:hover{opacity:0.9}
+button.danger{font-family:var(--font);font-size:11px;color:var(--neg);background:transparent;border:1px solid var(--neg);border-radius:6px;padding:4px 10px;cursor:pointer}
+.error-msg{color:var(--neg);font-size:12px;margin:6px 0}
+.ok-msg{color:var(--pos);font-size:12px;margin:6px 0}
 </style>
 </head>
 <body>
@@ -99,12 +108,21 @@ const {useState, useEffect} = window.preactHooks;
 const html = window.htm.bind(h);
 
 function getJSON(url){ return fetch(url).then(r => r.json()); }
+function postJSON(url, body){
+  return fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})})
+    .then(async r => { const data = await r.json(); if(!r.ok) throw new Error(data.error||"request failed"); return data; });
+}
+function del(url){
+  return fetch(url, {method:"DELETE"})
+    .then(async r => { const data = await r.json(); if(!r.ok) throw new Error(data.error||"request failed"); return data; });
+}
 
 function Nav({view, setView}){
   const tabs = [
     ["overview","Overview"],
     ["runs","Run History"],
     ["datasets","Datasets"],
+    ["config","Configure"],
     ["compare","Compare"],
   ];
   return html`
@@ -259,6 +277,202 @@ function Compare(){
   `;
 }
 
+function useAsync(loader, deps){
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const reload = () => { setErr(null); getJSON(loader()).then(setData).catch(e => setErr(String(e))); };
+  useEffect(reload, deps || []);
+  return [data, reload, err];
+}
+
+function ConfigDatasets(){
+  const [datasets, reloadDatasets] = useAsync(() => "/api/evals/config/datasets", []);
+  const [newId, setNewId] = useState("");
+  const [newCaseIds, setNewCaseIds] = useState("");
+  const [msg, setMsg] = useState(null);
+  const [addCaseId, setAddCaseId] = useState({});
+
+  const createDataset = () => {
+    setMsg(null);
+    const case_ids = newCaseIds.split(",").map(s => s.trim()).filter(Boolean);
+    postJSON("/api/evals/config/datasets", {id: newId, case_ids})
+      .then(() => { setNewId(""); setNewCaseIds(""); reloadDatasets(); setMsg({ok:"dataset created"}); })
+      .catch(e => setMsg({err: String(e)}));
+  };
+  const addCase = (datasetId) => {
+    const caseId = (addCaseId[datasetId] || "").trim();
+    if(!caseId) return;
+    postJSON(`/api/evals/config/datasets/${datasetId}/cases`, {case_id: caseId})
+      .then(() => { setAddCaseId(prev => ({...prev, [datasetId]: ""})); reloadDatasets(); })
+      .catch(e => setMsg({err: String(e)}));
+  };
+  const retireCase = (datasetId, caseId) => {
+    del(`/api/evals/config/datasets/${datasetId}/cases/${caseId}`)
+      .then(reloadDatasets)
+      .catch(e => setMsg({err: String(e)}));
+  };
+  const runDataset = (datasetId) => {
+    setMsg(null);
+    postJSON("/api/evals/config/run", {dataset_id: datasetId})
+      .then(r => setMsg({ok: `run ${r.run_id} complete`}))
+      .catch(e => setMsg({err: String(e)}));
+  };
+
+  return html`
+    <div class="card">
+      <h2>Create dataset</h2>
+      <div class="form-row">
+        <label>Dataset id</label>
+        <input type="text" value=${newId} onInput=${e => setNewId(e.target.value)} />
+      </div>
+      <div class="form-row">
+        <label>Case ids</label>
+        <input type="text" placeholder="comma-separated, optional" value=${newCaseIds} onInput=${e => setNewCaseIds(e.target.value)} />
+      </div>
+      <button class="primary" disabled=${!newId} onClick=${createDataset}>Create</button>
+      ${msg && msg.ok && html`<div class="ok-msg">${msg.ok}</div>`}
+      ${msg && msg.err && html`<div class="error-msg">${msg.err}</div>`}
+    </div>
+    <div class="card">
+      <h2>Datasets</h2>
+      ${!datasets ? html`<div class="empty">Loading…</div>` : !datasets.length ? html`<div class="empty">No datasets yet.</div>` :
+        datasets.map(d => html`
+          <div class="case-row">
+            <div class="head">
+              <span class="mono">${d.id} <span class="muted">v${d.version}</span></span>
+              <button class="primary" onClick=${() => runDataset(d.id)}>Run</button>
+            </div>
+            <div style=${{marginTop:"8px"}}>
+              ${d.case_ids.map(cid => html`
+                <span class="pill pass" style=${{marginRight:"6px",marginBottom:"6px",display:"inline-flex",gap:"6px",alignItems:"center"}}>
+                  ${cid}
+                  <span style=${{cursor:"pointer"}} onClick=${() => retireCase(d.id, cid)}>×</span>
+                </span>
+              `)}
+            </div>
+            <div class="form-row" style=${{marginTop:"8px"}}>
+              <input type="text" placeholder="case id to add" value=${addCaseId[d.id] || ""}
+                onInput=${e => setAddCaseId(prev => ({...prev, [d.id]: e.target.value}))} />
+              <button class="primary" onClick=${() => addCase(d.id)}>Add case</button>
+            </div>
+          </div>
+        `)}
+    </div>
+  `;
+}
+
+function ConfigCases(){
+  const [cases, reloadCases] = useAsync(() => "/api/evals/config/cases", []);
+  const [scorers, reloadScorers] = useAsync(() => "/api/evals/config/scorers", []);
+  const [form, setForm] = useState({id:"", task:"", scorer:"exact_match", expected:'{"equals": ""}'});
+  const [msg, setMsg] = useState(null);
+
+  const setField = (k, v) => setForm(prev => ({...prev, [k]: v}));
+
+  const saveCase = () => {
+    setMsg(null);
+    let expected;
+    try { expected = JSON.parse(form.expected); }
+    catch(e) { setMsg({err: "expected must be valid JSON"}); return; }
+    postJSON("/api/evals/config/cases", {id: form.id, task: form.task, scorer: form.scorer, expected})
+      .then(() => { reloadCases(); setMsg({ok: "case saved"}); })
+      .catch(e => setMsg({err: String(e)}));
+  };
+  const deleteCase = (id) => {
+    del(`/api/evals/config/cases/${id}`).then(reloadCases).catch(e => setMsg({err: String(e)}));
+  };
+
+  return html`
+    <div class="card">
+      <h2>Create / update case</h2>
+      <div class="form-row"><label>Case id</label><input type="text" value=${form.id} onInput=${e => setField("id", e.target.value)} /></div>
+      <div class="form-row"><label>Task</label><input type="text" value=${form.task} onInput=${e => setField("task", e.target.value)} style=${{flex:1}} /></div>
+      <div class="form-row">
+        <label>Scorer</label>
+        <select value=${form.scorer} onChange=${e => setField("scorer", e.target.value)}>
+          ${(scorers || ["exact_match"]).map(s => html`<option value=${s}>${s}</option>`)}
+        </select>
+      </div>
+      <div class="form-row" style=${{alignItems:"flex-start"}}>
+        <label>Expected</label>
+        <textarea value=${form.expected} onInput=${e => setField("expected", e.target.value)} style=${{flex:1}}></textarea>
+      </div>
+      <button class="primary" disabled=${!form.id || !form.task} onClick=${saveCase}>Save case</button>
+      ${msg && msg.ok && html`<div class="ok-msg">${msg.ok}</div>`}
+      ${msg && msg.err && html`<div class="error-msg">${msg.err}</div>`}
+    </div>
+    <div class="card">
+      <h2>Cases</h2>
+      ${!cases ? html`<div class="empty">Loading…</div>` : !cases.length ? html`<div class="empty">No cases yet.</div>` :
+        html`<table>
+          <thead><tr><th>Id</th><th>Task</th><th>Scorer</th><th></th></tr></thead>
+          <tbody>
+            ${cases.map(c => html`
+              <tr>
+                <td class="mono">${c.id}</td>
+                <td>${c.task}</td>
+                <td class="mono">${c.scorer}</td>
+                <td><button class="danger" onClick=${() => deleteCase(c.id)}>Delete</button></td>
+              </tr>
+            `)}
+          </tbody>
+        </table>`}
+    </div>
+  `;
+}
+
+function SendRun(){
+  const [sessions, reloadSessions] = useAsync(() => "/api/sessions", []);
+  const [datasets] = useAsync(() => "/api/evals/config/datasets", []);
+  const [sessionId, setSessionId] = useState("");
+  const [datasetId, setDatasetId] = useState("");
+  const [msg, setMsg] = useState(null);
+
+  const send = () => {
+    setMsg(null);
+    postJSON("/api/evals/config/send-run", {session_id: sessionId, dataset_id: datasetId})
+      .then(d => setMsg({ok: `added as a case in ${d.id} (v${d.version})`}))
+      .catch(e => setMsg({err: String(e)}));
+  };
+
+  return html`
+    <div class="card">
+      <h2>Send a completed run to evaluation</h2>
+      <div class="form-row">
+        <label>Session</label>
+        <select value=${sessionId} onChange=${e => setSessionId(e.target.value)}>
+          <option value="">Select a session…</option>
+          ${(sessions || []).map(s => html`<option value=${s.session_id}>${s.session_id} — ${s.label}</option>`)}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Dataset</label>
+        <select value=${datasetId} onChange=${e => setDatasetId(e.target.value)}>
+          <option value="">Select a dataset…</option>
+          ${(datasets || []).map(d => html`<option value=${d.id}>${d.id}</option>`)}
+        </select>
+      </div>
+      <button class="primary" disabled=${!sessionId || !datasetId} onClick=${send}>Send to evaluation</button>
+      ${msg && msg.ok && html`<div class="ok-msg">${msg.ok}</div>`}
+      ${msg && msg.err && html`<div class="error-msg">${msg.err}</div>`}
+    </div>
+  `;
+}
+
+function Config(){
+  const [tab, setTab] = useState("datasets");
+  return html`
+    <div class="form-row">
+      <button class="primary" onClick=${() => setTab("datasets")}>Datasets</button>
+      <button class="primary" onClick=${() => setTab("cases")}>Cases</button>
+      <button class="primary" onClick=${() => setTab("send")}>Send run to eval</button>
+    </div>
+    ${tab === "datasets" && html`<${ConfigDatasets} />`}
+    ${tab === "cases" && html`<${ConfigCases} />`}
+    ${tab === "send" && html`<${SendRun} />`}
+  `;
+}
+
 function App(){
   const initialView = (() => {
     try{ return new URLSearchParams(window.location.search).get("view") || "overview"; }
@@ -284,6 +498,7 @@ function App(){
       ${view === "runs" && html`<${RunHistory} runs=${runs} openRun=${openRun} />`}
       ${view === "run" && html`<${RunBreakdown} runId=${openRunId} back=${backToHistory} />`}
       ${view === "datasets" && html`<${Datasets} />`}
+      ${view === "config" && html`<${Config} />`}
       ${view === "compare" && html`<${Compare} />`}
     </div>
   `;
