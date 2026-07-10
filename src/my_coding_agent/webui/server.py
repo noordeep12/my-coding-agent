@@ -29,14 +29,20 @@ from ..viewer.evals_server import eval_dashboard_html, handle_eval_api_route
 from ..viewer.reader import list_sessions, load_session
 from ..viewer.server import _check_vendor_assets, _full_html
 from ..viewer.sumcheck import check_tree
+from .builder import (
+    RunRegistry,
+    builder_html,
+    handle_builder_api_get,
+    handle_builder_api_write,
+)
 from .store import Store, default_db_path
 
 logger = logging.getLogger(__name__)
 
 _SID_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
-#: Tab-registration contract: route -> nav label. #153/#154/#155 add their own
-#: entries here as their tabs land; "builder" ships a placeholder until #153.
+#: Tab-registration contract: route -> nav label. #154/#155 add their own
+#: entries here as their tabs land; "builder" is mounted by #153.
 NAV_TABS: tuple[tuple[str, str], ...] = (
     ("builder", "Builder"),
     ("traces", "Traces"),
@@ -83,7 +89,6 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);display:fle
 .nav button.on{color:var(--accent);background:var(--accent-soft)}
 .content{flex:1;min-height:0;min-width:0;overflow:auto}
 .content iframe{border:none;width:100%;height:100%;display:block}
-.stub{padding:48px;text-align:center;color:var(--muted);font-size:13px}
 </style>
 </head>
 <body>
@@ -105,6 +110,21 @@ function tabUrl(route, selection){
   if(route === 'evals' && sel.view) params.set('view', sel.view);
   const qs = params.toString();
   return '/' + route + (qs ? ('?' + qs) : '');
+}
+
+// Cross-tab navigation: the Builder tab asks the shell to switch tabs (e.g.
+// "open trace" after a run finishes) via postMessage, same channel used for
+// selection sync.
+function useCrossTabNavigate(setRoute){
+  useEffect(()=>{
+    const onMessage = e=>{
+      const d = e.data;
+      if(!d || d.type !== 'mca:navigate' || !d.tab) return;
+      setRoute(d.tab);
+    };
+    window.addEventListener('message', onMessage);
+    return ()=>window.removeEventListener('message', onMessage);
+  },[]);
 }
 
 // Tab-registration contract: each entry in TABS is [route, navLabel]; a route
@@ -136,6 +156,8 @@ function App(){
 
   useEffect(()=>{ if(loaded.current) scheduleSave(route, selection); },[route, selection]);
 
+  useCrossTabNavigate(setRoute);
+
   useEffect(()=>{
     const onMessage = e=>{
       const d = e.data;
@@ -162,9 +184,7 @@ function App(){
         </div>
       </div>
       <div class="content">
-        ${route === 'builder'
-          ? html`<div class="stub">Builder arrives with a later change.</div>`
-          : html`<iframe src=${tabUrl(route, selection)}></iframe>`}
+        <iframe src=${tabUrl(route, selection)}></iframe>
       </div>
     </div>
   `;
@@ -193,51 +213,111 @@ def _shell_html() -> str:
     )
 
 
+def _serve_shell(handler: _WebUIHandler) -> None:
+    handler._send_html(_shell_html())
+
+
+def _serve_traces(handler: _WebUIHandler) -> None:
+    handler._send_html(_full_html())
+
+
+def _serve_evals(handler: _WebUIHandler) -> None:
+    handler._send_html(eval_dashboard_html("/evals") or "")
+
+
+def _serve_builder(handler: _WebUIHandler) -> None:
+    handler._send_html(builder_html("/builder") or "")
+
+
+def _serve_sessions_api(handler: _WebUIHandler) -> None:
+    handler._send_json(list_sessions(handler.base_dir))
+
+
+def _serve_webui_state_api(handler: _WebUIHandler) -> None:
+    handler._send_json(handler.store.get_ui_state(_UI_STATE_KEY) or {})
+
+
+#: Static GET routes (no path params), dispatched by exact-path lookup so
+#: `do_GET` stays a flat table lookup rather than a long if/elif chain.
+_STATIC_GET_HANDLERS: dict[str, Any] = {
+    "/": _serve_shell,
+    "/traces": _serve_traces,
+    "/evals": _serve_evals,
+    "/builder": _serve_builder,
+    "/api/sessions": _serve_sessions_api,
+    "/api/webui/state": _serve_webui_state_api,
+}
+
+
 class _WebUIHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the unified shell: shell page, mounted tabs, API."""
 
     base_dir: Path  # session/eval data root, set before serve_forever()
     store: Store  # set before serve_forever()
+    run_registry: RunRegistry  # set before serve_forever()
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
-        if path == "/":
-            self._send_html(_shell_html())
-        elif path == "/traces":
-            self._send_html(_full_html())
-        elif path == "/evals":
-            self._send_html(eval_dashboard_html("/evals") or "")
-        elif path == "/api/sessions":
-            self._send_json(list_sessions(self.base_dir))
-        elif path == "/api/webui/state":
-            self._send_json(self.store.get_ui_state(_UI_STATE_KEY) or {})
-        elif path.startswith("/api/evals/"):
+        static = _STATIC_GET_HANDLERS.get(path)
+        if static is not None:
+            static(self)
+            return
+        if path.startswith("/api/evals/"):
             if not handle_eval_api_route(self, path, self.base_dir.resolve() / "evals"):
                 self._send_json({"error": "not found"}, status=404)
-        else:
-            match = re.fullmatch(r"/api/session/([^/]+)", path)
-            if match:
-                self._handle_session(match.group(1))
-            else:
+            return
+        if path.startswith("/api/builder/"):
+            if not handle_builder_api_get(self, path, self.store, self.run_registry):
                 self._send_json({"error": "not found"}, status=404)
+            return
+        match = re.fullmatch(r"/api/session/([^/]+)", path)
+        if match:
+            self._handle_session(match.group(1))
+        else:
+            self._send_json({"error": "not found"}, status=404)
 
     def do_POST(self) -> None:
+        self._dispatch_write("POST")
+
+    def do_PUT(self) -> None:
+        self._dispatch_write("PUT")
+
+    def do_DELETE(self) -> None:
+        self._dispatch_write("DELETE")
+
+    def _dispatch_write(self, method: str) -> None:
         path = self.path.split("?")[0]
-        if path != "/api/webui/state":
-            self._send_json({"error": "not found"}, status=404)
+        payload = self._read_json_body()
+        if payload is None:
             return
+        if method == "POST" and path == "/api/webui/state":
+            if not isinstance(payload, dict):
+                self._send_json({"error": "invalid payload"}, status=400)
+                return
+            self.store.set_ui_state(_UI_STATE_KEY, payload)
+            self._send_json({"ok": True})
+            return
+        if path.startswith("/api/builder/") and isinstance(payload, dict):
+            if handle_builder_api_write(
+                self,
+                method,
+                path,
+                self.store,
+                self.run_registry,
+                self.base_dir,
+                payload,
+            ):
+                return
+        self._send_json({"error": "not found"}, status=404)
+
+    def _read_json_body(self) -> Any | None:
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length else b"{}"
         try:
-            payload = json.loads(raw)
+            return json.loads(raw)
         except ValueError:
             self._send_json({"error": "invalid json"}, status=400)
-            return
-        if not isinstance(payload, dict):
-            self._send_json({"error": "invalid payload"}, status=400)
-            return
-        self.store.set_ui_state(_UI_STATE_KEY, payload)
-        self._send_json({"ok": True})
+            return None
 
     def _handle_session(self, session_id: str) -> None:
         if not _SID_RE.match(session_id):
@@ -287,6 +367,7 @@ def run_server(
     store = Store(default_db_path(base))
     _WebUIHandler.base_dir = base
     _WebUIHandler.store = store
+    _WebUIHandler.run_registry = RunRegistry()
     server = HTTPServer((host, port), _WebUIHandler)
     click.echo(f"my-coding-agent web UI → http://{host}:{port}")
     try:
