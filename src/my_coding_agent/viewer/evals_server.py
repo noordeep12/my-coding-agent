@@ -260,10 +260,19 @@ function Compare(){
 }
 
 function App(){
-  const [view, setView] = useState("overview");
+  const initialView = (() => {
+    try{ return new URLSearchParams(window.location.search).get("view") || "overview"; }
+    catch(e){ return "overview"; }
+  })();
+  const [view, setView] = useState(initialView);
   const [runs, setRuns] = useState([]);
   const [openRunId, setOpenRunId] = useState(null);
   useEffect(() => { getJSON("/api/evals/runs").then(setRuns); }, []);
+
+  // Notify an embedding shell of the current view so it can persist it.
+  useEffect(() => {
+    try{ window.parent && window.parent.postMessage({type:"mca:selection", tab:"evals", view}, "*"); }catch(e){}
+  }, [view]);
 
   const openRun = (id) => { setOpenRunId(id); setView("run"); };
   const backToHistory = () => { setOpenRunId(null); setView("runs"); };

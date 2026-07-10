@@ -108,7 +108,7 @@ def compare_cmd(
     BASELINE_RUN and CANDIDATE_RUN are each either a run id under
     `.my_coding_agent/evals/` or a direct path to a result directory.
     Exits non-zero when the verdict fails, mirroring
-    `my-coding-agent-traces --check`.
+    `my-coding-agent-webui --check`.
     """
     baseline = load_run_result(_resolve_run_dir(baseline_run))
     candidate = load_run_result(_resolve_run_dir(candidate_run))
