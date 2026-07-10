@@ -277,6 +277,17 @@ dataset = load_dataset("smoke")         # latest version by default
 result = run_dataset(dataset)           # result.dataset == "smoke@v3"
 ```
 
+### Comparing runs and gating CI
+
+`my-coding-agent-eval compare` turns two persisted result records into a pass/fail verdict a CI pipeline can enforce — advisory to a human merge decision, never an auto-merge:
+
+```bash
+my-coding-agent-eval compare <baseline_run_id> <candidate_run_id>
+my-coding-agent-eval compare <baseline_run_id> <candidate_run_id> --floor pass_rate=0.9
+```
+
+Each argument is either a run id under `.my_coding_agent/evals/` or a path to a result directory. The comparison reports per-metric deltas *and* which individual cases flipped pass↔fail, so a flat aggregate can't hide a subset regression. It refuses to compare two runs stamped with different dataset id/version (`--allow-cross-version` downgrades this to a loud warning instead). A configurable `--floor METRIC=VALUE` (repeatable) and the default "no previously-passing case regressed" rule turn the comparison into a verdict; the command exits `0` on pass and non-zero on a regression — the same exit-code pattern as `my-coding-agent-traces --check` — always naming the violated floor or regressed case rather than failing silently.
+
 `add_failure_case` turns a recorded run failure into a new regression case file and adds it to a dataset in one step. Every mutation appends a new version rather than rewriting history, so `load_dataset("smoke", version=1)` still recovers the original membership.
 
 ### Eval Dashboard
