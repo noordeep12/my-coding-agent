@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..evals import cases as cases_mod
-from ..evals import datasets as datasets_mod
+from ..evals import datasets as eval_datasets
 from ..evals import scoring as scoring_mod
 from ..evals.schema import EvalCase
 
@@ -120,10 +120,10 @@ def _handle_dataset_create(
         handler._send_json({"error": "case_ids must be strings"}, status=400)
         return True
     try:
-        dataset = datasets_mod.create_dataset(
+        dataset = eval_datasets.create_dataset(
             body["id"], case_ids, base_dir=datasets_dir
         )
-    except datasets_mod.DatasetError as exc:
+    except eval_datasets.DatasetError as exc:
         handler._send_json({"error": str(exc)}, status=400)
         return True
     handler._send_json(dataclasses.asdict(dataset))
@@ -139,13 +139,13 @@ def _handle_dataset_add_case(
         handler._send_json({"error": "case_id is required"}, status=400)
         return True
     try:
-        dataset = datasets_mod.add_case(
+        dataset = eval_datasets.add_case(
             dataset_id,
             case_id,
             base_dir=datasets_dir,
             note=body.get("note", "") if body else "",
         )
-    except datasets_mod.DatasetError as exc:
+    except eval_datasets.DatasetError as exc:
         handler._send_json({"error": str(exc)}, status=400)
         return True
     handler._send_json(dataclasses.asdict(dataset))
@@ -159,7 +159,7 @@ def _handle_datasets(
         handler._send_json(
             [
                 dataclasses.asdict(d)
-                for d in datasets_mod.list_datasets(base_dir=datasets_dir)
+                for d in eval_datasets.list_datasets(base_dir=datasets_dir)
             ]
         )
         return True
@@ -175,10 +175,10 @@ def _handle_datasets(
     if match and method == "DELETE":
         dataset_id, case_id = match.group(1), match.group(2)
         try:
-            dataset = datasets_mod.retire_case(
+            dataset = eval_datasets.retire_case(
                 dataset_id, case_id, base_dir=datasets_dir
             )
-        except datasets_mod.DatasetError as exc:
+        except eval_datasets.DatasetError as exc:
             handler._send_json({"error": str(exc)}, status=400)
             return True
         handler._send_json(dataclasses.asdict(dataset))
@@ -269,11 +269,14 @@ def _handle_run(
         handler._send_json({"error": "dataset_id is required"}, status=400)
         return True
     try:
-        dataset = datasets_mod.load_dataset(dataset_id, base_dir=datasets_dir)
-    except datasets_mod.DatasetNotFoundError as exc:
+        # nosec B615 — this is evals.datasets.load_dataset (on-disk versioned
+        # case-id list), not huggingface_hub's dataset downloader; bandit's
+        # rule matches on the function name alone.
+        dataset = eval_datasets.load_dataset(dataset_id, base_dir=datasets_dir)  # nosec B615
+    except eval_datasets.DatasetNotFoundError as exc:
         handler._send_json({"error": str(exc)}, status=404)
         return True
-    result = datasets_mod.run_dataset(
+    result = eval_datasets.run_dataset(
         dataset, cases_dir=cases_dir, results_root=evals_root
     )
     handler._send_json(dataclasses.asdict(result))
@@ -319,7 +322,7 @@ def _handle_send_run(
     case_id = (body or {}).get("case_id") or f"run-{session_id[:12]}"
     expected = (body or {}).get("expected") or {"equals": output or ""}
     try:
-        dataset = datasets_mod.add_failure_case(
+        dataset = eval_datasets.add_failure_case(
             dataset_id,
             case_id=case_id,
             task=task,
@@ -328,7 +331,7 @@ def _handle_send_run(
             base_dir=datasets_dir,
             cases_dir=cases_dir,
         )
-    except datasets_mod.DatasetError as exc:
+    except eval_datasets.DatasetError as exc:
         handler._send_json({"error": str(exc)}, status=400)
         return True
     handler._send_json(dataclasses.asdict(dataset))

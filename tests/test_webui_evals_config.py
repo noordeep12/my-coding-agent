@@ -57,8 +57,15 @@ def test_dataset_crud_via_api_matches_on_disk_datasets_model(server):
     assert body == {"id": "ds1", "version": 1, "case_ids": []}
 
     status, body = _req(
-        port, "POST", "/api/evals/config/cases",
-        {"id": "c1", "task": "do it", "scorer": "exact_match", "expected": {"equals": "ok"}},
+        port,
+        "POST",
+        "/api/evals/config/cases",
+        {
+            "id": "c1",
+            "task": "do it",
+            "scorer": "exact_match",
+            "expected": {"equals": "ok"},
+        },
     )
     assert status == 200
 
@@ -78,9 +85,7 @@ def test_dataset_crud_via_api_matches_on_disk_datasets_model(server):
     assert status == 200
     assert body == [{"id": "ds1", "version": 2, "case_ids": ["c1"]}]
 
-    status, body = _req(
-        port, "DELETE", "/api/evals/config/datasets/ds1/cases/c1"
-    )
+    status, body = _req(port, "DELETE", "/api/evals/config/datasets/ds1/cases/c1")
     assert status == 200
     assert body["case_ids"] == []
     on_disk = load_dataset("ds1", base_dir=tmp_path / "evals" / "datasets")
@@ -90,7 +95,9 @@ def test_dataset_crud_via_api_matches_on_disk_datasets_model(server):
 def test_case_create_rejects_expected_shape_not_matching_scorer(server):
     port, _ = server
     status, body = _req(
-        port, "POST", "/api/evals/config/cases",
+        port,
+        "POST",
+        "/api/evals/config/cases",
         {"id": "bad", "task": "x", "scorer": "exact_match", "expected": {}},
     )
     assert status == 400
@@ -100,8 +107,15 @@ def test_case_create_rejects_expected_shape_not_matching_scorer(server):
 def test_case_create_and_delete(server):
     port, tmp_path = server
     status, _ = _req(
-        port, "POST", "/api/evals/config/cases",
-        {"id": "c2", "task": "x", "scorer": "exact_match", "expected": {"contains": "y"}},
+        port,
+        "POST",
+        "/api/evals/config/cases",
+        {
+            "id": "c2",
+            "task": "x",
+            "scorer": "exact_match",
+            "expected": {"contains": "y"},
+        },
     )
     assert status == 200
     assert (tmp_path / "evals" / "cases" / "c2.json").exists()
@@ -146,7 +160,10 @@ def test_send_run_to_eval_seeds_case_via_add_failure_case(server):
     _write_session(tmp_path, "abcd1234abcd", task="do the thing", output="42")
 
     status, body = _req(
-        port, "POST", "/api/evals/config/datasets", {"id": "regressions", "case_ids": []}
+        port,
+        "POST",
+        "/api/evals/config/datasets",
+        {"id": "regressions", "case_ids": []},
     )
     assert status == 200
 
@@ -205,7 +222,9 @@ def test_run_dataset_from_config_api_writes_a_run_result(server):
     # to evals.datasets.run_dataset and surfaces its error for a case whose
     # scorer resolution or run environment isn't available in this sandbox,
     # rather than silently no-op'ing.
-    status, body = _req(port, "POST", "/api/evals/config/run", {"dataset_id": "missing-ds"})
+    status, body = _req(
+        port, "POST", "/api/evals/config/run", {"dataset_id": "missing-ds"}
+    )
     assert status == 404
 
 
