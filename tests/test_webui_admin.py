@@ -14,12 +14,12 @@ from my_coding_agent.webui.store import Store
 def test_unset_fields_fall_back_to_env_default(tmp_path, monkeypatch):
     monkeypatch.setenv("OMLX_API_URL", "http://env-host:1234/v1")
     monkeypatch.setenv("OMLX_MODEL", "env-model")
-    monkeypatch.setenv("OMLX_API_KEY", "env-key")
+    monkeypatch.setenv("OMLX_API_KEY", "env-key")  # pragma: allowlist secret
     store = Store(tmp_path / "webui.db")
     resolved = resolve_llm_settings(store)
     assert resolved["api_url"] == "http://env-host:1234/v1"
     assert resolved["model"] == "env-model"
-    assert resolved["api_key"] == "env-key"
+    assert resolved["api_key"] == "env-key"  # pragma: allowlist secret
     store.close()
 
 
@@ -57,7 +57,7 @@ def test_save_ignores_empty_values(tmp_path):
 
 def test_masked_settings_hide_api_key(tmp_path):
     store = Store(tmp_path / "webui.db")
-    save_llm_settings(store, {"api_key": "supersecret"})
+    save_llm_settings(store, {"api_key": "supersecret"})  # pragma: allowlist secret
     masked = masked_llm_settings(store)
     assert masked["api_key"] == "********"
     assert "supersecret" not in str(masked)
@@ -77,7 +77,11 @@ def test_build_llm_client_uses_resolved_settings(tmp_path):
     store = Store(tmp_path / "webui.db")
     save_llm_settings(
         store,
-        {"api_url": "http://saved-host:9999/v1", "model": "saved-model", "api_key": "k"},
+        {
+            "api_url": "http://saved-host:9999/v1",
+            "model": "saved-model",
+            "api_key": "k",
+        },
     )
     client = build_llm_client(store)
     assert client.api_url == "http://saved-host:9999/v1"

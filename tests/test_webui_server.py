@@ -137,7 +137,11 @@ def test_admin_settings_api_round_trips_and_masks_key(server):
     data = json.loads(body)
     assert "api_url" in data and "model" in data
 
-    payload = {"api_url": "http://saved-host:9999/v1", "model": "saved-model", "api_key": "topsecret"}
+    payload = {
+        "api_url": "http://saved-host:9999/v1",
+        "model": "saved-model",
+        "api_key": "topsecret",  # pragma: allowlist secret
+    }
     status, body = _post(port, "/api/admin/settings", payload)
     assert status == 200
 

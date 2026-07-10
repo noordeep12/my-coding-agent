@@ -197,9 +197,7 @@ def admin_html() -> str:
     return ADMIN_HTML
 
 
-def handle_admin_api_route(
-    handler: Any, path: str, method: str, store: Store
-) -> bool:
+def handle_admin_api_route(handler: Any, path: str, method: str, store: Store) -> bool:
     """Handle `/api/admin/settings` GET/POST. Returns True if handled."""
     if path != "/api/admin/settings":
         return False
