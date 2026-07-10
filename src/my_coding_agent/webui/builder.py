@@ -163,6 +163,7 @@ function App(){
   };
 
   const startLink = (id, e) => { e.stopPropagation(); setLinking(id); };
+  const swallowClick = (e) => { e.stopPropagation(); };
   const finishLink = (id) => {
     if(linking && linking !== id){
       setGraph(g => ({...g, edges: [...g.edges.filter(e => e.from !== linking), {from: linking, to: id}]}));
@@ -276,10 +277,10 @@ function App(){
                style=${{left: n.x + "px", top: n.y + "px"}}
                onMouseDown=${e => onNodeMouseDown(n.id, e)}
                onClick=${() => finishLink(n.id)}>
-            <span class="del" onClick=${() => deleteNode(n.id)}>✕</span>
+            <span class="del" onClick=${e => { e.stopPropagation(); deleteNode(n.id); }}>✕</span>
             <div class="type">${n.type}</div>
             <div class="role">${n.id === graph.start ? "start" : ""} ${n.id === graph.end ? "end" : ""}</div>
-            <div class="connect-handle" onMouseDown=${e => startLink(n.id, e)} title="drag to connect"></div>
+            <div class="connect-handle" onMouseDown=${e => startLink(n.id, e)} onClick=${swallowClick} title="drag to connect"></div>
           </div>
         `)}
       </div>
