@@ -380,7 +380,9 @@ def handle_builder_api_get(
     return False
 
 
-def _create_pipeline(handler: _JSONSender, store: Store, payload: dict[str, Any]) -> None:
+def _create_pipeline(
+    handler: _JSONSender, store: Store, payload: dict[str, Any]
+) -> None:
     item_id = uuid.uuid4().hex[:12]
     store.create_item(
         _TABLE,
@@ -391,7 +393,11 @@ def _create_pipeline(handler: _JSONSender, store: Store, payload: dict[str, Any]
 
 
 def _write_existing_pipeline(
-    handler: _JSONSender, method: str, store: Store, item_id: str, payload: dict[str, Any]
+    handler: _JSONSender,
+    method: str,
+    store: Store,
+    item_id: str,
+    payload: dict[str, Any],
 ) -> None:
     if method == "PUT":
         if store.get_item(_TABLE, item_id) is None:
@@ -400,7 +406,11 @@ def _write_existing_pipeline(
         store.update_item(
             _TABLE,
             item_id,
-            {"id": item_id, "name": payload.get("name", ""), "graph": payload.get("graph")},
+            {
+                "id": item_id,
+                "name": payload.get("name", ""),
+                "graph": payload.get("graph"),
+            },
         )
         handler._send_json({"id": item_id})
         return
@@ -422,7 +432,10 @@ def _launch_run(
         return
     graph = pipeline.get("graph") or {}
     error = validate_runnable(
-        graph.get("nodes", []), graph.get("edges", []), graph.get("start"), graph.get("end")
+        graph.get("nodes", []),
+        graph.get("edges", []),
+        graph.get("start"),
+        graph.get("end"),
     )
     if error is not None:
         handler._send_json({"error": error}, status=400)
@@ -431,7 +444,9 @@ def _launch_run(
     if not task_prompt:
         handler._send_json({"error": "a task prompt is required to run"}, status=400)
         return
-    run_id = run_registry.launch(task_prompt, int(payload.get("max_steps") or 40), base_dir)
+    run_id = run_registry.launch(
+        task_prompt, int(payload.get("max_steps") or 40), base_dir
+    )
     handler._send_json({"run_id": run_id}, status=201)
 
 
