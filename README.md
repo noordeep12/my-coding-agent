@@ -262,6 +262,36 @@ my-coding-agent-eval --cases path/to/case/dir
 
 Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores it with the case's scorer (`evals.scoring.register_scorer` is the extension point for scorers). Two ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output), and `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number. A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`.
 
+### Datasets
+
+A **dataset** groups cases into a named, versioned collection, so a result records exactly which cases (and which version of that set) it ran against — a static "golden set" stops meaning anything once it's memorised, and a dataset's version lets a later comparison tell whether two runs are even comparable. Datasets live under `.my_coding_agent/evals/datasets/<dataset_id>/`; a bundled `example` dataset (wrapping the `hello_world` example case) ships committed.
+
+```python
+from my_coding_agent.evals.datasets import create_dataset, add_case, retire_case, run_dataset, load_dataset
+
+create_dataset("smoke", ["hello_world"])
+add_case("smoke", "another_case")       # bumps to version 2
+retire_case("smoke", "hello_world")     # bumps to version 3; version 1/2 still loadable
+
+dataset = load_dataset("smoke")         # latest version by default
+result = run_dataset(dataset)           # result.dataset == "smoke@v3"
+```
+
+`add_failure_case` turns a recorded run failure into a new regression case file and adds it to a dataset in one step. Every mutation appends a new version rather than rewriting history, so `load_dataset("smoke", version=1)` still recovers the original membership.
+
+### Eval Dashboard
+
+The Trace Explorer (`my-coding-agent-traces`) also serves a read-only dashboard over persisted eval results — open `http://localhost:7474/evals`. It never runs or mutates an eval; it only renders result records already written under `.my_coding_agent/evals/`.
+
+- **Overview** — headline metrics for the latest run plus a trend of the score across runs over time
+- **Run history** — a browsable list of past runs (id, dataset, model, verdict, headline score)
+- **Single-run breakdown** — one run's aggregate metrics and its case list, drillable
+- **Per-case failure drill-down** — for a failed case, its task, expected vs. actual, and the per-check/per-dimension detail behind the score
+- **Datasets** — every dataset and its current version
+- **Compare** — a two-run comparison view; currently a labeled "not yet available" placeholder pending the eval-run-comparison module
+
+Result records written before the dashboard existed still render — missing fields are simply omitted, not treated as errors.
+
 ## Requirements
 
 - Python 3.12+
