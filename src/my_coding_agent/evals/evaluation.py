@@ -52,7 +52,7 @@ class NotFoundError(EvaluationError):
 
 
 class UnresolvedReferenceError(EvaluationError):
-    """Raised when an Evaluation references a RunConfig/EvalConfig id that doesn't resolve."""
+    """Raised when an Evaluation references a config id that fails to resolve."""
 
 
 class UnknownEvaluatorError(EvaluationError):
@@ -301,7 +301,7 @@ class Evaluation:
 
 
 def validate_evaluator(evaluator: str) -> None:
-    """Raise `UnknownEvaluatorError` unless `evaluator` resolves to a registered scorer."""
+    """Raise `UnknownEvaluatorError` unless `evaluator` resolves to a scorer."""
     try:
         resolve_scorer(evaluator)
     except UnknownScorerError as exc:
@@ -334,7 +334,8 @@ def _read(base_dir: Path, object_id: str) -> dict[str, Any]:
     path = _path(object_id, base_dir)
     if not path.exists():
         raise NotFoundError(f"No object '{object_id}' found under {base_dir}")
-    return json.loads(path.read_text())
+    data: dict[str, Any] = json.loads(path.read_text())
+    return data
 
 
 def _delete(base_dir: Path, object_id: str) -> None:
@@ -347,7 +348,9 @@ def _delete(base_dir: Path, object_id: str) -> None:
 def _list(base_dir: Path) -> list[Path]:
     if not base_dir.exists():
         return []
-    return sorted(base_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return sorted(
+        base_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
 
 
 # -- RunConfig ---------------------------------------------------------------
@@ -372,7 +375,10 @@ def list_run_configs(*, base_dir: Path = DEFAULT_RUN_CONFIGS_DIR) -> list[RunCon
 
 
 def update_run_config(
-    run_config_id: str, data: dict[str, Any], *, base_dir: Path = DEFAULT_RUN_CONFIGS_DIR
+    run_config_id: str,
+    data: dict[str, Any],
+    *,
+    base_dir: Path = DEFAULT_RUN_CONFIGS_DIR,
 ) -> RunConfig:
     existing = get_run_config(run_config_id, base_dir=base_dir)
     merged = {**existing.to_dict(), **data, "id": run_config_id}
@@ -511,7 +517,9 @@ def delete_evaluation(
 
 
 def _run_config_task(run_config: RunConfig) -> str:
-    parts = [p for p in (run_config.user_prompt_template, run_config.context_template) if p]
+    parts = [
+        p for p in (run_config.user_prompt_template, run_config.context_template) if p
+    ]
     return "\n\n".join(parts) if parts else run_config.description or run_config.name
 
 
@@ -527,7 +535,11 @@ def _check_expected(check: Check) -> dict[str, Any]:
     if isinstance(check.expected, dict):
         expected = dict(check.expected)
     else:
-        key = check.method if check.method in ("equals", "contains", "rubric") else "equals"
+        key = (
+            check.method
+            if check.method in ("equals", "contains", "rubric")
+            else "equals"
+        )
         expected = {key: check.expected}
     expected.setdefault("pass_threshold", check.threshold)
     return expected
@@ -569,18 +581,26 @@ def _run_agent(run_config: RunConfig, evaluation_id: str) -> tuple[str, RunResul
     return task, run_result
 
 
-def _score_checks(checks: list[Check], task: str, run_result: RunResult) -> list[EvalScore]:
+def _score_checks(
+    checks: list[Check], task: str, run_result: RunResult
+) -> list[EvalScore]:
     scores = []
     for check in checks:
         case = EvalCase(
-            id=check.id, task=task, scorer=check.evaluator, expected=_check_expected(check)
+            id=check.id,
+            task=task,
+            scorer=check.evaluator,
+            expected=_check_expected(check),
         )
         try:
             scorer = resolve_scorer(check.evaluator)
         except UnknownScorerError as exc:
             scores.append(
                 EvalScore(
-                    case_id=check.id, passed=False, metrics={}, detail={"reason": str(exc)}
+                    case_id=check.id,
+                    passed=False,
+                    metrics={},
+                    detail={"reason": str(exc)},
                 )
             )
             continue
@@ -609,7 +629,11 @@ def run_evaluation(
 
     if not checks:
         scores: list[EvalScore] = []
-        aggregate_metrics = {"pass_rate": 0.0, "checks_total": 0.0, "nothing_to_score": 1.0}
+        aggregate_metrics = {
+            "pass_rate": 0.0,
+            "checks_total": 0.0,
+            "nothing_to_score": 1.0,
+        }
         verdict = "no_checks"
     else:
         original_cwd = Path.cwd()

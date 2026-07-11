@@ -1,4 +1,4 @@
-"""Tests for evals/evaluation.py — Evaluation/RunConfig/EvalConfig persistence and run."""
+"""Tests for evals/evaluation.py — Evaluation/RunConfig/EvalConfig persistence + run."""
 
 from __future__ import annotations
 
@@ -64,7 +64,9 @@ def test_eval_config_round_trip_persistence(tmp_path):
 
 def test_minimal_run_config_is_valid(tmp_path):
     dirs = _dirs(tmp_path)
-    created = ev.create_run_config({"name": "minimal"}, base_dir=dirs["run_configs_dir"])
+    created = ev.create_run_config(
+        {"name": "minimal"}, base_dir=dirs["run_configs_dir"]
+    )
     assert created.name == "minimal"
     assert created.model == ""
 
@@ -153,9 +155,12 @@ def test_delete_evaluation_leaves_configs_intact(tmp_path):
     with pytest.raises(ev.NotFoundError):
         ev.get_evaluation(created.id, base_dir=dirs["base_dir"])
     # RunConfig and EvalConfig still resolve — delete never cascades.
-    assert ev.get_run_config(run_config.id, base_dir=dirs["run_configs_dir"]) == run_config
     assert (
-        ev.get_eval_config(eval_config.id, base_dir=dirs["eval_configs_dir"]) == eval_config
+        ev.get_run_config(run_config.id, base_dir=dirs["run_configs_dir"]) == run_config
+    )
+    assert (
+        ev.get_eval_config(eval_config.id, base_dir=dirs["eval_configs_dir"])
+        == eval_config
     )
 
 
