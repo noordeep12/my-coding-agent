@@ -75,7 +75,7 @@ def test_evals_route_mounts_eval_dashboard(server):
     port, _ = server
     status, body = _get(port, "/evals")
     assert status == 200
-    assert b"Eval Dashboard" in body
+    assert b"Evaluations" in body
 
 
 def test_sessions_api_still_works_through_shell(server):

@@ -1,9 +1,9 @@
 """Eval Dashboard routes and embedded UI, served from the Trace Explorer server.
 
-Read-only over the persisted eval result store (`evals_reader.py`): renders
-runs, datasets, and comparisons that already exist on disk. Never runs or
-mutates an eval. Reuses the same offline-vendored Preact + htm bundle as the
-Trace Explorer (no CDN, no build step) — see `server.py`'s `_vendor_js()`.
+Serves the single two-pane Evaluation management page against the
+Evaluation/RunConfig/EvalConfig CRUD + run API (`webui/evaluations_api.py`).
+Reuses the same offline-vendored Preact + htm bundle as the Trace Explorer
+(no CDN, no build step) — see `server.py`'s `_vendor_js()`.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ EVAL_EMBEDDED_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Eval Dashboard</title>
+<title>Evaluations</title>
 <style>
 :root{
   --bg:#ffffff; --bg2:#f5f5f7; --panel:#fbfbfd; --line:#e5e5ea;
@@ -41,62 +41,82 @@ EVAL_EMBEDDED_HTML = """<!DOCTYPE html>
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Monaco,monospace;
 }
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#1c1c1e; --bg2:#000000; --panel:#232326; --line:#3a3a3c;
+    --text:#f5f5f7; --muted:#98989d; --accent:#0a84ff; --accent-soft:#0a3d66;
+    --pos:#32d74b; --pos-bg:#0e2a13; --neg:#ff453a; --neg-bg:#330a08;
+  }
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased}
-#app{min-height:100vh;display:flex;flex-direction:column}
+#app{height:100vh;display:flex;flex-direction:column}
 .empty{padding:48px;text-align:center;color:var(--muted)}
 .muted{color:var(--muted)}
 
-.topbar{display:flex;align-items:center;gap:16px;height:52px;padding:0 20px;background:var(--bg);border-bottom:1px solid var(--line)}
+.topbar{display:flex;align-items:center;gap:16px;height:52px;padding:0 20px;background:var(--bg);border-bottom:1px solid var(--line);flex:none}
 .brand{font-weight:600;font-size:14px}
-.nav{display:flex;gap:4px}
-.nav button{font-family:var(--font);font-size:12px;font-weight:500;color:var(--muted);background:transparent;border:none;border-radius:8px;padding:6px 12px;cursor:pointer}
-.nav button:hover{color:var(--text);background:var(--bg2)}
-.nav button.on{color:var(--accent);background:var(--accent-soft)}
 
-.main{flex:1;padding:24px;max-width:1100px;width:100%;margin:0 auto}
+.layout{flex:1;display:flex;min-height:0}
+.pane-left{flex:1;min-width:0;overflow:auto;padding:20px}
+.pane-right{width:520px;flex:none;overflow:auto;padding:20px;border-left:1px solid var(--line);background:var(--panel)}
+
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
 .card h2{font-size:14px;margin-bottom:12px}
-.metrics{display:flex;gap:24px;flex-wrap:wrap}
-.metric{display:flex;flex-direction:column;gap:2px}
-.metric .v{font-size:24px;font-weight:600}
-.metric .l{font-size:11px;color:var(--muted)}
+.section{margin-bottom:18px}
+.section h3{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px}
 
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{text-align:left;color:var(--muted);font-weight:500;padding:6px 10px;border-bottom:1px solid var(--line)}
-td{padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 tr.clickable{cursor:pointer}
 tr.clickable:hover{background:var(--bg2)}
 .pill{display:inline-block;font-size:10px;font-weight:600;border-radius:5px;padding:2px 8px}
 .pill.pass{color:var(--pos);background:var(--pos-bg)}
 .pill.fail{color:var(--neg);background:var(--neg-bg)}
+.pill.no_checks,.pill.pending{color:var(--muted);background:var(--bg2)}
 .mono{font-family:var(--mono);font-size:11px}
+.link{color:var(--accent);cursor:pointer}
+.link:hover{text-decoration:underline}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
 
-.trend{display:flex;align-items:flex-end;gap:4px;height:80px}
-.trend .bar{flex:1;background:var(--accent-soft);border-radius:3px 3px 0 0;min-height:2px;position:relative}
-.trend .bar.fail{background:var(--neg-bg)}
-.trend .bar span{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:9px;color:var(--muted);white-space:nowrap}
-
-.case-row{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer}
-.case-row:hover{border-color:var(--accent)}
-.case-row .head{display:flex;justify-content:space-between;align-items:center}
-.detail-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:12px}
-.detail-block .row{display:flex;gap:8px;margin-bottom:6px}
-.detail-block .k{color:var(--muted);min-width:80px;flex:none}
 pre{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:11px;background:var(--bg2);border-radius:6px;padding:8px}
 
-.back{font-size:12px;color:var(--accent);cursor:pointer;margin-bottom:12px;display:inline-block}
-.stub{padding:32px;text-align:center;color:var(--muted)}
 .form-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
-.form-row label{font-size:11px;color:var(--muted);min-width:90px}
-input[type=text],textarea,select{font-family:var(--font);font-size:12px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--bg)}
-textarea{font-family:var(--mono);width:100%;min-height:70px}
-button.primary{font-family:var(--font);font-size:12px;font-weight:500;color:#fff;background:var(--accent);border:none;border-radius:6px;padding:7px 14px;cursor:pointer}
+.form-row label{font-size:11px;color:var(--muted);min-width:110px}
+.form-row.col{flex-direction:column;align-items:stretch}
+.form-row.col label{margin-bottom:4px}
+input[type=text],input[type=number],textarea,select{font-family:var(--font);font-size:12px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--bg);color:var(--text)}
+input[type=text],input[type=number],select{flex:1;min-width:0}
+textarea{font-family:var(--mono);width:100%;min-height:60px;flex:1}
+label.check{display:flex;align-items:center;gap:6px;min-width:0}
+button{font-family:var(--font);cursor:pointer}
+button.primary{font-size:12px;font-weight:500;color:#fff;background:var(--accent);border:none;border-radius:6px;padding:7px 14px}
 button.primary:hover{opacity:0.9}
-button.danger{font-family:var(--font);font-size:11px;color:var(--neg);background:transparent;border:1px solid var(--neg);border-radius:6px;padding:4px 10px;cursor:pointer}
+button.primary:disabled{opacity:0.5;cursor:not-allowed}
+button.secondary{font-size:12px;font-weight:500;color:var(--text);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:7px 14px}
+button.danger{font-size:11px;color:var(--neg);background:transparent;border:1px solid var(--neg);border-radius:6px;padding:4px 10px}
+button.link-btn{font-size:11px;color:var(--accent);background:transparent;border:none;padding:2px 4px}
 .error-msg{color:var(--neg);font-size:12px;margin:6px 0}
 .ok-msg{color:var(--pos);font-size:12px;margin:6px 0}
+
+.rule-block{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px}
+.rule-block .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.check-block{border:1px solid var(--line);border-radius:6px;padding:10px;margin:8px 0 8px 12px;background:var(--bg2)}
+.check-block .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;max-width:480px;width:90%;max-height:80vh;overflow:auto}
+.modal h2{font-size:14px;margin-bottom:14px}
+.modal .actions{justify-content:flex-end;margin-top:16px}
+.stage-list{display:flex;flex-direction:column;gap:10px;margin:16px 0}
+.stage{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+.stage.active{color:var(--text);font-weight:500}
+.stage.done{color:var(--pos)}
+.stage .dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.stage.active .dot{background:var(--accent)}
+.stage.done .dot{background:var(--pos)}
 </style>
 </head>
 <body>
@@ -112,395 +132,577 @@ function postJSON(url, body){
   return fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})})
     .then(async r => { const data = await r.json(); if(!r.ok) throw new Error(data.error||"request failed"); return data; });
 }
-function del(url){
-  return fetch(url, {method:"DELETE"})
+function putJSON(url, body){
+  return fetch(url, {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})})
     .then(async r => { const data = await r.json(); if(!r.ok) throw new Error(data.error||"request failed"); return data; });
 }
-
-function Nav({view, setView}){
-  const tabs = [
-    ["overview","Overview"],
-    ["runs","Run History"],
-    ["datasets","Datasets"],
-    ["config","Configure"],
-    ["compare","Compare"],
-  ];
-  return html`
-    <div class="topbar">
-      <div class="brand">Eval Dashboard</div>
-      <div class="nav">
-        ${tabs.map(([id,label]) => html`
-          <button class=${view===id ? "on" : ""} onClick=${() => setView(id)}>${label}</button>
-        `)}
-      </div>
-    </div>
-  `;
+function del(url){
+  return fetch(url, {method:"DELETE"})
+    .then(async r => { if(r.status === 204) return null; const data = await r.json(); if(!r.ok) throw new Error(data.error||"request failed"); return data; });
 }
 
 function pct(v){ return v == null ? "—" : Math.round(v*100) + "%"; }
 
-function Trend({runs}){
-  if(!runs.length) return html`<div class="muted">No runs yet.</div>`;
-  const ordered = [...runs].reverse();
-  return html`
-    <div class="trend">
-      ${ordered.map(r => html`
-        <div class="bar ${r.verdict}" style=${{height: Math.max(4, (r.headline_score||0)*76)+"px"}}>
-          <span>${pct(r.headline_score)}</span>
-        </div>
-      `)}
-    </div>
-  `;
+function newCheck(){
+  return {name:"", description:"", method:"", input:"", expected:"", evaluator:"exact_match", threshold:1};
+}
+function newRule(){
+  return {name:"", description:"", checks:[newCheck()]};
+}
+function emptyRunConfigDraft(){
+  return {
+    name:"", description:"", agent:"", model:"", provider:"",
+    system_prompt:"", user_prompt_template:"", context_template:"",
+    temperature:"", max_tokens:"", top_p:"", extra_params:"{}",
+    tools_enabled:false, tool_config:"{}", memory_config:"{}",
+    retrieval_config:"{}", env_vars:"{}",
+  };
+}
+function emptyEvalConfigDraft(){
+  return {name:"", rules:[newRule()]};
 }
 
-function Overview({runs}){
-  if(!runs.length){
-    return html`<div class="card"><div class="empty">No eval runs recorded yet.</div></div>`;
-  }
-  const latest = runs[0];
-  return html`
-    <div class="card">
-      <h2>Latest run</h2>
-      <div class="metrics">
-        <div class="metric"><div class="v">${pct(latest.headline_score)}</div><div class="l">pass rate</div></div>
-        <div class="metric"><div class="v">${latest.case_count}</div><div class="l">cases</div></div>
-        <div class="metric"><div class="v">${latest.verdict}</div><div class="l">verdict</div></div>
-        <div class="metric"><div class="v mono">${latest.model}</div><div class="l">model</div></div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Trend across runs</h2>
-      <${Trend} runs=${runs} />
-    </div>
-  `;
-}
+// ── Small building blocks ───────────────────────────────────────────────
 
-function RunHistory({runs, openRun}){
-  if(!runs.length) return html`<div class="card"><div class="empty">No eval runs recorded yet.</div></div>`;
+function EmptyState({onCreate}){
   return html`
     <div class="card">
-      <h2>Run history</h2>
-      <table>
-        <thead><tr><th>Run</th><th>Dataset</th><th>Model</th><th>Verdict</th><th>Score</th></tr></thead>
-        <tbody>
-          ${runs.map(r => html`
-            <tr class="clickable" onClick=${() => openRun(r.run_id)}>
-              <td class="mono">${r.run_id}</td>
-              <td>${r.dataset}</td>
-              <td class="mono">${r.model}</td>
-              <td><span class="pill ${r.verdict}">${r.verdict}</span></td>
-              <td>${pct(r.headline_score)}</td>
-            </tr>
-          `)}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function CaseDetail({c}){
-  return html`
-    <div class="detail-block">
-      ${c.task != null && html`<div class="row"><div class="k">Task</div><div>${c.task}</div></div>`}
-      ${c.expected != null && html`<div class="row"><div class="k">Expected</div><pre>${JSON.stringify(c.expected, null, 2)}</pre></div>`}
-      <div class="row"><div class="k">Metrics</div><pre>${JSON.stringify(c.metrics, null, 2)}</pre></div>
-      <div class="row"><div class="k">Detail</div><pre>${JSON.stringify(c.detail, null, 2)}</pre></div>
-    </div>
-  `;
-}
-
-function RunBreakdown({runId, back}){
-  const [view, setViewData] = useState(null);
-  const [openCase, setOpenCase] = useState(null);
-  useEffect(() => { getJSON("/api/evals/runs/" + runId).then(setViewData); }, [runId]);
-  if(!view) return html`<div class="card"><div class="empty">Loading…</div></div>`;
-  if(view.error) return html`<div class="card"><div class="empty">Run not found.</div></div>`;
-  const s = view.summary;
-  return html`
-    <span class="back" onClick=${back}>← Run history</span>
-    <div class="card">
-      <h2>Run ${s.run_id}</h2>
-      <div class="metrics">
-        <div class="metric"><div class="v">${pct(s.headline_score)}</div><div class="l">pass rate</div></div>
-        <div class="metric"><div class="v">${s.case_count}</div><div class="l">cases</div></div>
-        <div class="metric"><div class="v">${s.verdict}</div><div class="l">verdict</div></div>
-        <div class="metric"><div class="v mono">${s.dataset}</div><div class="l">dataset</div></div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Cases</h2>
-      ${view.cases.map(c => html`
-        <div class="case-row" onClick=${() => setOpenCase(openCase === c.case_id ? null : c.case_id)}>
-          <div class="head">
-            <span class="mono">${c.case_id}</span>
-            <span class="pill ${c.passed ? "pass" : "fail"}">${c.passed ? "pass" : "fail"}</span>
-          </div>
-          ${openCase === c.case_id && html`<${CaseDetail} c=${c} />`}
-        </div>
-      `)}
-    </div>
-  `;
-}
-
-function Datasets(){
-  const [datasets, setDatasets] = useState(null);
-  useEffect(() => { getJSON("/api/evals/datasets").then(setDatasets); }, []);
-  if(datasets === null) return html`<div class="card"><div class="empty">Loading…</div></div>`;
-  if(!datasets.length) return html`<div class="card"><div class="empty">No datasets recorded yet.</div></div>`;
-  return html`
-    <div class="card">
-      <h2>Datasets</h2>
-      <table>
-        <thead><tr><th>Dataset</th><th>Version</th><th>Cases</th></tr></thead>
-        <tbody>
-          ${datasets.map(d => html`
-            <tr>
-              <td class="mono">${d.id}</td>
-              <td>v${d.version}</td>
-              <td>${d.case_ids.length}</td>
-            </tr>
-          `)}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function Compare(){
-  return html`
-    <div class="card">
-      <div class="stub">
-        Two-run comparison is not yet available — it renders once the
-        eval-run-comparison module lands.
+      <div class="empty">
+        <div style=${{marginBottom:"12px"}}>No evaluations created</div>
+        <button class="primary" onClick=${onCreate}>Create Eval</button>
       </div>
     </div>
   `;
 }
 
-function useAsync(loader, deps){
-  const [data, setData] = useState(null);
+function ThresholdInput({value, onChange}){
+  return html`
+    <input type="number" step="0.01" min="0" max="1" value=${value}
+      onInput=${e => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+      style=${{maxWidth:"90px"}} />
+  `;
+}
+
+function JsonEditor({label, value, onChange}){
   const [err, setErr] = useState(null);
-  const reload = () => { setErr(null); getJSON(loader()).then(setData).catch(e => setErr(String(e))); };
-  useEffect(reload, deps || []);
-  return [data, reload, err];
+  return html`
+    <div class="form-row col">
+      <label>${label}</label>
+      <textarea class="mono" value=${value} onInput=${e => {
+        onChange(e.target.value);
+        try{ JSON.parse(e.target.value || "{}"); setErr(null); }
+        catch(ex){ setErr("invalid JSON"); }
+      }}></textarea>
+      ${err && html`<div class="error-msg">${err}</div>`}
+    </div>
+  `;
 }
 
-function ConfigDatasets(){
-  const [datasets, reloadDatasets] = useAsync(() => "/api/evals/config/datasets", []);
-  const [newId, setNewId] = useState("");
-  const [newCaseIds, setNewCaseIds] = useState("");
-  const [msg, setMsg] = useState(null);
-  const [addCaseId, setAddCaseId] = useState({});
+function ConfirmationModal({title, message, onConfirm, onCancel}){
+  return html`
+    <div class="modal-overlay">
+      <div class="modal">
+        <h2>${title}</h2>
+        <div>${message}</div>
+        <div class="actions">
+          <button class="secondary" onClick=${onCancel}>Cancel</button>
+          <button class="danger" onClick=${onConfirm}>Delete</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
 
-  const createDataset = () => {
-    setMsg(null);
-    const case_ids = newCaseIds.split(",").map(s => s.trim()).filter(Boolean);
-    postJSON("/api/evals/config/datasets", {id: newId, case_ids})
-      .then(() => { setNewId(""); setNewCaseIds(""); reloadDatasets(); setMsg({ok:"dataset created"}); })
-      .catch(e => setMsg({err: String(e)}));
-  };
-  const addCase = (datasetId) => {
-    const caseId = (addCaseId[datasetId] || "").trim();
-    if(!caseId) return;
-    postJSON(`/api/evals/config/datasets/${datasetId}/cases`, {case_id: caseId})
-      .then(() => { setAddCaseId(prev => ({...prev, [datasetId]: ""})); reloadDatasets(); })
-      .catch(e => setMsg({err: String(e)}));
-  };
-  const retireCase = (datasetId, caseId) => {
-    del(`/api/evals/config/datasets/${datasetId}/cases/${caseId}`)
-      .then(reloadDatasets)
-      .catch(e => setMsg({err: String(e)}));
-  };
-  const runDataset = (datasetId) => {
-    setMsg(null);
-    postJSON("/api/evals/config/run", {dataset_id: datasetId})
-      .then(r => setMsg({ok: `run ${r.run_id} complete`}))
-      .catch(e => setMsg({err: String(e)}));
-  };
+const RUN_STAGES = ["Preparing run", "Executing pipeline", "Running checks", "Calculating results"];
+
+function ExecutionProgressModal({stageIndex, error, result, onClose}){
+  return html`
+    <div class="modal-overlay">
+      <div class="modal">
+        <h2>Running evaluation</h2>
+        <div class="stage-list">
+          ${RUN_STAGES.map((label, i) => html`
+            <div class="stage ${i < stageIndex ? "done" : i === stageIndex ? "active" : ""}">
+              <span class="dot"></span><span>${label}</span>
+            </div>
+          `)}
+        </div>
+        ${error && html`<div class="error-msg">${error}</div>`}
+        ${result && html`<div class="ok-msg">Run complete: ${result.verdict || "done"}</div>`}
+        ${(error || result) && html`
+          <div class="actions"><button class="primary" onClick=${onClose}>Close</button></div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+// ── Run Configuration ────────────────────────────────────────────────────
+
+function RunConfigSelector({runConfigs, mode, setMode, selectedId, setSelectedId}){
+  return html`
+    <div class="section">
+      <h3>Run Configuration</h3>
+      <div class="form-row">
+        <label>Source</label>
+        <select value=${mode} onChange=${e => setMode(e.target.value)}>
+          <option value="select">Select existing</option>
+          <option value="new">Create New</option>
+        </select>
+      </div>
+      ${mode === "select" && html`
+        <div class="form-row">
+          <label>Run Config</label>
+          <select value=${selectedId || ""} onChange=${e => setSelectedId(e.target.value)}>
+            <option value="">Select…</option>
+            ${runConfigs.map(rc => html`<option value=${rc.id}>${rc.name}</option>`)}
+          </select>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function RunConfigEditor({draft, setDraft}){
+  const setField = (k, v) => setDraft(prev => ({...prev, [k]: v}));
+  return html`
+    <div class="section">
+      <div class="form-row"><label>Name</label><input type="text" value=${draft.name} onInput=${e => setField("name", e.target.value)} /></div>
+      <div class="form-row"><label>Description</label><input type="text" value=${draft.description} onInput=${e => setField("description", e.target.value)} /></div>
+      <div class="form-row"><label>Agent</label><input type="text" value=${draft.agent} onInput=${e => setField("agent", e.target.value)} /></div>
+      <div class="form-row"><label>Model</label><input type="text" value=${draft.model} onInput=${e => setField("model", e.target.value)} /></div>
+      <div class="form-row"><label>Provider</label><input type="text" value=${draft.provider} onInput=${e => setField("provider", e.target.value)} /></div>
+      <div class="form-row col"><label>System prompt</label><textarea value=${draft.system_prompt} onInput=${e => setField("system_prompt", e.target.value)}></textarea></div>
+      <div class="form-row col"><label>User prompt template</label><textarea value=${draft.user_prompt_template} onInput=${e => setField("user_prompt_template", e.target.value)}></textarea></div>
+      <div class="form-row col"><label>Context template</label><textarea value=${draft.context_template} onInput=${e => setField("context_template", e.target.value)}></textarea></div>
+      <div class="form-row"><label>Temperature</label><input type="number" step="0.1" value=${draft.temperature} onInput=${e => setField("temperature", e.target.value)} /></div>
+      <div class="form-row"><label>Max tokens</label><input type="number" value=${draft.max_tokens} onInput=${e => setField("max_tokens", e.target.value)} /></div>
+      <div class="form-row"><label>Top p</label><input type="number" step="0.1" value=${draft.top_p} onInput=${e => setField("top_p", e.target.value)} /></div>
+      <${JsonEditor} label="Extra params" value=${draft.extra_params} onChange=${v => setField("extra_params", v)} />
+      <div class="form-row"><label class="check"><input type="checkbox" checked=${draft.tools_enabled} onChange=${e => setField("tools_enabled", e.target.checked)} /> Tools enabled</label></div>
+      <${JsonEditor} label="Tool config" value=${draft.tool_config} onChange=${v => setField("tool_config", v)} />
+      <${JsonEditor} label="Memory config" value=${draft.memory_config} onChange=${v => setField("memory_config", v)} />
+      <${JsonEditor} label="Retrieval config" value=${draft.retrieval_config} onChange=${v => setField("retrieval_config", v)} />
+      <${JsonEditor} label="Env vars" value=${draft.env_vars} onChange=${v => setField("env_vars", v)} />
+    </div>
+  `;
+}
+
+// ── Eval Configuration ────────────────────────────────────────────────────
+
+function EvalConfigSelector({evalConfigs, mode, setMode, selectedId, setSelectedId}){
+  return html`
+    <div class="section">
+      <h3>Eval Configuration</h3>
+      <div class="form-row">
+        <label>Source</label>
+        <select value=${mode} onChange=${e => setMode(e.target.value)}>
+          <option value="select">Select existing</option>
+          <option value="new">Create New</option>
+        </select>
+      </div>
+      ${mode === "select" && html`
+        <div class="form-row">
+          <label>Eval Config</label>
+          <select value=${selectedId || ""} onChange=${e => setSelectedId(e.target.value)}>
+            <option value="">Select…</option>
+            ${evalConfigs.map(ec => html`<option value=${ec.id}>${ec.name}</option>`)}
+          </select>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function EvalCheckEditor({check, onChange, onRemove}){
+  const setField = (k, v) => onChange({...check, [k]: v});
+  return html`
+    <div class="check-block">
+      <div class="head">
+        <span class="mono">Check</span>
+        <button class="danger" onClick=${onRemove}>Remove</button>
+      </div>
+      <div class="form-row"><label>Name</label><input type="text" value=${check.name} onInput=${e => setField("name", e.target.value)} /></div>
+      <div class="form-row"><label>Description</label><input type="text" value=${check.description} onInput=${e => setField("description", e.target.value)} /></div>
+      <div class="form-row"><label>Method</label><input type="text" value=${check.method} onInput=${e => setField("method", e.target.value)} /></div>
+      <div class="form-row"><label>Input</label><input type="text" value=${check.input} onInput=${e => setField("input", e.target.value)} /></div>
+      <div class="form-row"><label>Expected</label><input type="text" value=${check.expected} onInput=${e => setField("expected", e.target.value)} /></div>
+      <div class="form-row">
+        <label>Evaluator</label>
+        <select value=${check.evaluator} onChange=${e => setField("evaluator", e.target.value)}>
+          <option value="exact_match">exact_match</option>
+          <option value="trajectory">trajectory</option>
+          <option value="judge">judge</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Threshold</label><${ThresholdInput} value=${check.threshold} onChange=${v => setField("threshold", v)} /></div>
+    </div>
+  `;
+}
+
+function EvalRuleEditor({rules, setRules}){
+  const setRule = (i, rule) => setRules(prev => prev.map((r, idx) => idx === i ? rule : r));
+  const removeRule = (i) => setRules(prev => prev.filter((_, idx) => idx !== i));
+  const addRule = () => setRules(prev => [...prev, newRule()]);
+  const setCheck = (ri, ci, check) => setRule(ri, {...rules[ri], checks: rules[ri].checks.map((c, idx) => idx === ci ? check : c)});
+  const removeCheck = (ri, ci) => setRule(ri, {...rules[ri], checks: rules[ri].checks.filter((_, idx) => idx !== ci)});
+  const addCheck = (ri) => setRule(ri, {...rules[ri], checks: [...rules[ri].checks, newCheck()]});
 
   return html`
-    <div class="card">
-      <h2>Create dataset</h2>
-      <div class="form-row">
-        <label>Dataset id</label>
-        <input type="text" value=${newId} onInput=${e => setNewId(e.target.value)} />
-      </div>
-      <div class="form-row">
-        <label>Case ids</label>
-        <input type="text" placeholder="comma-separated, optional" value=${newCaseIds} onInput=${e => setNewCaseIds(e.target.value)} />
-      </div>
-      <button class="primary" disabled=${!newId} onClick=${createDataset}>Create</button>
-      ${msg && msg.ok && html`<div class="ok-msg">${msg.ok}</div>`}
-      ${msg && msg.err && html`<div class="error-msg">${msg.err}</div>`}
-    </div>
-    <div class="card">
-      <h2>Datasets</h2>
-      ${!datasets ? html`<div class="empty">Loading…</div>` : !datasets.length ? html`<div class="empty">No datasets yet.</div>` :
-        datasets.map(d => html`
-          <div class="case-row">
-            <div class="head">
-              <span class="mono">${d.id} <span class="muted">v${d.version}</span></span>
-              <button class="primary" onClick=${() => runDataset(d.id)}>Run</button>
-            </div>
-            <div style=${{marginTop:"8px"}}>
-              ${d.case_ids.map(cid => html`
-                <span class="pill pass" style=${{marginRight:"6px",marginBottom:"6px",display:"inline-flex",gap:"6px",alignItems:"center"}}>
-                  ${cid}
-                  <span style=${{cursor:"pointer"}} onClick=${() => retireCase(d.id, cid)}>×</span>
-                </span>
-              `)}
-            </div>
-            <div class="form-row" style=${{marginTop:"8px"}}>
-              <input type="text" placeholder="case id to add" value=${addCaseId[d.id] || ""}
-                onInput=${e => setAddCaseId(prev => ({...prev, [d.id]: e.target.value}))} />
-              <button class="primary" onClick=${() => addCase(d.id)}>Add case</button>
-            </div>
+    <div class="section">
+      <h3>Rules</h3>
+      ${rules.map((rule, ri) => html`
+        <div class="rule-block">
+          <div class="head">
+            <span class="mono">Rule ${ri + 1}</span>
+            <button class="danger" onClick=${() => removeRule(ri)}>Remove Rule</button>
           </div>
+          <div class="form-row"><label>Name</label><input type="text" value=${rule.name} onInput=${e => setRule(ri, {...rule, name: e.target.value})} /></div>
+          <div class="form-row"><label>Description</label><input type="text" value=${rule.description} onInput=${e => setRule(ri, {...rule, description: e.target.value})} /></div>
+          ${rule.checks.map((check, ci) => html`
+            <${EvalCheckEditor} check=${check} onChange=${c => setCheck(ri, ci, c)} onRemove=${() => removeCheck(ri, ci)} />
+          `)}
+          <button class="secondary" onClick=${() => addCheck(ri)}>Add Check</button>
+        </div>
+      `)}
+      <button class="secondary" onClick=${addRule}>Add Rule</button>
+    </div>
+  `;
+}
+
+// ── Evaluation list ──────────────────────────────────────────────────────
+
+function EvaluationRow({evaluation, runConfigs, evalConfigs, onConfigure, onRun, onDelete, onOpenLastRun}){
+  const rc = runConfigs.find(r => r.id === evaluation.run_config_id);
+  const ec = evalConfigs.find(e => e.id === evaluation.eval_config_id);
+  const lastRun = evaluation.last_run;
+  return html`
+    <tr>
+      <td>${evaluation.name}</td>
+      <td>${evaluation.summary || html`<span class="muted">—</span>`}</td>
+      <td class="mono">${rc ? rc.name : evaluation.run_config_id}</td>
+      <td class="mono">${ec ? ec.name : evaluation.eval_config_id}</td>
+      <td>${lastRun ? html`<span class="link" onClick=${() => onOpenLastRun(evaluation)}>${lastRun.run_id}</span>` : html`<span class="muted">—</span>`}</td>
+      <td>${lastRun ? html`<span class="pill ${lastRun.verdict}">${lastRun.verdict}</span>` : html`<span class="pill pending">no runs</span>`}</td>
+      <td>
+        <div class="actions">
+          <button class="secondary" onClick=${() => onConfigure(evaluation)}>Configure</button>
+          <button class="primary" onClick=${() => onRun(evaluation)}>Run</button>
+          <button class="danger" onClick=${() => onDelete(evaluation)}>Delete</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function EvaluationTable({evaluations, runConfigs, evalConfigs, onConfigure, onRun, onDelete, onOpenLastRun}){
+  return html`
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Summary</th><th>Run Config</th><th>Eval Config</th><th>Last Run</th><th>Status</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        ${evaluations.map(ev => html`
+          <${EvaluationRow} evaluation=${ev} runConfigs=${runConfigs} evalConfigs=${evalConfigs}
+            onConfigure=${onConfigure} onRun=${onRun} onDelete=${onDelete} onOpenLastRun=${onOpenLastRun} />
         `)}
-    </div>
+      </tbody>
+    </table>
   `;
 }
 
-function ConfigCases(){
-  const [cases, reloadCases] = useAsync(() => "/api/evals/config/cases", []);
-  const [scorers, reloadScorers] = useAsync(() => "/api/evals/config/scorers", []);
-  const [form, setForm] = useState({id:"", task:"", scorer:"exact_match", expected:'{"equals": ""}'});
+// ── Configuration panel ──────────────────────────────────────────────────
+
+function parseJsonField(value, label){
+  try{ return JSON.parse(value || "{}"); }
+  catch(e){ throw new Error(`${label} must be valid JSON`); }
+}
+
+function buildRunConfigPayload(draft){
+  return {
+    name: draft.name,
+    description: draft.description,
+    agent: draft.agent,
+    model: draft.model,
+    provider: draft.provider,
+    system_prompt: draft.system_prompt,
+    user_prompt_template: draft.user_prompt_template,
+    context_template: draft.context_template,
+    temperature: draft.temperature === "" ? null : Number(draft.temperature),
+    max_tokens: draft.max_tokens === "" ? null : Number(draft.max_tokens),
+    top_p: draft.top_p === "" ? null : Number(draft.top_p),
+    extra_params: parseJsonField(draft.extra_params, "Extra params"),
+    tools_enabled: draft.tools_enabled,
+    tool_config: parseJsonField(draft.tool_config, "Tool config"),
+    memory_config: parseJsonField(draft.memory_config, "Memory config"),
+    retrieval_config: parseJsonField(draft.retrieval_config, "Retrieval config"),
+    env_vars: parseJsonField(draft.env_vars, "Env vars"),
+  };
+}
+
+function buildEvalConfigPayload(draft){
+  return {
+    name: draft.name,
+    rules: draft.rules.map(rule => ({
+      name: rule.name,
+      description: rule.description,
+      checks: rule.checks.map(check => ({
+        name: check.name,
+        description: check.description,
+        method: check.method,
+        input: check.input,
+        expected: check.expected,
+        evaluator: check.evaluator,
+        threshold: check.threshold === "" ? 1 : Number(check.threshold),
+      })),
+    })),
+  };
+}
+
+function draftFromRunConfig(rc){
+  return {
+    name: rc.name || "", description: rc.description || "", agent: rc.agent || "",
+    model: rc.model || "", provider: rc.provider || "",
+    system_prompt: rc.system_prompt || "", user_prompt_template: rc.user_prompt_template || "",
+    context_template: rc.context_template || "",
+    temperature: rc.temperature ?? "", max_tokens: rc.max_tokens ?? "", top_p: rc.top_p ?? "",
+    extra_params: JSON.stringify(rc.extra_params || {}, null, 2),
+    tools_enabled: !!rc.tools_enabled,
+    tool_config: JSON.stringify(rc.tool_config || {}, null, 2),
+    memory_config: JSON.stringify(rc.memory_config || {}, null, 2),
+    retrieval_config: JSON.stringify(rc.retrieval_config || {}, null, 2),
+    env_vars: JSON.stringify(rc.env_vars || {}, null, 2),
+  };
+}
+
+function draftFromEvalConfig(ec){
+  return {
+    name: ec.name || "",
+    rules: (ec.rules && ec.rules.length ? ec.rules : [newRule()]).map(rule => ({
+      name: rule.name || "", description: rule.description || "",
+      checks: (rule.checks && rule.checks.length ? rule.checks : [newCheck()]).map(check => ({
+        name: check.name || "", description: check.description || "", method: check.method || "",
+        input: check.input ?? "", expected: check.expected ?? "",
+        evaluator: check.evaluator || "exact_match", threshold: check.threshold ?? 1,
+      })),
+    })),
+  };
+}
+
+function EvaluationConfigPanel({editing, runConfigs, evalConfigs, onSaved, onCancel}){
+  const isEdit = !!(editing && editing.id);
+  const [name, setName] = useState(editing ? editing.name : "");
+  const [summary, setSummary] = useState(editing ? (editing.summary || "") : "");
+  const [runMode, setRunMode] = useState(isEdit ? "select" : "select");
+  const [runConfigId, setRunConfigId] = useState(editing ? editing.run_config_id : "");
+  const [runConfigDraft, setRunConfigDraft] = useState(emptyRunConfigDraft());
+  const [evalMode, setEvalMode] = useState(isEdit ? "select" : "select");
+  const [evalConfigId, setEvalConfigId] = useState(editing ? editing.eval_config_id : "");
+  const [evalConfigDraft, setEvalConfigDraft] = useState(emptyEvalConfigDraft());
   const [msg, setMsg] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  const setField = (k, v) => setForm(prev => ({...prev, [k]: v}));
-
-  const saveCase = () => {
+  const save = async () => {
     setMsg(null);
-    let expected;
-    try { expected = JSON.parse(form.expected); }
-    catch(e) { setMsg({err: "expected must be valid JSON"}); return; }
-    postJSON("/api/evals/config/cases", {id: form.id, task: form.task, scorer: form.scorer, expected})
-      .then(() => { reloadCases(); setMsg({ok: "case saved"}); })
-      .catch(e => setMsg({err: String(e)}));
-  };
-  const deleteCase = (id) => {
-    del(`/api/evals/config/cases/${id}`).then(reloadCases).catch(e => setMsg({err: String(e)}));
+    if(!name){ setMsg({err:"Name is required"}); return; }
+    setSaving(true);
+    try{
+      let resolvedRunConfigId = runConfigId;
+      if(runMode === "new"){
+        const payload = buildRunConfigPayload(runConfigDraft);
+        if(!payload.name){ throw new Error("Run Configuration name is required"); }
+        const created = await postJSON("/api/evals/run-configs", payload);
+        resolvedRunConfigId = created.id;
+      }
+      if(!resolvedRunConfigId){ throw new Error("Select or create a Run Configuration"); }
+
+      let resolvedEvalConfigId = evalConfigId;
+      if(evalMode === "new"){
+        const payload = buildEvalConfigPayload(evalConfigDraft);
+        if(!payload.name){ throw new Error("Eval Configuration name is required"); }
+        const created = await postJSON("/api/evals/eval-configs", payload);
+        resolvedEvalConfigId = created.id;
+      }
+      if(!resolvedEvalConfigId){ throw new Error("Select or create an Eval Configuration"); }
+
+      const body = {name, summary, run_config_id: resolvedRunConfigId, eval_config_id: resolvedEvalConfigId};
+      if(isEdit){
+        await putJSON(`/api/evals/evaluations/${editing.id}`, body);
+      } else {
+        await postJSON("/api/evals/evaluations", body);
+      }
+      setSaving(false);
+      onSaved();
+    } catch(e){
+      setSaving(false);
+      setMsg({err: String(e.message || e)});
+    }
   };
 
   return html`
     <div class="card">
-      <h2>Create / update case</h2>
-      <div class="form-row"><label>Case id</label><input type="text" value=${form.id} onInput=${e => setField("id", e.target.value)} /></div>
-      <div class="form-row"><label>Task</label><input type="text" value=${form.task} onInput=${e => setField("task", e.target.value)} style=${{flex:1}} /></div>
-      <div class="form-row">
-        <label>Scorer</label>
-        <select value=${form.scorer} onChange=${e => setField("scorer", e.target.value)}>
-          ${(scorers || ["exact_match"]).map(s => html`<option value=${s}>${s}</option>`)}
-        </select>
+      <h2>${isEdit ? "Configure Evaluation" : "Create Evaluation"}</h2>
+      <div class="section">
+        <h3>Basic info</h3>
+        <div class="form-row"><label>Name</label><input type="text" value=${name} onInput=${e => setName(e.target.value)} /></div>
+        <div class="form-row"><label>Summary</label><input type="text" value=${summary} onInput=${e => setSummary(e.target.value)} /></div>
       </div>
-      <div class="form-row" style=${{alignItems:"flex-start"}}>
-        <label>Expected</label>
-        <textarea value=${form.expected} onInput=${e => setField("expected", e.target.value)} style=${{flex:1}}></textarea>
-      </div>
-      <button class="primary" disabled=${!form.id || !form.task} onClick=${saveCase}>Save case</button>
-      ${msg && msg.ok && html`<div class="ok-msg">${msg.ok}</div>`}
+
+      <${RunConfigSelector} runConfigs=${runConfigs} mode=${runMode} setMode=${setRunMode}
+        selectedId=${runConfigId} setSelectedId=${setRunConfigId} />
+      ${runMode === "new" && html`<${RunConfigEditor} draft=${runConfigDraft} setDraft=${setRunConfigDraft} />`}
+
+      <${EvalConfigSelector} evalConfigs=${evalConfigs} mode=${evalMode} setMode=${setEvalMode}
+        selectedId=${evalConfigId} setSelectedId=${setEvalConfigId} />
+      ${evalMode === "new" && html`<${EvalRuleEditor} rules=${evalConfigDraft.rules}
+        setRules=${fn => setEvalConfigDraft(prev => ({...prev, rules: typeof fn === "function" ? fn(prev.rules) : fn}))} />`}
+      ${evalMode === "new" && html`
+        <div class="form-row"><label>Eval Config name</label><input type="text" value=${evalConfigDraft.name}
+          onInput=${e => setEvalConfigDraft(prev => ({...prev, name: e.target.value}))} /></div>
+      `}
+
       ${msg && msg.err && html`<div class="error-msg">${msg.err}</div>`}
-    </div>
-    <div class="card">
-      <h2>Cases</h2>
-      ${!cases ? html`<div class="empty">Loading…</div>` : !cases.length ? html`<div class="empty">No cases yet.</div>` :
-        html`<table>
-          <thead><tr><th>Id</th><th>Task</th><th>Scorer</th><th></th></tr></thead>
-          <tbody>
-            ${cases.map(c => html`
-              <tr>
-                <td class="mono">${c.id}</td>
-                <td>${c.task}</td>
-                <td class="mono">${c.scorer}</td>
-                <td><button class="danger" onClick=${() => deleteCase(c.id)}>Delete</button></td>
-              </tr>
-            `)}
-          </tbody>
-        </table>`}
+      <div class="actions">
+        <button class="secondary" onClick=${onCancel}>Cancel</button>
+        <button class="primary" disabled=${saving} onClick=${save}>Save Evaluation</button>
+      </div>
     </div>
   `;
 }
 
-function SendRun(){
-  const [sessions, reloadSessions] = useAsync(() => "/api/sessions", []);
-  const [datasets] = useAsync(() => "/api/evals/config/datasets", []);
-  const [sessionId, setSessionId] = useState("");
-  const [datasetId, setDatasetId] = useState("");
-  const [msg, setMsg] = useState(null);
+// ── Last-run drill-down ──────────────────────────────────────────────────
 
-  const send = () => {
-    setMsg(null);
-    postJSON("/api/evals/config/send-run", {session_id: sessionId, dataset_id: datasetId})
-      .then(d => setMsg({ok: `added as a case in ${d.id} (v${d.version})`}))
-      .catch(e => setMsg({err: String(e)}));
-  };
+function LastRunView({evaluation, evalConfig, back}){
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    setResult(null); setErr(null);
+    getJSON(`/api/evals/evaluations/${evaluation.id}/runs/${evaluation.last_run.run_id}`)
+      .then(r => { if(r && r.error) setErr(r.error); else setResult(r); })
+      .catch(e => setErr(String(e)));
+  }, [evaluation.id, evaluation.last_run.run_id]);
+
+  const checksById = {};
+  (evalConfig ? evalConfig.rules : []).forEach(rule => {
+    rule.checks.forEach(check => { checksById[check.id] = {rule, check}; });
+  });
 
   return html`
     <div class="card">
-      <h2>Send a completed run to evaluation</h2>
-      <div class="form-row">
-        <label>Session</label>
-        <select value=${sessionId} onChange=${e => setSessionId(e.target.value)}>
-          <option value="">Select a session…</option>
-          ${(sessions || []).map(s => html`<option value=${s.session_id}>${s.session_id} — ${s.label}</option>`)}
-        </select>
-      </div>
-      <div class="form-row">
-        <label>Dataset</label>
-        <select value=${datasetId} onChange=${e => setDatasetId(e.target.value)}>
-          <option value="">Select a dataset…</option>
-          ${(datasets || []).map(d => html`<option value=${d.id}>${d.id}</option>`)}
-        </select>
-      </div>
-      <button class="primary" disabled=${!sessionId || !datasetId} onClick=${send}>Send to evaluation</button>
-      ${msg && msg.ok && html`<div class="ok-msg">${msg.ok}</div>`}
-      ${msg && msg.err && html`<div class="error-msg">${msg.err}</div>`}
+      <span class="link" onClick=${back}>← Back</span>
+      <h2>Run ${evaluation.last_run.run_id}</h2>
+      ${err && html`<div class="error-msg">${err}</div>`}
+      ${!result && !err && html`<div class="empty">Loading…</div>`}
+      ${result && html`
+        <div class="section">
+          <div><span class="muted">Verdict:</span> <span class="pill ${evaluation.last_run.verdict}">${evaluation.last_run.verdict}</span></div>
+          <div><span class="muted">Timestamp:</span> ${result.timestamp}</div>
+        </div>
+        <div class="section">
+          <h3>Checks</h3>
+          ${!result.scores.length && html`<div class="muted">No checks were scored for this run.</div>`}
+          ${result.scores.map(score => {
+            const ctx = checksById[score.case_id];
+            return html`
+              <div class="check-block">
+                <div class="head">
+                  <span class="mono">${ctx ? ctx.check.name : score.case_id}</span>
+                  <span class="pill ${score.passed ? "pass" : "fail"}">${score.passed ? "pass" : "fail"}</span>
+                </div>
+                <pre>${JSON.stringify(score.detail, null, 2)}</pre>
+              </div>
+            `;
+          })}
+        </div>
+      `}
     </div>
   `;
 }
 
-function Config(){
-  const [tab, setTab] = useState("datasets");
-  return html`
-    <div class="form-row">
-      <button class="primary" onClick=${() => setTab("datasets")}>Datasets</button>
-      <button class="primary" onClick=${() => setTab("cases")}>Cases</button>
-      <button class="primary" onClick=${() => setTab("send")}>Send run to eval</button>
-    </div>
-    ${tab === "datasets" && html`<${ConfigDatasets} />`}
-    ${tab === "cases" && html`<${ConfigCases} />`}
-    ${tab === "send" && html`<${SendRun} />`}
-  `;
-}
+// ── App ───────────────────────────────────────────────────────────────────
 
 function App(){
-  const initialView = (() => {
-    try{ return new URLSearchParams(window.location.search).get("view") || "overview"; }
-    catch(e){ return "overview"; }
-  })();
-  const [view, setView] = useState(initialView);
-  const [runs, setRuns] = useState([]);
-  const [openRunId, setOpenRunId] = useState(null);
-  useEffect(() => { getJSON("/api/evals/runs").then(setRuns); }, []);
+  const [evaluations, setEvaluations] = useState([]);
+  const [runConfigs, setRunConfigs] = useState([]);
+  const [evalConfigs, setEvalConfigs] = useState([]);
+  const [panel, setPanel] = useState(null); // null | {} (new) | evaluation (edit)
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [runModal, setRunModal] = useState(null); // {stageIndex, error, result}
+  const [lastRunTarget, setLastRunTarget] = useState(null);
+  const [listError, setListError] = useState(null);
 
-  // Notify an embedding shell of the current view so it can persist it.
-  useEffect(() => {
-    try{ window.parent && window.parent.postMessage({type:"mca:selection", tab:"evals", view}, "*"); }catch(e){}
-  }, [view]);
+  const reloadAll = () => {
+    getJSON("/api/evals/evaluations").then(d => setEvaluations(d.evaluations || [])).catch(e => setListError(String(e)));
+    getJSON("/api/evals/run-configs").then(d => setRunConfigs(d.run_configs || []));
+    getJSON("/api/evals/eval-configs").then(d => setEvalConfigs(d.eval_configs || []));
+  };
+  useEffect(reloadAll, []);
 
-  const openRun = (id) => { setOpenRunId(id); setView("run"); };
-  const backToHistory = () => { setOpenRunId(null); setView("runs"); };
+  const onSaved = () => { setPanel(null); reloadAll(); };
+
+  const runEvaluation = async (evaluation) => {
+    setRunModal({stageIndex: 0, error: null, result: null});
+    const advance = (i) => setRunModal(prev => prev && {...prev, stageIndex: i});
+    const timers = [setTimeout(() => advance(1), 350), setTimeout(() => advance(2), 900)];
+    try{
+      const {run_id} = await postJSON(`/api/evals/evaluations/${evaluation.id}/run`);
+      advance(3);
+      const result = await getJSON(`/api/evals/evaluations/${evaluation.id}/runs/${run_id}`);
+      setRunModal({stageIndex: 4, error: null, result: {run_id, verdict: (result.aggregate_metrics && result.aggregate_metrics.nothing_to_score) ? "no_checks" : (result.scores.every(s => s.passed) ? "pass" : "fail")}});
+      reloadAll();
+    } catch(e){
+      timers.forEach(clearTimeout);
+      setRunModal({stageIndex: 0, error: String(e.message || e), result: null});
+    }
+  };
+
+  const confirmDelete = async () => {
+    await del(`/api/evals/evaluations/${deleteTarget.id}`);
+    setDeleteTarget(null);
+    reloadAll();
+  };
+
+  const openLastRun = async (evaluation) => {
+    const evalConfig = evalConfigs.find(ec => ec.id === evaluation.eval_config_id)
+      || await getJSON(`/api/evals/eval-configs/${evaluation.eval_config_id}`);
+    setLastRunTarget({evaluation, evalConfig});
+  };
 
   return html`
-    <${Nav} view=${view === "run" ? "runs" : view} setView=${setView} />
-    <div class="main">
-      ${view === "overview" && html`<${Overview} runs=${runs} />`}
-      ${view === "runs" && html`<${RunHistory} runs=${runs} openRun=${openRun} />`}
-      ${view === "run" && html`<${RunBreakdown} runId=${openRunId} back=${backToHistory} />`}
-      ${view === "datasets" && html`<${Datasets} />`}
-      ${view === "config" && html`<${Config} />`}
-      ${view === "compare" && html`<${Compare} />`}
+    <div class="topbar"><div class="brand">Evaluations</div></div>
+    <div class="layout">
+      <div class="pane-left">
+        ${listError && html`<div class="error-msg">${listError}</div>`}
+        ${!evaluations.length
+          ? html`<${EmptyState} onCreate=${() => setPanel({})} />`
+          : html`
+            <div class="card">
+              <div class="form-row" style=${{justifyContent:"flex-end"}}>
+                <button class="primary" onClick=${() => setPanel({})}>Create Eval</button>
+              </div>
+              <${EvaluationTable} evaluations=${evaluations} runConfigs=${runConfigs} evalConfigs=${evalConfigs}
+                onConfigure=${setPanel} onRun=${runEvaluation} onDelete=${setDeleteTarget} onOpenLastRun=${openLastRun} />
+            </div>
+          `}
+      </div>
+      <div class="pane-right">
+        ${lastRunTarget
+          ? html`<${LastRunView} evaluation=${lastRunTarget.evaluation} evalConfig=${lastRunTarget.evalConfig} back=${() => setLastRunTarget(null)} />`
+          : panel !== null
+            ? html`<${EvaluationConfigPanel} editing=${panel} runConfigs=${runConfigs} evalConfigs=${evalConfigs}
+                onSaved=${onSaved} onCancel=${() => setPanel(null)} />`
+            : html`<div class="card"><div class="empty">Select "Configure" or "Create Eval" to begin.</div></div>`}
+      </div>
     </div>
+    ${deleteTarget && html`
+      <${ConfirmationModal} title="Delete evaluation"
+        message="Delete this evaluation? This action cannot be undone."
+        onConfirm=${confirmDelete} onCancel=${() => setDeleteTarget(null)} />
+    `}
+    ${runModal && html`
+      <${ExecutionProgressModal} stageIndex=${runModal.stageIndex} error=${runModal.error} result=${runModal.result}
+        onClose=${() => setRunModal(null)} />
+    `}
   `;
 }
 
