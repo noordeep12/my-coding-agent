@@ -63,13 +63,13 @@ class TestEvalDashboardHTML:
         status, body = _get(port, "/evals")
         assert status == 200
         assert b"<!DOCTYPE html>" in body
-        assert b"Eval Dashboard" in body
+        assert b"Evaluations" in body
 
     def test_evals_route_does_not_leak_into_trace_root(self, server):
         port, _ = server
         status, body = _get(port, "/")
         assert status == 200
-        assert b"Eval Dashboard" not in body
+        assert b"Evaluations" not in body
 
 
 class TestEvalAPIRoutes:
