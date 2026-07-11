@@ -31,11 +31,20 @@ from ..viewer.server import _check_vendor_assets, _full_html
 from ..viewer.sumcheck import check_tree
 from .admin import admin_html, masked_llm_settings, save_llm_settings
 from .evals_config import handle_eval_config_route
+from .evaluations_api import handle_evaluation_route
 from .store import Store, default_db_path
 
 logger = logging.getLogger(__name__)
 
 _SID_RE = re.compile(r"^[0-9a-f]{8,64}$")
+
+#: Evaluation-management routes (Evaluation/RunConfig/EvalConfig CRUD + run),
+#: dispatched separately from the eval-config/dataset routes below.
+_EVAL_MGMT_PREFIXES = (
+    "/api/evals/evaluations",
+    "/api/evals/run-configs",
+    "/api/evals/eval-configs",
+)
 
 #: Tab-registration contract: route -> nav label. "admin" is mounted by #155.
 NAV_TABS: tuple[tuple[str, str], ...] = (
@@ -265,6 +274,8 @@ class _WebUIHandler(BaseHTTPRequestHandler):
     def _dispatch_get_api(self, path: str) -> bool:
         if path.startswith("/api/evals/config"):
             return self._handle_eval_config("GET")
+        if path.startswith(_EVAL_MGMT_PREFIXES):
+            return self._handle_evaluation_api("GET")
         if path.startswith("/api/evals/"):
             return handle_eval_api_route(self, path, self.base_dir.resolve() / "evals")
         match = re.fullmatch(r"/api/session/([^/]+)", path)
@@ -286,6 +297,10 @@ class _WebUIHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path.startswith("/api/evals/config"):
             if not self._handle_eval_config(method):
+                self._send_json({"error": "not found"}, status=404)
+            return
+        if path.startswith(_EVAL_MGMT_PREFIXES):
+            if not self._handle_evaluation_api(method):
                 self._send_json({"error": "not found"}, status=404)
             return
         payload = self._read_json_body()
@@ -328,6 +343,18 @@ class _WebUIHandler(BaseHTTPRequestHandler):
             evals_root=self.base_dir.resolve() / "evals",
             sessions_root=self.base_dir.resolve(),
             store=self.store,
+        )
+
+    def _handle_evaluation_api(self, method: str) -> bool:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length else b""
+        path = self.path.split("?")[0]
+        return handle_evaluation_route(
+            self,
+            method,
+            path,
+            raw,
+            evals_root=self.base_dir.resolve() / "evals",
         )
 
     def _handle_session(self, session_id: str) -> None:
