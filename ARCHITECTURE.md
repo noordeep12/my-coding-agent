@@ -241,7 +241,7 @@ A leaf package: depends one-way on `engine`/`pipeline` (to drive `AgentNode.exec
 - **`trajectory.py`** — `TrajectoryScorer` (issue #140): scores a run's execution *path*, not just its final answer, registered under the `"trajectory"` ref. `load_trajectory(session_dir)` reuses `viewer.reader.load_session` for the parsed trace and reads `session_data.json`'s `tool_records` + cost rollup (`CostRollup`) — the same source `RunResult.session_dir` points at. Four deterministic dimension functions each return a `DimensionScore` (`value` in `[0, 1]` + structured `detail`): `score_tool_selection` (flags `not_found` — off-toolset — outcomes, keyed off the literal `"not found"`/`"wrong arguments for"` substrings `engine/tool_execution`'s `invoke_tool` always embeds in a failure's `error` text, since the reason isn't persisted as its own field), `score_argument_validity` (flags `wrong_args` outcomes), `score_error_handling` (replays `pipeline.anomaly.trailing_streak` over successive prefixes of `tool_records` — the same signal `AnomalyDetectNode` computes live, one step at a time — to catch a same-signature failure streak the run never reacted to, even if a later call broke it), and `score_efficiency` (steps/tokens/wall-clock from the cost rollup, scored against an optional case-supplied `EfficiencyBaseline`, plus a baseline-free `score_redundancy` sub-signal: work performed after the last call to a state-changing tool — `STATE_CHANGING_TOOLS = {"bash", "write_file"}`, a conservative allowlist rather than trying to classify individual `bash` commands). `TrajectoryScorer.score` averages the four dimension values into one `EvalScore`, passing at/above `case.expected["pass_threshold"]` (default `0.7`).
 - **`judge.py`** — rubric-based LLM judge (issue #103), the only non-deterministic scorer. A `Rubric` (declared criteria, a shared integer score scale, per-criterion anchors) is a disk JSON artifact loaded by `load_rubric`; a case never grades against a free-form "is this good?" prompt, and a malformed rubric raises `RubricError` rather than falling back to one. `score_with_judge` makes one bounded model call through `engine.llm` tagged with the distinct `CALL_KIND_JUDGE` call kind (so judge cost is captured and attributable like any other call) and parses the response into a `JudgeVerdict` — a score + rationale per criterion plus an overall score/rationale, so systematic judge bias (verbosity/confidence preference) is inspectable in the persisted result rather than hidden behind one number. Response parsing first strips `<think>...</think>` reasoning, then extracts the JSON candidate — the last fenced ` ```json ` block if present (the model's actual answer, which follows any illustrative example it may have echoed earlier in its own reasoning), else the outermost `{...}` span, else `JudgeError` — and, before any of that, checks `extract_finish_reason` (`utils/parsing.py`): a `finish_reason == "length"` (truncated) response raises `JudgeError` immediately rather than risking a partial or example snippet being mistaken for the real verdict. `JudgeScorer` adapts a `JudgeVerdict` to the `scoring.Scorer` contract and self-registers under the `"judge"` ref on import; an errored agent run, missing/malformed rubric, truncated response, or unparseable verdict are all recorded as a failed `EvalScore` with the reason in `detail`, never a crashed run. `calibrate` scores a human-labelled set with the judge and reports agreement via `cohens_kappa`, flagging the judge `reliable=False` when agreement falls below `DEFAULT_RELIABILITY_THRESHOLD` rather than letting an uncalibrated judge be silently trusted.
 
-The committed example case set lives at `.my_coding_agent/evals/cases/` (un-ignored via the same `.gitignore` negation pattern as `.my_coding_agent/skills/`), so the harness runs out of the box — one `exact_match` case (`hello_world.json`), one `trajectory` case (`trajectory_smoke.json`), and one `judge` case (`cve_aggregation.json`, issue #150) exercising real subagent delegation: it tasks the agent with fanning two lookups out to separate subagents (CISA KEV via `vulnerability.circl.lu`, GitHub Advisories via `api.github.com`) and synthesizing both into one markdown table, scored against `.my_coding_agent/evals/rubrics/cve_aggregation_rubric.json` (also un-ignored, same pattern) for delegation, source correctness, and synthesis quality. It runs against live external APIs rather than recorded fixtures — deliberate, since a fixed expected answer would defeat the point of judge-scoring it — so it is tagged `"live-network"` for callers that want to exclude flaky/live cases from a run.
+`.my_coding_agent/evals/cases/` and `.my_coding_agent/evals/datasets/` (un-ignored via the same `.gitignore` negation pattern as `.my_coding_agent/skills/`) remain the on-disk home for case-set/dataset content this package's own `cli.py`/`compare.py`/CLI-driven regression workflow reads and writes. As of the Evaluation entity (issue #162, see below) this content no longer seeds the web UI's Evaluations tab — that tab reads exclusively from `.my_coding_agent/evals/{evaluations,run_configs,eval_configs}/` — so the three example cases that used to ship here (`hello_world` exact-match, `trajectory_smoke` trajectory, `cve_aggregation` judge) were migrated into equivalent Evaluation/RunConfig/EvalConfig records instead of being duplicated in both places; the directories are kept (empty) since `evals.cases`/`evals.datasets` still expect them to exist for CLI use. `.my_coding_agent/evals/rubrics/cve_aggregation_rubric.json` (also un-ignored, same pattern) stays live: the migrated `cve_aggregation` EvalConfig's judge Check still references it by path for delegation, source correctness, and synthesis quality scoring against live external APIs (CISA KEV via `vulnerability.circl.lu`, GitHub Advisories via `api.github.com`) rather than recorded fixtures — deliberate, since a fixed expected answer would defeat the point of judge-scoring it.
 
 `runner.py` scores a case from *inside* `_run_and_score_case`'s `tempfile.TemporaryDirectory` block, before the workspace (and the session dir nested under it) is torn down — a scorer that only reads `RunResult.final_output` (the baseline `ExactMatchScorer`) never noticed the workspace disappearing, but a trace-reading scorer like `TrajectoryScorer` needs `events.jsonl`/`session_data.json` to still be on disk when `Scorer.score` runs.
 
@@ -383,4 +383,106 @@ The Evals tab's embedded Preact app (`viewer/evals_server.py`) gains a
 same vendored Preact/htm bundle the rest of the dashboard uses, no new
 dependency.
 
+## Evaluation entity: RunConfig + EvalConfig (issue #162)
+
+An evaluation used to live only in the operator's head: nothing bound *how
+the agent runs* to *what its output is checked against*, so it couldn't be
+saved and re-run as one unit — the #141/#154 dataset/case system versions
+case membership, but a case's task and expected payload are still edited by
+hand per case, with no reusable "run recipe." `evals/evaluation.py` (leaf
+module, no dependency on `engine`/`pipeline` beyond driving `AgentNode` at
+run time) adds three frozen-dataclass domain models, one JSON file per
+object under `.my_coding_agent/evals/{run_configs,eval_configs,evaluations}/`
+(`_write`/`_read`/`_list`, the same one-file-per-object convention
+`evals/cases.py` uses):
+
+- **`RunConfig`** — a persisted, reusable "how the agent runs": prompt
+  template(s), model/provider, temperature/tokens/top_p, tool/memory/
+  retrieval config, env vars. `_run_config_task` joins
+  `user_prompt_template` + `context_template` (falling back to
+  `description`/`name`) into the task string the agent actually runs.
+  Standalone from any specific check — the same RunConfig can back
+  multiple Evaluations.
+- **`EvalConfig`** — a persisted, reusable ordered `Rule -> Check` tree.
+  Each `Check` (id, name, method label, evaluator ref, `expected`,
+  `threshold`) maps onto the exact same `expected` shape a dataset
+  case's `EvalCase.expected` already carries per scorer (`_check_expected`
+  translates a Check's `expected`/`method`/`threshold` onto the scorer
+  registry's existing contract — no new scoring semantics). `EvalConfig`
+  creation/update calls `validate_eval_config`, which resolves every
+  Check's `evaluator` against `scoring.resolve_scorer` up front
+  (`UnknownEvaluatorError` on an unregistered ref) rather than failing
+  silently at run time.
+- **`Evaluation`** — the first-class binding: `run_config_id` +
+  `eval_config_id` + a `last_run` summary (`run_id`, `verdict`, `at`).
+  `_validate_references` checks both ids resolve to a stored file before
+  a create/update is written, so an Evaluation can never point at a
+  missing RunConfig/EvalConfig. This is the only one of the three objects
+  the web UI's Evaluations tab lists and renders — a RunConfig or
+  EvalConfig with no Evaluation referencing it is invisible there, even
+  though it still exists on disk.
+
+`run_evaluation` drives one agent turn (`_run_agent`) per the Evaluation's
+RunConfig, then scores every Check across every Rule in its EvalConfig
+against that single run's output (`_score_checks`, via the existing
+scorer registry) and writes the result through the existing
+`results.write_run_result` — this module adds no new execution or scoring
+engine, only the binding, persistence, and orchestration on top of what
+`evals/runner.py` and `evals/scoring.py` already do. Unlike `runner.py`'s
+isolated-`tempfile.TemporaryDirectory`/`os.chdir` pattern for dataset cases,
+`run_evaluation` runs in the process's actual current working directory —
+deliberately not isolated. Two things broke under isolation and drove this
+choice: `AgentNode`'s session directory always resolves off `Path.cwd()`
+(`engine/agent.py`), so a chdir'd-into-a-tempdir run wrote its session
+there and lost it when the tempdir was cleaned up, meaning an Evaluation's
+run never appeared in the Traces tab; and `_score_checks` ran before the
+chdir was undone, so a judge Check's relative rubric path
+(`case.expected["rubric"]`) resolved against the tempdir and failed with
+"rubric file not found" even when the file existed at the real project
+path. Running in the real cwd fixes both — the session lands under the
+project's actual `.my_coding_agent/` (visible to Traces) and relative
+paths resolve where the operator expects.
+
+`webui/evaluations_api.py` is a thin JSON-in/JSON-out dispatcher (mirroring
+`evals_config.py`'s pattern) registered in `webui/server.py` under
+`/api/evals/{evaluations,run-configs,eval-configs}` — a sibling surface to
+`/api/evals/config/...`, not a replacement of it; the two dispatchers share
+no route prefix so they can't collide. `POST /evaluations/{id}/run` starts
+`run_evaluation` on a daemon `threading.Thread` and returns `202 {run_id}`
+immediately, before the agent turn has run — a genuinely async accept, not
+a synchronous call dressed up with a 202 status (the original
+implementation blocked the request until the whole run finished, and since
+`server.py` used a plain single-connection `HTTPServer`, one Evaluation run
+froze every other tab/request for the run's duration; `server.py` now
+constructs a `ThreadingHTTPServer` instead — safe because `Store`'s SQLite
+connection already sets `check_same_thread=False` behind its own lock).
+`run_id` is pre-generated by the handler (`evaluation.new_id()`) and passed
+through as `run_evaluation(..., run_id=...)`, which overrides the id
+`build_run_result` would otherwise mint, so the id the client was handed
+before the run started is the same id the result eventually lands under.
+`GET /evaluations/{id}/runs/{run_id}` reads the written result record back
+by id, or — while the background thread hasn't written it yet — responds
+`202 {run_id, status: "running"}` so a polling client (the web UI's own
+run-progress modal included) can distinguish "still running" from "done"
+without a separate status field on the Evaluation itself.
+
+Because `evals/cases.py` and `evals/evaluation.py` are independent
+persistence layers with no cross-references, migrating a dataset case into
+an Evaluation is a manual, one-time translation (construct an equivalent
+RunConfig + EvalConfig via the CRUD API, referencing the same rubric file
+path for a judge Check) — there is no automated sync or dual-write between
+the two systems.
+
+`viewer/evals_server.py`'s embedded two-pane page selects an existing
+RunConfig/EvalConfig from a dropdown and renders the same editor component
+used for "Create New" against its fetched fields (synced via a `useEffect`
+keyed on the selected id) rather than leaving the selection opaque —
+selecting an id used to store only that id in state, with no way to see or
+change what it pointed at. `EvaluationRow`'s per-row actions collapse into
+one `ActionsMenu` ("⋯") offering Details / Configure / Run / Delete, rather
+than four buttons crowding the row; Details opens the same
+`EvaluationConfigPanel` used for Configure/Create, but with `readOnly`
+threaded down through every editor sub-component so every field renders
+`disabled` and no Save button appears — a view, not a second implementation
+of the form.
 

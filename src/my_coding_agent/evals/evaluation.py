@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -615,13 +613,25 @@ def run_evaluation(
     eval_configs_dir: Path = DEFAULT_EVAL_CONFIGS_DIR,
     evaluations_dir: Path = DEFAULT_EVALUATIONS_DIR,
     results_root: Path | None = None,
+    run_id: str | None = None,
 ) -> EvalRunResult:
     """Run `evaluation`'s RunConfig through the agent and score every Check.
 
-    Runs the pipeline once (per `runner.py`'s isolated-temp-workspace
-    pattern) and scores every Check across every Rule against that single
-    run's output, via the existing scorer registry. Writes the result
-    through `results.py` and updates the Evaluation's `last_run`.
+    Runs the pipeline once, in the current working directory (unlike
+    `runner.py`'s isolated-temp-workspace pattern for dataset cases), so the
+    run's session lands under the project's real `.my_coding_agent/`
+    directory — visible to the Traces tab — and any relative path a Check's
+    `expected` carries (e.g. a judge rubric path) resolves against the real
+    project root instead of a throwaway directory. Scores every Check across
+    every Rule against that single run's output, via the existing scorer
+    registry. Writes the result through `results.py` and updates the
+    Evaluation's `last_run`.
+
+    ``run_id``, if given, overrides the freshly-generated run id
+    `build_run_result` assigns — so a caller that already handed the run id
+    back to a client (e.g. the web UI's fire-and-poll endpoint, which returns
+    a run id before this function has finished) can find the written result
+    under the id it was promised.
     """
     run_config = get_run_config(evaluation.run_config_id, base_dir=run_configs_dir)
     eval_config = get_eval_config(evaluation.eval_config_id, base_dir=eval_configs_dir)
@@ -636,19 +646,15 @@ def run_evaluation(
         }
         verdict = "no_checks"
     else:
-        original_cwd = Path.cwd()
-        with tempfile.TemporaryDirectory(prefix="mca-eval-") as workspace:
-            try:
-                os.chdir(workspace)
-                task, run_result = _run_agent(run_config, evaluation.id)
-                scores = _score_checks(checks, task, run_result)
-            finally:
-                os.chdir(original_cwd)
+        task, run_result = _run_agent(run_config, evaluation.id)
+        scores = _score_checks(checks, task, run_result)
         pass_rate = sum(1 for s in scores if s.passed) / len(scores)
         aggregate_metrics = {"pass_rate": pass_rate, "checks_total": float(len(scores))}
         verdict = "pass" if pass_rate == 1.0 else "fail"
 
     result = build_run_result(f"evaluation:{evaluation.id}", scores, aggregate_metrics)
+    if run_id is not None:
+        result = replace(result, run_id=run_id)
     if results_root is None:
         write_run_result(result)
     else:

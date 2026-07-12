@@ -11,7 +11,9 @@ so this surface stays isolated from the existing `/api/evals/config` routes.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -282,14 +284,29 @@ def _handle_evaluation_run(
         evaluation = ev.get_evaluation(evaluation_id, base_dir=evaluations_dir)
     except ev.NotFoundError as exc:
         return _error(handler, str(exc), status=404)
-    result = ev.run_evaluation(
-        evaluation,
-        run_configs_dir=run_configs_dir,
-        eval_configs_dir=eval_configs_dir,
-        evaluations_dir=evaluations_dir,
-        results_root=evaluations_dir.parent,
-    )
-    handler._send_json({"run_id": result.run_id}, status=202)
+    run_id = ev.new_id()
+
+    def _run() -> None:
+        try:
+            ev.run_evaluation(
+                evaluation,
+                run_configs_dir=run_configs_dir,
+                eval_configs_dir=eval_configs_dir,
+                evaluations_dir=evaluations_dir,
+                results_root=evaluations_dir.parent,
+                run_id=run_id,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "evaluation %s: background run %s failed", evaluation_id, run_id
+            )
+
+    # 202 means "accepted, not yet done" — the run happens on a background
+    # thread (server.py's ThreadingHTTPServer keeps the rest of the UI, and
+    # this poll endpoint, responsive while it runs) rather than blocking this
+    # request until the agent turn completes.
+    threading.Thread(target=_run, daemon=True).start()
+    handler._send_json({"run_id": run_id}, status=202)
     return True
 
 
@@ -300,7 +317,8 @@ def _handle_evaluation_run_result(
         return False
     result_path = evaluations_dir.parent / run_id / "result.json"
     if not result_path.exists():
-        return _error(handler, f"no run '{run_id}' found", status=404)
+        handler._send_json({"run_id": run_id, "status": "running"}, status=202)
+        return True
     handler._send_json(json.loads(result_path.read_text()))
     return True
 

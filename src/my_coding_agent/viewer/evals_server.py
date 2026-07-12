@@ -80,6 +80,11 @@ tr.clickable:hover{background:var(--bg2)}
 .link{color:var(--accent);cursor:pointer}
 .link:hover{text-decoration:underline}
 .actions{display:flex;gap:6px;flex-wrap:wrap}
+.menu-wrap{position:relative;display:inline-block}
+.menu-dropdown{position:absolute;right:0;top:calc(100% + 4px);background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);min-width:120px;z-index:10;overflow:hidden}
+.menu-item{padding:8px 12px;font-size:12px;cursor:pointer;white-space:nowrap}
+.menu-item:hover{background:var(--bg2)}
+.menu-item.danger{color:var(--neg)}
 
 pre{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:11px;background:var(--bg2);border-radius:6px;padding:8px}
 
@@ -175,20 +180,20 @@ function EmptyState({onCreate}){
   `;
 }
 
-function ThresholdInput({value, onChange}){
+function ThresholdInput({value, onChange, readOnly}){
   return html`
-    <input type="number" step="0.01" min="0" max="1" value=${value}
+    <input type="number" step="0.01" min="0" max="1" value=${value} disabled=${readOnly}
       onInput=${e => onChange(e.target.value === "" ? "" : Number(e.target.value))}
       style=${{maxWidth:"90px"}} />
   `;
 }
 
-function JsonEditor({label, value, onChange}){
+function JsonEditor({label, value, onChange, readOnly}){
   const [err, setErr] = useState(null);
   return html`
     <div class="form-row col">
       <label>${label}</label>
-      <textarea class="mono" value=${value} onInput=${e => {
+      <textarea class="mono" disabled=${readOnly} value=${value} onInput=${e => {
         onChange(e.target.value);
         try{ JSON.parse(e.target.value || "{}"); setErr(null); }
         catch(ex){ setErr("invalid JSON"); }
@@ -209,6 +214,23 @@ function ConfirmationModal({title, message, onConfirm, onCancel}){
           <button class="danger" onClick=${onConfirm}>Delete</button>
         </div>
       </div>
+    </div>
+  `;
+}
+
+function ActionsMenu({items}){
+  const [open, setOpen] = useState(false);
+  return html`
+    <div class="menu-wrap">
+      <button class="secondary" onClick=${() => setOpen(o => !o)}>⋯</button>
+      ${open && html`
+        <div class="menu-dropdown" onMouseLeave=${() => setOpen(false)}>
+          ${items.map(it => html`
+            <div class="menu-item ${it.danger ? "danger" : ""}"
+              onClick=${() => { setOpen(false); it.onClick(); }}>${it.label}</div>
+          `)}
+        </div>
+      `}
     </div>
   `;
 }
@@ -239,13 +261,13 @@ function ExecutionProgressModal({stageIndex, error, result, onClose}){
 
 // ── Run Configuration ────────────────────────────────────────────────────
 
-function RunConfigSelector({runConfigs, mode, setMode, selectedId, setSelectedId}){
+function RunConfigSelector({runConfigs, mode, setMode, selectedId, setSelectedId, readOnly}){
   return html`
     <div class="section">
       <h3>Run Configuration</h3>
       <div class="form-row">
         <label>Source</label>
-        <select value=${mode} onChange=${e => setMode(e.target.value)}>
+        <select value=${mode} disabled=${readOnly} onChange=${e => setMode(e.target.value)}>
           <option value="select">Select existing</option>
           <option value="new">Create New</option>
         </select>
@@ -253,7 +275,7 @@ function RunConfigSelector({runConfigs, mode, setMode, selectedId, setSelectedId
       ${mode === "select" && html`
         <div class="form-row">
           <label>Run Config</label>
-          <select value=${selectedId || ""} onChange=${e => setSelectedId(e.target.value)}>
+          <select value=${selectedId || ""} disabled=${readOnly} onChange=${e => setSelectedId(e.target.value)}>
             <option value="">Select…</option>
             ${runConfigs.map(rc => html`<option value=${rc.id}>${rc.name}</option>`)}
           </select>
@@ -263,40 +285,40 @@ function RunConfigSelector({runConfigs, mode, setMode, selectedId, setSelectedId
   `;
 }
 
-function RunConfigEditor({draft, setDraft}){
+function RunConfigEditor({draft, setDraft, readOnly}){
   const setField = (k, v) => setDraft(prev => ({...prev, [k]: v}));
   return html`
     <div class="section">
-      <div class="form-row"><label>Name</label><input type="text" value=${draft.name} onInput=${e => setField("name", e.target.value)} /></div>
-      <div class="form-row"><label>Description</label><input type="text" value=${draft.description} onInput=${e => setField("description", e.target.value)} /></div>
-      <div class="form-row"><label>Agent</label><input type="text" value=${draft.agent} onInput=${e => setField("agent", e.target.value)} /></div>
-      <div class="form-row"><label>Model</label><input type="text" value=${draft.model} onInput=${e => setField("model", e.target.value)} /></div>
-      <div class="form-row"><label>Provider</label><input type="text" value=${draft.provider} onInput=${e => setField("provider", e.target.value)} /></div>
-      <div class="form-row col"><label>System prompt</label><textarea value=${draft.system_prompt} onInput=${e => setField("system_prompt", e.target.value)}></textarea></div>
-      <div class="form-row col"><label>User prompt template</label><textarea value=${draft.user_prompt_template} onInput=${e => setField("user_prompt_template", e.target.value)}></textarea></div>
-      <div class="form-row col"><label>Context template</label><textarea value=${draft.context_template} onInput=${e => setField("context_template", e.target.value)}></textarea></div>
-      <div class="form-row"><label>Temperature</label><input type="number" step="0.1" value=${draft.temperature} onInput=${e => setField("temperature", e.target.value)} /></div>
-      <div class="form-row"><label>Max tokens</label><input type="number" value=${draft.max_tokens} onInput=${e => setField("max_tokens", e.target.value)} /></div>
-      <div class="form-row"><label>Top p</label><input type="number" step="0.1" value=${draft.top_p} onInput=${e => setField("top_p", e.target.value)} /></div>
-      <${JsonEditor} label="Extra params" value=${draft.extra_params} onChange=${v => setField("extra_params", v)} />
-      <div class="form-row"><label class="check"><input type="checkbox" checked=${draft.tools_enabled} onChange=${e => setField("tools_enabled", e.target.checked)} /> Tools enabled</label></div>
-      <${JsonEditor} label="Tool config" value=${draft.tool_config} onChange=${v => setField("tool_config", v)} />
-      <${JsonEditor} label="Memory config" value=${draft.memory_config} onChange=${v => setField("memory_config", v)} />
-      <${JsonEditor} label="Retrieval config" value=${draft.retrieval_config} onChange=${v => setField("retrieval_config", v)} />
-      <${JsonEditor} label="Env vars" value=${draft.env_vars} onChange=${v => setField("env_vars", v)} />
+      <div class="form-row"><label>Name</label><input type="text" disabled=${readOnly} value=${draft.name} onInput=${e => setField("name", e.target.value)} /></div>
+      <div class="form-row"><label>Description</label><input type="text" disabled=${readOnly} value=${draft.description} onInput=${e => setField("description", e.target.value)} /></div>
+      <div class="form-row"><label>Agent</label><input type="text" disabled=${readOnly} value=${draft.agent} onInput=${e => setField("agent", e.target.value)} /></div>
+      <div class="form-row"><label>Model</label><input type="text" disabled=${readOnly} value=${draft.model} onInput=${e => setField("model", e.target.value)} /></div>
+      <div class="form-row"><label>Provider</label><input type="text" disabled=${readOnly} value=${draft.provider} onInput=${e => setField("provider", e.target.value)} /></div>
+      <div class="form-row col"><label>System prompt</label><textarea disabled=${readOnly} value=${draft.system_prompt} onInput=${e => setField("system_prompt", e.target.value)}></textarea></div>
+      <div class="form-row col"><label>User prompt template</label><textarea disabled=${readOnly} value=${draft.user_prompt_template} onInput=${e => setField("user_prompt_template", e.target.value)}></textarea></div>
+      <div class="form-row col"><label>Context template</label><textarea disabled=${readOnly} value=${draft.context_template} onInput=${e => setField("context_template", e.target.value)}></textarea></div>
+      <div class="form-row"><label>Temperature</label><input type="number" step="0.1" disabled=${readOnly} value=${draft.temperature} onInput=${e => setField("temperature", e.target.value)} /></div>
+      <div class="form-row"><label>Max tokens</label><input type="number" disabled=${readOnly} value=${draft.max_tokens} onInput=${e => setField("max_tokens", e.target.value)} /></div>
+      <div class="form-row"><label>Top p</label><input type="number" step="0.1" disabled=${readOnly} value=${draft.top_p} onInput=${e => setField("top_p", e.target.value)} /></div>
+      <${JsonEditor} label="Extra params" value=${draft.extra_params} onChange=${v => setField("extra_params", v)} readOnly=${readOnly} />
+      <div class="form-row"><label class="check"><input type="checkbox" disabled=${readOnly} checked=${draft.tools_enabled} onChange=${e => setField("tools_enabled", e.target.checked)} /> Tools enabled</label></div>
+      <${JsonEditor} label="Tool config" value=${draft.tool_config} onChange=${v => setField("tool_config", v)} readOnly=${readOnly} />
+      <${JsonEditor} label="Memory config" value=${draft.memory_config} onChange=${v => setField("memory_config", v)} readOnly=${readOnly} />
+      <${JsonEditor} label="Retrieval config" value=${draft.retrieval_config} onChange=${v => setField("retrieval_config", v)} readOnly=${readOnly} />
+      <${JsonEditor} label="Env vars" value=${draft.env_vars} onChange=${v => setField("env_vars", v)} readOnly=${readOnly} />
     </div>
   `;
 }
 
 // ── Eval Configuration ────────────────────────────────────────────────────
 
-function EvalConfigSelector({evalConfigs, mode, setMode, selectedId, setSelectedId}){
+function EvalConfigSelector({evalConfigs, mode, setMode, selectedId, setSelectedId, readOnly}){
   return html`
     <div class="section">
       <h3>Eval Configuration</h3>
       <div class="form-row">
         <label>Source</label>
-        <select value=${mode} onChange=${e => setMode(e.target.value)}>
+        <select value=${mode} disabled=${readOnly} onChange=${e => setMode(e.target.value)}>
           <option value="select">Select existing</option>
           <option value="new">Create New</option>
         </select>
@@ -304,7 +326,7 @@ function EvalConfigSelector({evalConfigs, mode, setMode, selectedId, setSelected
       ${mode === "select" && html`
         <div class="form-row">
           <label>Eval Config</label>
-          <select value=${selectedId || ""} onChange=${e => setSelectedId(e.target.value)}>
+          <select value=${selectedId || ""} disabled=${readOnly} onChange=${e => setSelectedId(e.target.value)}>
             <option value="">Select…</option>
             ${evalConfigs.map(ec => html`<option value=${ec.id}>${ec.name}</option>`)}
           </select>
@@ -314,33 +336,33 @@ function EvalConfigSelector({evalConfigs, mode, setMode, selectedId, setSelected
   `;
 }
 
-function EvalCheckEditor({check, onChange, onRemove}){
+function EvalCheckEditor({check, onChange, onRemove, readOnly}){
   const setField = (k, v) => onChange({...check, [k]: v});
   return html`
     <div class="check-block">
       <div class="head">
         <span class="mono">Check</span>
-        <button class="danger" onClick=${onRemove}>Remove</button>
+        ${!readOnly && html`<button class="danger" onClick=${onRemove}>Remove</button>`}
       </div>
-      <div class="form-row"><label>Name</label><input type="text" value=${check.name} onInput=${e => setField("name", e.target.value)} /></div>
-      <div class="form-row"><label>Description</label><input type="text" value=${check.description} onInput=${e => setField("description", e.target.value)} /></div>
-      <div class="form-row"><label>Method</label><input type="text" value=${check.method} onInput=${e => setField("method", e.target.value)} /></div>
-      <div class="form-row"><label>Input</label><input type="text" value=${check.input} onInput=${e => setField("input", e.target.value)} /></div>
-      <div class="form-row"><label>Expected</label><input type="text" value=${check.expected} onInput=${e => setField("expected", e.target.value)} /></div>
+      <div class="form-row"><label>Name</label><input type="text" disabled=${readOnly} value=${check.name} onInput=${e => setField("name", e.target.value)} /></div>
+      <div class="form-row"><label>Description</label><input type="text" disabled=${readOnly} value=${check.description} onInput=${e => setField("description", e.target.value)} /></div>
+      <div class="form-row"><label>Method</label><input type="text" disabled=${readOnly} value=${check.method} onInput=${e => setField("method", e.target.value)} /></div>
+      <div class="form-row"><label>Input</label><input type="text" disabled=${readOnly} value=${check.input} onInput=${e => setField("input", e.target.value)} /></div>
+      <div class="form-row"><label>Expected</label><input type="text" disabled=${readOnly} value=${check.expected} onInput=${e => setField("expected", e.target.value)} /></div>
       <div class="form-row">
         <label>Evaluator</label>
-        <select value=${check.evaluator} onChange=${e => setField("evaluator", e.target.value)}>
+        <select value=${check.evaluator} disabled=${readOnly} onChange=${e => setField("evaluator", e.target.value)}>
           <option value="exact_match">exact_match</option>
           <option value="trajectory">trajectory</option>
           <option value="judge">judge</option>
         </select>
       </div>
-      <div class="form-row"><label>Threshold</label><${ThresholdInput} value=${check.threshold} onChange=${v => setField("threshold", v)} /></div>
+      <div class="form-row"><label>Threshold</label><${ThresholdInput} value=${check.threshold} onChange=${v => setField("threshold", v)} readOnly=${readOnly} /></div>
     </div>
   `;
 }
 
-function EvalRuleEditor({rules, setRules}){
+function EvalRuleEditor({rules, setRules, readOnly}){
   const setRule = (i, rule) => setRules(prev => prev.map((r, idx) => idx === i ? rule : r));
   const removeRule = (i) => setRules(prev => prev.filter((_, idx) => idx !== i));
   const addRule = () => setRules(prev => [...prev, newRule()]);
@@ -355,27 +377,33 @@ function EvalRuleEditor({rules, setRules}){
         <div class="rule-block">
           <div class="head">
             <span class="mono">Rule ${ri + 1}</span>
-            <button class="danger" onClick=${() => removeRule(ri)}>Remove Rule</button>
+            ${!readOnly && html`<button class="danger" onClick=${() => removeRule(ri)}>Remove Rule</button>`}
           </div>
-          <div class="form-row"><label>Name</label><input type="text" value=${rule.name} onInput=${e => setRule(ri, {...rule, name: e.target.value})} /></div>
-          <div class="form-row"><label>Description</label><input type="text" value=${rule.description} onInput=${e => setRule(ri, {...rule, description: e.target.value})} /></div>
+          <div class="form-row"><label>Name</label><input type="text" disabled=${readOnly} value=${rule.name} onInput=${e => setRule(ri, {...rule, name: e.target.value})} /></div>
+          <div class="form-row"><label>Description</label><input type="text" disabled=${readOnly} value=${rule.description} onInput=${e => setRule(ri, {...rule, description: e.target.value})} /></div>
           ${rule.checks.map((check, ci) => html`
-            <${EvalCheckEditor} check=${check} onChange=${c => setCheck(ri, ci, c)} onRemove=${() => removeCheck(ri, ci)} />
+            <${EvalCheckEditor} check=${check} onChange=${c => setCheck(ri, ci, c)} onRemove=${() => removeCheck(ri, ci)} readOnly=${readOnly} />
           `)}
-          <button class="secondary" onClick=${() => addCheck(ri)}>Add Check</button>
+          ${!readOnly && html`<button class="secondary" onClick=${() => addCheck(ri)}>Add Check</button>`}
         </div>
       `)}
-      <button class="secondary" onClick=${addRule}>Add Rule</button>
+      ${!readOnly && html`<button class="secondary" onClick=${addRule}>Add Rule</button>`}
     </div>
   `;
 }
 
 // ── Evaluation list ──────────────────────────────────────────────────────
 
-function EvaluationRow({evaluation, runConfigs, evalConfigs, onConfigure, onRun, onDelete, onOpenLastRun}){
+function EvaluationRow({evaluation, runConfigs, evalConfigs, onDetails, onConfigure, onRun, onDelete, onOpenLastRun}){
   const rc = runConfigs.find(r => r.id === evaluation.run_config_id);
   const ec = evalConfigs.find(e => e.id === evaluation.eval_config_id);
   const lastRun = evaluation.last_run;
+  const items = [
+    {label: "Details", onClick: () => onDetails(evaluation)},
+    {label: "Configure", onClick: () => onConfigure(evaluation)},
+    {label: "Run", onClick: () => onRun(evaluation)},
+    {label: "Delete", danger: true, onClick: () => onDelete(evaluation)},
+  ];
   return html`
     <tr>
       <td>${evaluation.name}</td>
@@ -384,18 +412,12 @@ function EvaluationRow({evaluation, runConfigs, evalConfigs, onConfigure, onRun,
       <td class="mono">${ec ? ec.name : evaluation.eval_config_id}</td>
       <td>${lastRun ? html`<span class="link" onClick=${() => onOpenLastRun(evaluation)}>${lastRun.run_id}</span>` : html`<span class="muted">—</span>`}</td>
       <td>${lastRun ? html`<span class="pill ${lastRun.verdict}">${lastRun.verdict}</span>` : html`<span class="pill pending">no runs</span>`}</td>
-      <td>
-        <div class="actions">
-          <button class="secondary" onClick=${() => onConfigure(evaluation)}>Configure</button>
-          <button class="primary" onClick=${() => onRun(evaluation)}>Run</button>
-          <button class="danger" onClick=${() => onDelete(evaluation)}>Delete</button>
-        </div>
-      </td>
+      <td><${ActionsMenu} items=${items} /></td>
     </tr>
   `;
 }
 
-function EvaluationTable({evaluations, runConfigs, evalConfigs, onConfigure, onRun, onDelete, onOpenLastRun}){
+function EvaluationTable({evaluations, runConfigs, evalConfigs, onDetails, onConfigure, onRun, onDelete, onOpenLastRun}){
   return html`
     <table>
       <thead>
@@ -404,7 +426,7 @@ function EvaluationTable({evaluations, runConfigs, evalConfigs, onConfigure, onR
       <tbody>
         ${evaluations.map(ev => html`
           <${EvaluationRow} evaluation=${ev} runConfigs=${runConfigs} evalConfigs=${evalConfigs}
-            onConfigure=${onConfigure} onRun=${onRun} onDelete=${onDelete} onOpenLastRun=${onOpenLastRun} />
+            onDetails=${onDetails} onConfigure=${onConfigure} onRun=${onRun} onDelete=${onDelete} onOpenLastRun=${onOpenLastRun} />
         `)}
       </tbody>
     </table>
@@ -489,18 +511,32 @@ function draftFromEvalConfig(ec){
   };
 }
 
-function EvaluationConfigPanel({editing, runConfigs, evalConfigs, onSaved, onCancel}){
+function EvaluationConfigPanel({editing, runConfigs, evalConfigs, readOnly, onSaved, onCancel}){
   const isEdit = !!(editing && editing.id);
   const [name, setName] = useState(editing ? editing.name : "");
   const [summary, setSummary] = useState(editing ? (editing.summary || "") : "");
-  const [runMode, setRunMode] = useState(isEdit ? "select" : "select");
+  const [runMode, setRunMode] = useState("select");
   const [runConfigId, setRunConfigId] = useState(editing ? editing.run_config_id : "");
   const [runConfigDraft, setRunConfigDraft] = useState(emptyRunConfigDraft());
-  const [evalMode, setEvalMode] = useState(isEdit ? "select" : "select");
+  const [evalMode, setEvalMode] = useState("select");
   const [evalConfigId, setEvalConfigId] = useState(editing ? editing.eval_config_id : "");
   const [evalConfigDraft, setEvalConfigDraft] = useState(emptyEvalConfigDraft());
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  // Selecting an existing Run/Eval Config loads its full record into the
+  // same editor used for "Create New" — read-only for Details, editable for
+  // Configure — instead of the id being the only visible trace of it.
+  useEffect(() => {
+    if(runMode !== "select") return;
+    const found = runConfigs.find(rc => rc.id === runConfigId);
+    if(found) setRunConfigDraft(draftFromRunConfig(found));
+  }, [runMode, runConfigId, runConfigs]);
+  useEffect(() => {
+    if(evalMode !== "select") return;
+    const found = evalConfigs.find(ec => ec.id === evalConfigId);
+    if(found) setEvalConfigDraft(draftFromEvalConfig(found));
+  }, [evalMode, evalConfigId, evalConfigs]);
 
   const save = async () => {
     setMsg(null);
@@ -513,6 +549,11 @@ function EvaluationConfigPanel({editing, runConfigs, evalConfigs, onSaved, onCan
         if(!payload.name){ throw new Error("Run Configuration name is required"); }
         const created = await postJSON("/api/evals/run-configs", payload);
         resolvedRunConfigId = created.id;
+      } else {
+        if(!runConfigId){ throw new Error("Select or create a Run Configuration"); }
+        const payload = buildRunConfigPayload(runConfigDraft);
+        if(!payload.name){ throw new Error("Run Configuration name is required"); }
+        await putJSON(`/api/evals/run-configs/${runConfigId}`, payload);
       }
       if(!resolvedRunConfigId){ throw new Error("Select or create a Run Configuration"); }
 
@@ -522,6 +563,11 @@ function EvaluationConfigPanel({editing, runConfigs, evalConfigs, onSaved, onCan
         if(!payload.name){ throw new Error("Eval Configuration name is required"); }
         const created = await postJSON("/api/evals/eval-configs", payload);
         resolvedEvalConfigId = created.id;
+      } else {
+        if(!evalConfigId){ throw new Error("Select or create an Eval Configuration"); }
+        const payload = buildEvalConfigPayload(evalConfigDraft);
+        if(!payload.name){ throw new Error("Eval Configuration name is required"); }
+        await putJSON(`/api/evals/eval-configs/${evalConfigId}`, payload);
       }
       if(!resolvedEvalConfigId){ throw new Error("Select or create an Eval Configuration"); }
 
@@ -541,30 +587,31 @@ function EvaluationConfigPanel({editing, runConfigs, evalConfigs, onSaved, onCan
 
   return html`
     <div class="card">
-      <h2>${isEdit ? "Configure Evaluation" : "Create Evaluation"}</h2>
+      <span class="link" onClick=${onCancel}>← Close</span>
+      <h2>${readOnly ? "Evaluation Details" : isEdit ? "Configure Evaluation" : "Create Evaluation"}</h2>
       <div class="section">
         <h3>Basic info</h3>
-        <div class="form-row"><label>Name</label><input type="text" value=${name} onInput=${e => setName(e.target.value)} /></div>
-        <div class="form-row"><label>Summary</label><input type="text" value=${summary} onInput=${e => setSummary(e.target.value)} /></div>
+        <div class="form-row"><label>Name</label><input type="text" disabled=${readOnly} value=${name} onInput=${e => setName(e.target.value)} /></div>
+        <div class="form-row"><label>Summary</label><input type="text" disabled=${readOnly} value=${summary} onInput=${e => setSummary(e.target.value)} /></div>
       </div>
 
       <${RunConfigSelector} runConfigs=${runConfigs} mode=${runMode} setMode=${setRunMode}
-        selectedId=${runConfigId} setSelectedId=${setRunConfigId} />
-      ${runMode === "new" && html`<${RunConfigEditor} draft=${runConfigDraft} setDraft=${setRunConfigDraft} />`}
+        selectedId=${runConfigId} setSelectedId=${setRunConfigId} readOnly=${readOnly} />
+      ${(runMode === "new" || runConfigId) && html`<${RunConfigEditor} draft=${runConfigDraft} setDraft=${setRunConfigDraft} readOnly=${readOnly} />`}
 
       <${EvalConfigSelector} evalConfigs=${evalConfigs} mode=${evalMode} setMode=${setEvalMode}
-        selectedId=${evalConfigId} setSelectedId=${setEvalConfigId} />
-      ${evalMode === "new" && html`<${EvalRuleEditor} rules=${evalConfigDraft.rules}
-        setRules=${fn => setEvalConfigDraft(prev => ({...prev, rules: typeof fn === "function" ? fn(prev.rules) : fn}))} />`}
-      ${evalMode === "new" && html`
-        <div class="form-row"><label>Eval Config name</label><input type="text" value=${evalConfigDraft.name}
+        selectedId=${evalConfigId} setSelectedId=${setEvalConfigId} readOnly=${readOnly} />
+      ${(evalMode === "new" || evalConfigId) && html`
+        <div class="form-row"><label>Eval Config name</label><input type="text" disabled=${readOnly} value=${evalConfigDraft.name}
           onInput=${e => setEvalConfigDraft(prev => ({...prev, name: e.target.value}))} /></div>
+        <${EvalRuleEditor} rules=${evalConfigDraft.rules} readOnly=${readOnly}
+          setRules=${fn => setEvalConfigDraft(prev => ({...prev, rules: typeof fn === "function" ? fn(prev.rules) : fn}))} />
       `}
 
       ${msg && msg.err && html`<div class="error-msg">${msg.err}</div>`}
       <div class="actions">
-        <button class="secondary" onClick=${onCancel}>Cancel</button>
-        <button class="primary" disabled=${saving} onClick=${save}>Save Evaluation</button>
+        <button class="secondary" onClick=${onCancel}>${readOnly ? "Close" : "Cancel"}</button>
+        ${!readOnly && html`<button class="primary" disabled=${saving} onClick=${save}>Save Evaluation</button>`}
       </div>
     </div>
   `;
@@ -625,7 +672,8 @@ function App(){
   const [evaluations, setEvaluations] = useState([]);
   const [runConfigs, setRunConfigs] = useState([]);
   const [evalConfigs, setEvalConfigs] = useState([]);
-  const [panel, setPanel] = useState(null); // null | {} (new) | evaluation (edit)
+  const [panel, setPanel] = useState(null); // null | {} (new) | evaluation (edit/details)
+  const [panelReadOnly, setPanelReadOnly] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [runModal, setRunModal] = useState(null); // {stageIndex, error, result}
   const [lastRunTarget, setLastRunTarget] = useState(null);
@@ -638,16 +686,31 @@ function App(){
   };
   useEffect(reloadAll, []);
 
-  const onSaved = () => { setPanel(null); reloadAll(); };
+  const onSaved = () => { setPanel(null); setPanelReadOnly(false); reloadAll(); };
+  const openCreate = () => { setPanelReadOnly(false); setPanel({}); };
+  const openConfigure = (evaluation) => { setPanelReadOnly(false); setPanel(evaluation); };
+  const openDetails = (evaluation) => { setPanelReadOnly(true); setPanel(evaluation); };
+  const closePanel = () => { setPanel(null); setPanelReadOnly(false); };
 
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // The run happens on a server-side background thread (not this request) —
+  // poll .../runs/{run_id} until it stops answering "running" (202), rather
+  // than blocking on one long request. The UI (and this tab's own polling)
+  // stays responsive to other actions the whole time.
   const runEvaluation = async (evaluation) => {
     setRunModal({stageIndex: 0, error: null, result: null});
     const advance = (i) => setRunModal(prev => prev && {...prev, stageIndex: i});
-    const timers = [setTimeout(() => advance(1), 350), setTimeout(() => advance(2), 900)];
+    const timers = [setTimeout(() => advance(1), 350)];
     try{
       const {run_id} = await postJSON(`/api/evals/evaluations/${evaluation.id}/run`);
+      advance(2);
+      let result = await getJSON(`/api/evals/evaluations/${evaluation.id}/runs/${run_id}`);
+      while(result && result.status === "running"){
+        await sleep(800);
+        result = await getJSON(`/api/evals/evaluations/${evaluation.id}/runs/${run_id}`);
+      }
       advance(3);
-      const result = await getJSON(`/api/evals/evaluations/${evaluation.id}/runs/${run_id}`);
       setRunModal({stageIndex: 4, error: null, result: {run_id, verdict: (result.aggregate_metrics && result.aggregate_metrics.nothing_to_score) ? "no_checks" : (result.scores.every(s => s.passed) ? "pass" : "fail")}});
       reloadAll();
     } catch(e){
@@ -674,14 +737,14 @@ function App(){
       <div class="pane-left">
         ${listError && html`<div class="error-msg">${listError}</div>`}
         ${!evaluations.length
-          ? html`<${EmptyState} onCreate=${() => setPanel({})} />`
+          ? html`<${EmptyState} onCreate=${openCreate} />`
           : html`
             <div class="card">
               <div class="form-row" style=${{justifyContent:"flex-end"}}>
-                <button class="primary" onClick=${() => setPanel({})}>Create Eval</button>
+                <button class="primary" onClick=${openCreate}>Create Eval</button>
               </div>
               <${EvaluationTable} evaluations=${evaluations} runConfigs=${runConfigs} evalConfigs=${evalConfigs}
-                onConfigure=${setPanel} onRun=${runEvaluation} onDelete=${setDeleteTarget} onOpenLastRun=${openLastRun} />
+                onDetails=${openDetails} onConfigure=${openConfigure} onRun=${runEvaluation} onDelete=${setDeleteTarget} onOpenLastRun=${openLastRun} />
             </div>
           `}
       </div>
@@ -689,9 +752,9 @@ function App(){
         ${lastRunTarget
           ? html`<${LastRunView} evaluation=${lastRunTarget.evaluation} evalConfig=${lastRunTarget.evalConfig} back=${() => setLastRunTarget(null)} />`
           : panel !== null
-            ? html`<${EvaluationConfigPanel} editing=${panel} runConfigs=${runConfigs} evalConfigs=${evalConfigs}
-                onSaved=${onSaved} onCancel=${() => setPanel(null)} />`
-            : html`<div class="card"><div class="empty">Select "Configure" or "Create Eval" to begin.</div></div>`}
+            ? html`<${EvaluationConfigPanel} editing=${panel} runConfigs=${runConfigs} evalConfigs=${evalConfigs} readOnly=${panelReadOnly}
+                onSaved=${onSaved} onCancel=${closePanel} />`
+            : html`<div class="card"><div class="empty">Use "⋯" → Details/Configure on a row, or Create Eval, to open this panel.</div></div>`}
       </div>
     </div>
     ${deleteTarget && html`

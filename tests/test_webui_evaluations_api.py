@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.client import HTTPConnection
 from http.server import HTTPServer
 
@@ -183,9 +184,19 @@ def test_evaluation_full_lifecycle_run_and_result(server, monkeypatch, mocker):
     assert status == 202
     run_id = run_body["run_id"]
 
+    # The run executes on a background thread (issue: a synchronous run
+    # blocked the whole single-threaded HTTP server) — poll until the result
+    # is written rather than assuming it's ready the instant the POST above
+    # returns its 202.
+    deadline = time.monotonic() + 5
     status, result = _req(
         port, "GET", f"/api/evals/evaluations/{evaluation['id']}/runs/{run_id}"
     )
+    while status == 202 and time.monotonic() < deadline:
+        time.sleep(0.05)
+        status, result = _req(
+            port, "GET", f"/api/evals/evaluations/{evaluation['id']}/runs/{run_id}"
+        )
     assert status == 200
     assert len(result["scores"]) == 2
     check_ids = [c["id"] for c in ec["rules"][0]["checks"]]

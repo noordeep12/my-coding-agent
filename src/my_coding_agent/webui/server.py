@@ -19,7 +19,7 @@ import logging
 import re
 import sys
 from functools import lru_cache
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -405,7 +405,11 @@ def run_server(
     store = Store(default_db_path(base))
     _WebUIHandler.base_dir = base
     _WebUIHandler.store = store
-    server = HTTPServer((host, port), _WebUIHandler)
+    # Threading, not the plain single-connection HTTPServer: a long-running
+    # eval run (POST /evaluations/{id}/run) must not block every other
+    # request (page loads, polling) for the run's duration. Store already
+    # supports concurrent access (sqlite3 check_same_thread=False + a lock).
+    server = ThreadingHTTPServer((host, port), _WebUIHandler)
     click.echo(f"my-coding-agent web UI → http://{host}:{port}")
     try:
         server.serve_forever()
