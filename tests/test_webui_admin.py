@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
+
 from my_coding_agent.webui.admin import (
     build_llm_client,
+    handle_admin_api_route,
     masked_llm_settings,
     resolve_llm_settings,
     save_llm_settings,
@@ -95,4 +98,83 @@ def test_build_llm_client_falls_back_without_saved_settings(tmp_path, monkeypatc
     store = Store(tmp_path / "webui.db")
     client = build_llm_client(store)
     assert client.model == "env-model"
+    store.close()
+
+
+# ── handle_admin_api_route ───────────────────────────────────────────────────
+
+
+class _FakeHandler:
+    """Just enough of BaseHTTPRequestHandler for handle_admin_api_route."""
+
+    def __init__(self, body: bytes = b"") -> None:
+        self.headers = {"Content-Length": str(len(body))} if body else {}
+        self.rfile = io.BytesIO(body)
+        self.sent: tuple[object, int] | None = None
+
+    def _send_json(self, data, status=200):
+        self.sent = (data, status)
+
+
+def test_admin_route_ignores_other_paths(tmp_path):
+    store = Store(tmp_path / "webui.db")
+    handler = _FakeHandler()
+    assert handle_admin_api_route(handler, "/api/other", "GET", store) is False
+    assert handler.sent is None
+    store.close()
+
+
+def test_admin_route_get_returns_masked_settings(tmp_path):
+    store = Store(tmp_path / "webui.db")
+    save_llm_settings(store, {"api_key": "hushhush"})  # pragma: allowlist secret
+    handler = _FakeHandler()
+    assert handle_admin_api_route(handler, "/api/admin/settings", "GET", store) is True
+    data, status = handler.sent
+    assert status == 200
+    assert data["api_key"] == "********"
+    store.close()
+
+
+def test_admin_route_post_saves_payload(tmp_path):
+    store = Store(tmp_path / "webui.db")
+    handler = _FakeHandler(b'{"model": "posted-model"}')
+    assert handle_admin_api_route(handler, "/api/admin/settings", "POST", store) is True
+    assert handler.sent == ({"ok": True}, 200)
+    assert resolve_llm_settings(store)["model"] == "posted-model"
+    store.close()
+
+
+def test_admin_route_post_empty_body_saves_nothing(tmp_path):
+    store = Store(tmp_path / "webui.db")
+    handler = _FakeHandler()
+    assert handle_admin_api_route(handler, "/api/admin/settings", "POST", store) is True
+    assert handler.sent == ({"ok": True}, 200)
+    store.close()
+
+
+def test_admin_route_post_invalid_json_400(tmp_path):
+    store = Store(tmp_path / "webui.db")
+    handler = _FakeHandler(b"not json")
+    assert handle_admin_api_route(handler, "/api/admin/settings", "POST", store) is True
+    data, status = handler.sent
+    assert status == 400
+    assert data == {"error": "invalid json"}
+    store.close()
+
+
+def test_admin_route_post_non_dict_payload_400(tmp_path):
+    store = Store(tmp_path / "webui.db")
+    handler = _FakeHandler(b"[1, 2]")
+    assert handle_admin_api_route(handler, "/api/admin/settings", "POST", store) is True
+    data, status = handler.sent
+    assert status == 400
+    assert data == {"error": "invalid payload"}
+    store.close()
+
+
+def test_admin_route_unsupported_method_unhandled(tmp_path):
+    store = Store(tmp_path / "webui.db")
+    handler = _FakeHandler()
+    assert handle_admin_api_route(handler, "/api/admin/settings", "PUT", store) is False
+    assert handler.sent is None
     store.close()

@@ -61,3 +61,18 @@ def test_check_unverifiable_for_missing_session(tmp_path):
     result = runner.invoke(_cli, ["--dir", str(tmp_path), "--check", "ghost"])
     assert result.exit_code == 0
     assert "UNVERIFIABLE ghost" in result.output
+
+
+def test_cli_without_check_starts_server(tmp_path, monkeypatch):
+    started = {}
+
+    def fake_run_server(port, base_dir):
+        started["port"] = port
+        started["base_dir"] = base_dir
+
+    monkeypatch.setattr("my_coding_agent.webui.server.run_server", fake_run_server)
+    runner = CliRunner()
+    result = runner.invoke(_cli, ["--dir", str(tmp_path), "--port", "7777"])
+    assert result.exit_code == 0
+    assert started["port"] == 7777
+    assert str(started["base_dir"]) == str(tmp_path)
