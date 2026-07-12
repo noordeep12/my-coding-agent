@@ -10,10 +10,12 @@ src/my_coding_agent/
 ├── engine/                      ← Owns execution: LLM client, tools, and AgentNode
 │   ├── __init__.py              ← Public surface: AgentNode, LLM, ToolRegistry, tool
 │   ├── agent.py                 ← AgentNode: session bookkeeping + pipeline runner (main entry)
+│   ├── checkpoint.py            ← Per-step resume checkpoint: atomic write/load of checkpoint.json (run-resilience D3)
 │   ├── schema.py                ← Engine event type constants (SESSION_START, LLM_CALL, etc.)
 │   ├── routing.py               ← ToolRouter: two-phase tool selection
 │   ├── llm/                     ← LLM HTTP client
 │   │   ├── __init__.py          ← LLM class, OMLX_* constants
+│   │   ├── errors.py            ← Classified chat-completion failures: transport / http-status / malformed-body (run-resilience D1)
 │   │   └── schema.py            ← LLM request/response shape constants
 │   ├── tool_execution/          ← ToolExecutor + pure helpers
 │   │   ├── __init__.py          ← ToolExecutor: per-message run() (before/call/after; overlaps read-only groups)
@@ -31,6 +33,12 @@ src/my_coding_agent/
 │   ├── exfil/                   ← Secret-exfiltration guard: sensitive-content detection (issue #127)
 │   │   ├── __init__.py          ← is_sensitive(path), scan_payload(data), evaluate() (egress-tool gate)
 │   │   └── schema.py            ← ExfilConfig dataclass + sensitivity category constants
+│   ├── egress/                  ← Network egress filter: deny-known-bad blocklist check (issue #126)
+│   │   ├── __init__.py          ← is_blocked(host), evaluate() (pre-dispatch fetch_web gate), cache refresh
+│   │   └── schema.py            ← EgressConfig dataclass + blocklist source/cache constants
+│   ├── hooks/                   ← Lifecycle hook registry: deterministic Pre/PostToolUse + Session seam (issue #129)
+│   │   ├── __init__.py          ← Hooks registry: load() from MCA_HOOKS_CONFIG, fire() per event
+│   │   └── schema.py            ← Hook event-name constants + HookContext/HookResult/HookSpec dataclasses
 │   ├── tool_registry/           ← ToolRegistry class + tool definition converter
 │   │   ├── __init__.py          ← Re-export facade (ToolRegistry, tool, skills API)
 │   │   ├── converter.py         ← function_to_json + tool decorator
@@ -47,7 +55,9 @@ src/my_coding_agent/
 │   ├── node.py                  ← Node protocol + BaseNode ABC
 │   ├── dag.py                   ← Pipeline: ordered node list + step-loop execution engine
 │   ├── schema.py                ← Pipeline typed contracts (ROUTER constant + ContextHandoff)
+│   ├── handoff.py               ← ContextHandoff builders: save_handoff() + handoff_to_user_message()
 │   ├── nodes/                   ← One module per pipeline stage (one node per file)
+│   │   ├── __init__.py          ← Re-export facade (one import per node class)
 │   │   ├── context_guard.py     ← ContextGuardNode: context-window budget check + handoff trigger
 │   │   ├── context_summarizer.py ← ContextSummarizerNode: triggered full-conversation summarization (report/handoff)
 │   │   ├── tool_routing.py      ← ToolRoutingNode: retained but unwired (issue #114) — see below
@@ -56,12 +66,16 @@ src/my_coding_agent/
 │   │   ├── anomaly_detect.py    ← AnomalyDetectNode: detects same-class tool-failure streaks, detection-only
 │   │   └── finalize_step.py     ← FinalizeStepNode: record step usage, detect stop/exit/quit + step-ceiling cutoff
 │   ├── anomaly.py               ← Pure helpers: error_signature(), trailing_streak(), STREAK_THRESHOLD
+│   ├── supersession.py          ← Deterministic tool-result retirement: find_retirements() Cases A/B/C (issue #121)
 │   └── examples/
+│       ├── __init__.py          ← Package marker (empty)
 │       └── simple.py            ← CLI entry point (Click)
 │
 ├── observability/               ← Passive event capture (never controls execution)
 │   ├── __init__.py              ← Re-export facade (Recorder, current_session_id, current_recorder)
 │   ├── recorder.py              ← Recorder: events.jsonl writer + event type constants + contextvars
+│   ├── sampler.py               ← ResourceSampler: machine-wide RAM/CPU/GPU/network/disk ring buffer (daemon thread)
+│   ├── error_classification.py  ← Shared classify_error(): the one tool-failure class normalization rule
 │   └── schema.py                ← JSONL event row shape constants
 │
 ├── viewer/                      ← Active read-side: parse events.jsonl + serve browser UI
@@ -69,8 +83,34 @@ src/my_coding_agent/
 │   ├── schema.py                ← TraceNode + TraceSession dataclasses (typed contracts)
 │   ├── pricing.py               ← Model price table + compute_cost() helper
 │   ├── reader.py                ← Parse events.jsonl → flat TraceSession; ctx-window deltas, loop detection, analytics
+│   ├── evals_reader.py          ← Read-only view models over the persisted eval result store
 │   ├── server.py                ← Localhost HTTP server + embedded single-page Trace Explorer UI (Preact + htm)
+│   ├── evals_server.py          ← Eval Dashboard routes + embedded two-pane Evaluations page
+│   ├── sumcheck.py              ← Deterministic, LLM-free usage sum-check over a session tree (--check)
 │   └── _vendor/                 ← Offline-vendored UI libs (Preact, hooks, htm) — no CDN
+│
+├── webui/                       ← Unified local web UI shell: one server mounting all tabs (issue #152)
+│   ├── __init__.py              ← Package marker
+│   ├── schema.py                ← UiStateRow/ItemRow dataclasses + store SCHEMA_VERSION
+│   ├── store.py                 ← SQLite store: generic items CRUD + ui_state key/value (webui.db)
+│   ├── server.py                ← Shell page + iframe-mounted tabs (/traces /evals /admin) + re-exposed APIs
+│   ├── admin.py                 ← Admin tab: persisted LLM connection settings + resolve/mask/build_llm_client (issue #155)
+│   ├── evals_config.py          ← Eval config CRUD API + run-to-eval bridge (/api/evals/config/..., issue #154)
+│   └── evaluations_api.py       ← Evaluation/RunConfig/EvalConfig CRUD + async run API (issue #163)
+│
+├── evals/                       ← Repeatable case runner and result store — leaf package (issue #139)
+│   ├── __init__.py              ← Re-export facade (load_case_set, run_case_set, …); import registers the judge scorer
+│   ├── schema.py                ← EvalCase/EvalScore frozen dataclasses + RESULT_SCHEMA_VERSION
+│   ├── cases.py                 ← load_case_set(): one EvalCase per *.json file + save/delete writers
+│   ├── datasets.py              ← Versioned case-id collections: append-only versions.jsonl (issue #141)
+│   ├── scoring.py               ← Scorer protocol + registry; ExactMatchScorer baseline
+│   ├── runner.py                ← run_case_set(): isolated per-case agent run + scoring + aggregates
+│   ├── results.py               ← EvalRunResult: atomic write + round-trip load of result.json
+│   ├── compare.py               ← Two-run regression gate: metric deltas + pass↔fail flips + verdict (issue #142)
+│   ├── trajectory.py            ← TrajectoryScorer: scores the execution path over four dimensions (issue #140)
+│   ├── judge.py                 ← Rubric-based LLM judge scorer + calibration (issue #103)
+│   ├── evaluation.py            ← Evaluation/RunConfig/EvalConfig domain models + run_evaluation() (issue #162)
+│   └── cli.py                   ← my-coding-agent-eval console script (run + compare subcommand)
 │
 └── utils/                       ← Generic helpers
     ├── __init__.py              ← Re-export facade (get_logger, print_banner, etc.)
