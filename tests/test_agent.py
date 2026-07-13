@@ -376,7 +376,10 @@ def test_guard_retires_contained_result_and_records_event():
     from my_coding_agent.engine.tool_execution.schema import (
         SUPERSESSION_SIZE_FLOOR_CHARS,
     )
-    from my_coding_agent.pipeline.supersession import CASE_CONTAINMENT, STUB_PREFIX
+    from my_coding_agent.pipeline.nodes.context_guard import (
+        CASE_CONTAINMENT,
+        STUB_PREFIX,
+    )
 
     big = "x" * SUPERSESSION_SIZE_FLOOR_CHARS
     ctx = _make_preflight_ctx(

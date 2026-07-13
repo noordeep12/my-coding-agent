@@ -57,17 +57,15 @@ src/my_coding_agent/
 │   ├── dag.py                   ← Pipeline: ordered node list + step-loop execution engine
 │   ├── schema.py                ← Pipeline typed contracts (ROUTER constant + ContextHandoff)
 │   ├── handoff.py               ← ContextHandoff builders: save_handoff() + handoff_to_user_message()
-│   ├── nodes/                   ← One module per pipeline stage (one node per file)
-│   │   ├── __init__.py          ← Re-export facade (one import per node class)
-│   │   ├── context_guard.py     ← ContextGuardNode: context-window budget check + handoff trigger
-│   │   ├── context_summarizer.py ← ContextSummarizerNode: triggered full-conversation summarization (report/handoff)
-│   │   ├── tool_routing.py      ← ToolRoutingNode: retained but unwired (issue #114) — see below
-│   │   ├── llm_call.py          ← LLMCallNode: chat_completion + append assistant message
-│   │   ├── tool_dispatch.py     ← ToolDispatchNode: ToolExecutor.run() per step
-│   │   ├── anomaly_detect.py    ← AnomalyDetectNode: detects same-class tool-failure streaks, detection-only
-│   │   └── finalize_step.py     ← FinalizeStepNode: record step usage, detect stop/exit/quit + step-ceiling cutoff
-│   ├── anomaly.py               ← Pure helpers: error_signature(), trailing_streak(), STREAK_THRESHOLD
-│   └── supersession.py          ← Deterministic tool-result retirement: find_retirements() Cases A/B/C (issue #121)
+│   └── nodes/                   ← One module per pipeline stage (one node per file)
+│       ├── __init__.py          ← Re-export facade (one import per node class)
+│       ├── context_guard.py     ← ContextGuardNode: budget check + handoff trigger; inlines supersession helpers (find_retirements() Cases A/B/C, issue #121)
+│       ├── context_summarizer.py ← ContextSummarizerNode: triggered full-conversation summarization (report/handoff)
+│       ├── tool_routing.py      ← ToolRoutingNode: retained but unwired (issue #114) — see below
+│       ├── llm_call.py          ← LLMCallNode: chat_completion + append assistant message
+│       ├── tool_dispatch.py     ← ToolDispatchNode: ToolExecutor.run() per step
+│       ├── anomaly_detect.py    ← AnomalyDetectNode: detects same-class tool-failure streaks, detection-only; inlines error_signature(), trailing_streak(), STREAK_THRESHOLD
+│       └── finalize_step.py     ← FinalizeStepNode: record step usage, detect stop/exit/quit + step-ceiling cutoff
 │
 ├── observability/               ← Passive event capture (never controls execution)
 │   ├── __init__.py              ← Re-export facade (Recorder, current_session_id, current_recorder)
@@ -178,13 +176,13 @@ The node-based DAG execution engine. `pipeline/` only knows how to build and exe
 
 | Node | Stage | What it does |
 |---|---|---|
-| `ContextGuardNode` | 1 | Retires provably-superseded tool results (`pipeline/supersession.py`, issue #121), then checks `last_prompt_tokens / context_window`; sets STOP (limit), RESET (handoff), or CONTINUE |
+| `ContextGuardNode` | 1 | Retires provably-superseded tool results (inlined in `pipeline/nodes/context_guard.py`, issue #121), then checks `last_prompt_tokens / context_window`; sets STOP (limit), RESET (handoff), or CONTINUE |
 | `LLMCallNode` | 2 | Increments `step_num`, calls `chat_completion(ctx.messages, tools=ctx.all_tools)` (the full registered toolset, per #114), appends assistant message |
 | `ToolDispatchNode` | 3 | Builds `ToolExecutor(last_message, ctx.llm)`, runs it, merges records and artifacts into `ctx` |
-| `AnomalyDetectNode` | 4 | Scans `ctx.tool_records` for a same-signature failure streak (`pipeline/anomaly.py`); at the 3rd consecutive same-class failure (and each further one), records an `anomaly` event and logs one WARNING at first signal. Reads `ctx.tool_records`/`ctx.last_response` only; never touches `ctx.messages`/`ctx.signal`/`ctx.stop_reason`, makes no LLM calls — detection-only, covering subagents for free since every delegated run builds its own pipeline instance |
+| `AnomalyDetectNode` | 4 | Scans `ctx.tool_records` for a same-signature failure streak (helpers inlined in `pipeline/nodes/anomaly_detect.py`); at the 3rd consecutive same-class failure (and each further one), records an `anomaly` event and logs one WARNING at first signal. Reads `ctx.tool_records`/`ctx.last_response` only; never touches `ctx.messages`/`ctx.signal`/`ctx.stop_reason`, makes no LLM calls — detection-only, covering subagents for free since every delegated run builds its own pipeline instance |
 | `FinalizeStepNode` | 5 | Reads `ctx.last_response`: records token usage + updates `ctx.last_prompt_tokens`, then sets STOP on a stop/exit/quit finish_reason (emits both `token_tracking` and `finish_check` records) |
 
-**Tool-result supersession (issue #121).** Before its budget check, `ContextGuardNode` runs a deterministic, no-LLM pass (`pipeline/supersession.find_retirements`, sibling of `pipeline/anomaly.py`) that retires tool results provably made obsolete by a later one, over `ctx.tool_records`/`ctx.messages`: Case A — a `read_tool_artifact` extract carrying the incompleteness marker for artifact X, superseded once a later successful call reads the same X; Case B — an earlier result's full text is a contiguous substring of a later result's text (window-side mirror of the #92 dedup rule); Case C — an older invocation of a byte-identical `(name, args)` call, superseded by its newest successful invocation. Retirement replaces the tool message's content with a one-line stub (same role/`tool_call_id`, naming the tool, the superseding call, and the on-disk artifact path when one exists) as a **new message object**, never an in-place mutation or a delete — so the recorder's identity check for that step's prefix fails and falls back to a full snapshot (fidelity over size, same invariant `_encode_messages` already guarantees), and checkpoint/resume and the sum-check are unaffected since neither inspects message content. A size floor (`SUPERSESSION_SIZE_FLOOR_CHARS`, `engine/tool_execution/schema.py`) skips trivial retirements that wouldn't outweigh the KV-cache churn a replacement causes, and `MCA_SUPERSESSION=0` disables the pass entirely, restoring today's append-only behavior byte-for-byte. Each retirement records one passive `supersession` event (`Recorder.record_supersession`) — auditable per session, ignored by readers that predate the event type.
+**Tool-result supersession (issue #121).** Before its budget check, `ContextGuardNode` runs a deterministic, no-LLM pass (`find_retirements`, inlined in `pipeline/nodes/context_guard.py`) that retires tool results provably made obsolete by a later one, over `ctx.tool_records`/`ctx.messages`: Case A — a `read_tool_artifact` extract carrying the incompleteness marker for artifact X, superseded once a later successful call reads the same X; Case B — an earlier result's full text is a contiguous substring of a later result's text (window-side mirror of the #92 dedup rule); Case C — an older invocation of a byte-identical `(name, args)` call, superseded by its newest successful invocation. Retirement replaces the tool message's content with a one-line stub (same role/`tool_call_id`, naming the tool, the superseding call, and the on-disk artifact path when one exists) as a **new message object**, never an in-place mutation or a delete — so the recorder's identity check for that step's prefix fails and falls back to a full snapshot (fidelity over size, same invariant `_encode_messages` already guarantees), and checkpoint/resume and the sum-check are unaffected since neither inspects message content. A size floor (`SUPERSESSION_SIZE_FLOOR_CHARS`, `engine/tool_execution/schema.py`) skips trivial retirements that wouldn't outweigh the KV-cache churn a replacement causes, and `MCA_SUPERSESSION=0` disables the pass entirely, restoring today's append-only behavior byte-for-byte. Each retirement records one passive `supersession` event (`Recorder.record_supersession`) — auditable per session, ignored by readers that predate the event type.
 
 ### `AgentNode` (`engine/agent.py`)
 

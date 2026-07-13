@@ -1,4 +1,4 @@
-"""Tests for pipeline/supersession.py: Cases A/B/C, stub text, and the gate."""
+"""Tests for ContextGuardNode's supersession pass: Cases A/B/C, stub, and the gate."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from my_coding_agent.engine.tool_execution.schema import (
     EXTRACTION_INCOMPLETE_MARKER,
     SUPERSESSION_SIZE_FLOOR_CHARS,
 )
-from my_coding_agent.pipeline.supersession import (
+from my_coding_agent.pipeline.nodes.context_guard import (
     CASE_CONTAINMENT,
     CASE_IDENTICAL_CALL,
     CASE_INCOMPLETE_EXTRACT,
