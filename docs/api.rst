@@ -23,6 +23,10 @@ Engine
    :members:
    :show-inheritance:
 
+.. automodule:: my_coding_agent.engine.llm.parsing
+   :members:
+   :show-inheritance:
+
 .. automodule:: my_coding_agent.engine.checkpoint
    :members:
    :show-inheritance:
@@ -133,9 +137,5 @@ Utils
    :show-inheritance:
 
 .. automodule:: my_coding_agent.utils.exceptions
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.utils.parsing
    :members:
    :show-inheritance:

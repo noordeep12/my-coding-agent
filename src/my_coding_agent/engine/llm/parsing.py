@@ -1,8 +1,9 @@
-"""Thin response-parsing helpers.
+"""Thin chat-completion response-parsing helpers.
 
 Small pure functions that extract fields from a chat-completion ``httpx``
 response (message, finish reason, token usage) and parse tool-call arguments,
-keeping that boilerplate out of the LLM client and pipeline nodes.
+keeping that boilerplate out of the LLM client, routing, tool execution, and
+pipeline nodes that consume the OpenAI-compatible wire format.
 """
 
 import json

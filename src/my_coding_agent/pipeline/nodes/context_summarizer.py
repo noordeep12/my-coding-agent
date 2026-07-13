@@ -6,9 +6,9 @@ import time
 from datetime import datetime
 from typing import Any
 
+from ...engine.llm import parsing as llm_parsing
 from ...engine.llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
 from ...utils import get_logger
-from ...utils.parsing import extract_message
 from ..context import RunContext
 from ..node import BaseNode
 
@@ -73,7 +73,7 @@ def summarize_conversation(
     """
     summary_messages = messages + [{"role": "user", "content": prompt}]
     resp = llm.chat_completion(summary_messages, tools=[], kind=kind)
-    message = extract_message(resp)
+    message = llm_parsing.extract_message(resp)
     # Reasoning models (e.g. Qwen3-thinking) often end the summary turn with a
     # tool call or bare thinking, leaving ``content`` empty while the actual
     # summary lives in ``reasoning_content``. Fall back to it so the summary is

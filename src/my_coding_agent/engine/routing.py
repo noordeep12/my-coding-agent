@@ -11,7 +11,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from ..utils import get_logger
-from ..utils.parsing import extract_message
+from .llm import parsing as llm_parsing
 from .llm.schema import CALL_KIND_TOOL_ROUTER
 
 if TYPE_CHECKING:
@@ -122,7 +122,7 @@ class ToolRouter:
                 tools=[],
                 kind=CALL_KIND_TOOL_ROUTER,
             )
-            content = extract_message(resp).get("content", "") or ""
+            content = llm_parsing.extract_message(resp).get("content", "") or ""
             routed_names = None
             for attempt in [
                 lambda c: json.loads(c.strip()),

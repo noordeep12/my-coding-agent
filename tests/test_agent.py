@@ -945,14 +945,14 @@ def test_from_checkpoint_seeds_resume_state(
     monkeypatch.chdir(tmp_path)  # keep .my_coding_agent inside the tmp dir
     cp = _checkpoint(step=4)
     agent = Agent.from_checkpoint(cp, label="Main Agent (resumed)")
-    assert agent.resumed_from == "deadbeef1234"
+    assert agent.resumed_from == "deadbeef1234"  # pragma: allowlist secret
     assert agent._resume_step == 4
     assert agent._resume_prompt_tokens == 555
     assert agent.messages == cp.messages
     assert agent.messages is not cp.messages  # a copy, not the same list
-    assert agent.recorder.resumed_from == "deadbeef1234"
+    assert agent.recorder.resumed_from == "deadbeef1234"  # pragma: allowlist secret
     # A brand-new session id, distinct from the dead one it links to.
-    assert agent.session_id != "deadbeef1234"
+    assert agent.session_id != "deadbeef1234"  # pragma: allowlist secret
 
 
 def test_resumed_run_continues_from_next_step(
@@ -984,7 +984,7 @@ def test_resumed_run_continues_from_next_step(
     data = json.loads(
         (Path(".my_coding_agent") / agent.session_id / "session_data.json").read_text()
     )
-    assert data["resumed_from"] == "deadbeef1234"
+    assert data["resumed_from"] == "deadbeef1234"  # pragma: allowlist secret
     # A clean finish leaves no checkpoint, so --resume-last never targets a done
     # run (resume-completed-run finding).
     assert not checkpoint_path(Path(".my_coding_agent") / agent.session_id).exists()

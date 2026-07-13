@@ -9,9 +9,9 @@ calls — detection-only, per the non-interference guarantee.
 
 from __future__ import annotations
 
+from ...engine.llm import parsing as llm_parsing
 from ...observability.schema import ANOMALY_KIND_FAILURE_STREAK
 from ...utils import get_logger
-from ...utils.parsing import extract_usage
 from ..anomaly import STREAK_THRESHOLD, trailing_streak
 from ..context import RunContext
 from ..node import BaseNode
@@ -62,7 +62,7 @@ class AnomalyDetectNode(BaseNode):
             return
         self._last_length = length
 
-        usage = extract_usage(ctx.last_response)
+        usage = llm_parsing.extract_usage(ctx.last_response)
         self._tokens_spent += usage.get("prompt_tokens", 0) + usage.get(
             "completion_tokens", 0
         )

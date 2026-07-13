@@ -23,8 +23,8 @@ from ...observability.recorder import (
 )
 from ...utils import get_logger
 from ...utils.exceptions import PathTraversalError
-from ...utils.parsing import extract_finish_reason, extract_message, extract_usage
 from .. import provenance, sandbox
+from ..llm import parsing as llm_parsing
 from ..llm.schema import CALL_KIND_ARTIFACT_QUERY
 from ..schema import (
     REPORT_SOURCE_FALLBACK,
@@ -562,9 +562,11 @@ class ToolRegistry:
                 kind=CALL_KIND_ARTIFACT_QUERY,
                 max_tokens=EXTRACTION_OUTPUT_TOKEN_BUDGET,
             )
-            content = extract_message(resp).get("content") or ""
-            finish_reason = extract_finish_reason(resp)
-            completion_tokens = extract_usage(resp).get("completion_tokens", 0)
+            content = llm_parsing.extract_message(resp).get("content") or ""
+            finish_reason = llm_parsing.extract_finish_reason(resp)
+            completion_tokens = llm_parsing.extract_usage(resp).get(
+                "completion_tokens", 0
+            )
             cut = finish_reason == "length" or (
                 not finish_reason
                 and completion_tokens >= EXTRACTION_OUTPUT_TOKEN_BUDGET

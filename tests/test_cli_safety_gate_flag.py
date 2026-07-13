@@ -12,8 +12,8 @@ import os
 import pytest
 from click.testing import CliRunner
 
+from my_coding_agent import cli
 from my_coding_agent.engine.tool_execution import policy
-from my_coding_agent.pipeline.examples import simple
 
 
 @pytest.fixture
@@ -31,11 +31,9 @@ def _clean_env():
 def test_no_safety_gate_flag_sets_env_var_and_warns(runner, mocker):
     fake_agent = mocker.Mock()
     fake_agent.failure_error = None
-    mocker.patch.object(simple, "_build_fresh_agent", return_value=fake_agent)
+    mocker.patch.object(cli, "_build_fresh_agent", return_value=fake_agent)
     with runner.isolated_filesystem():
-        result = runner.invoke(
-            simple.main, ["--prompt", "do a thing", "--no-safety-gate"]
-        )
+        result = runner.invoke(cli.main, ["--prompt", "do a thing", "--no-safety-gate"])
         assert result.exit_code == 0
         assert os.environ.get(policy.DISABLE_ENV_VAR) == "1"
         assert "refusal gate is off" in result.output.lower()
@@ -45,9 +43,9 @@ def test_no_safety_gate_flag_sets_env_var_and_warns(runner, mocker):
 def test_without_the_flag_gate_stays_enabled(runner, mocker):
     fake_agent = mocker.Mock()
     fake_agent.failure_error = None
-    mocker.patch.object(simple, "_build_fresh_agent", return_value=fake_agent)
+    mocker.patch.object(cli, "_build_fresh_agent", return_value=fake_agent)
     with runner.isolated_filesystem():
-        result = runner.invoke(simple.main, ["--prompt", "do a thing"])
+        result = runner.invoke(cli.main, ["--prompt", "do a thing"])
         assert result.exit_code == 0
         assert policy.DISABLE_ENV_VAR not in os.environ
         assert policy.is_gate_disabled() is False
