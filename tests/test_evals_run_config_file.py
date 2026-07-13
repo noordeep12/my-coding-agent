@@ -231,3 +231,23 @@ def test_execute_from_config_session_carries_standard_trace_files(
     assert any(row["session_id"] == session_dir.name for row in sessions)
     trace = viewer_reader.load_session(session_dir / "events.jsonl")
     assert trace.nodes
+
+
+def test_execute_from_config_scores_carry_session_id_and_write_verdict(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.chdir(tmp_path)
+    mocker.patch.object(LLM, "chat_completion", return_value=_stop_resp())
+
+    path = _write_config(tmp_path, _full_config())
+    result, _ = rcf.execute_from_config(path)
+
+    session_dirs = [
+        d for d in (tmp_path / ".my_coding_agent").glob("*") if d.name != "evals"
+    ]
+    session_dir = session_dirs[0]
+
+    assert all(score.session_id == session_dir.name for score in result.scores)
+    trace = viewer_reader.load_session(session_dir / "events.jsonl")
+    assert trace.verdict is not None
+    assert trace.verdict["case_id"] == result.scores[0].case_id
