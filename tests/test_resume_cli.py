@@ -61,7 +61,13 @@ def test_resume_loads_checkpoint_and_runs(runner, mocker):
     with runner.isolated_filesystem():
         cp = _write_checkpoint()
         result = runner.invoke(
-            cli.main, ["--resume", "deadbeef1234", "--max-steps", "7"]
+            cli.main,
+            [
+                "--resume",
+                "deadbeef1234",  # pragma: allowlist secret
+                "--max-steps",
+                "7",
+            ],
         )
         assert result.exit_code == 0
         # The right checkpoint was loaded and handed to from_checkpoint.
