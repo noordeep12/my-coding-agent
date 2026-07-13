@@ -41,13 +41,8 @@ docs/_build/
 .claude/
 .codex/
 
-# Dedicated home for workflow artifacts (PROBLEM.*.md, gap.md, generated
-# reports) so they stop cluttering the root listing (CONTRIBUTE.md §50).
-.workbench/
-
 .hooks/.conformity_state.json
 
-# transitional — until residue is relocated to .workbench/
 gap.md
 RESEARCH.md
 PLAN.md
