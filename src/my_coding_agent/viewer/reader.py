@@ -231,6 +231,7 @@ def load_session(
         order=graph.order,
         analytics=analytics,
         posture=start_ev.get("posture"),
+        verdict=_read_verdict(session_dir),
     )
 
 
@@ -1338,6 +1339,28 @@ def _read_resource_rollup(session_dir: Path) -> dict[str, Any] | None:
         return None
     rollup = data.get("resource_rollup")
     return rollup if isinstance(rollup, dict) else None
+
+
+def _read_verdict(session_dir: Path) -> dict[str, Any] | None:
+    """Read the session's eval verdict from ``verdict.json``, if any.
+
+    Absent for non-eval and pre-eval sessions. An unreadable, non-JSON, or
+    non-object file degrades to ``None`` with a warning rather than failing
+    the session load — ``verdict.json`` is a read-only sibling owned by the
+    ``evals`` package (#196), not part of the trace itself.
+    """
+    verdict_path = session_dir / "verdict.json"
+    if not verdict_path.exists():
+        return None
+    try:
+        verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not parse %s: %s", verdict_path, exc)
+        return None
+    if not isinstance(verdict, dict):
+        logger.warning("Ignoring non-object verdict at %s", verdict_path)
+        return None
+    return verdict
 
 
 # ── Session directory helpers ─────────────────────────────────────────────────

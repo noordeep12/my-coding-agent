@@ -296,7 +296,9 @@ def _score_checks(
             expected=_check_expected(check),
         )
         scorer = resolve_scorer(check.evaluator)
-        scores.append(scorer.score(case, run_result))
+        scores.append(
+            replace(scorer.score(case, run_result), session_id=run_result.session_id)
+        )
     return scores
 
 
