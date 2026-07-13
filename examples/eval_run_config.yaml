@@ -1,0 +1,29 @@
+# Example declarative eval run config.
+#
+# Run it with:
+#
+#   my-coding-agent-eval run --config examples/eval_run_config.yaml
+#
+# Exit codes: 2 if the config fails validation (no agent run happens),
+# 0 if every check passes, 1 if any check fails.
+
+llm:
+  # All fields below are optional. Each falls back to an OMLX_* environment
+  # variable, then to the documented default (see README.md's Evals section).
+  api_url: http://127.0.0.1:8321/v1
+  model: Qwen3.6-35B-A3B-6bit
+  # Name of an environment variable holding the API key — never a raw key
+  # value (a literal `api_key:` is rejected at validation time).
+  api_key_env: OMLX_API_KEY
+  timeout: 30
+
+run:
+  system_prompt: "You are a coding assistant completing a single evaluation task."
+  task: "Say exactly the word 'pong' and nothing else."
+  max_steps: 10
+
+evaluation:
+  checks:
+    - name: says-pong
+      evaluator: exact_match
+      expected: { contains: "pong" }

@@ -1,13 +1,11 @@
 """Load, validate, and execute a single declarative YAML run configuration.
 
 A run config file is the complete, self-contained definition of one eval/
-pipeline run: LLM connection, prompts, run parameters, and evaluation
-criteria. It maps onto the existing `RunConfig`/`Check` domain models
+pipeline run: LLM connection, prompts, run parameters, and inline evaluation
+checks. It maps onto the existing `RunConfig`/`Check` domain models
 (`evaluation.py`) and executes through the existing orchestration (a single
-real-cwd agent run scored via the scorer registry, plus/instead of existing
-case and dataset references run through the existing case runner) — this
-module adds no new execution or scoring engine, only load, validate, and
-dispatch.
+real-cwd agent run scored via the scorer registry) — this module adds no new
+execution or scoring engine, only load, validate, and dispatch.
 """
 
 from __future__ import annotations
@@ -24,8 +22,6 @@ import yaml
 from ..engine.agent import DEFAULT_MAX_STEPS, AgentNode
 from ..engine.llm import LLM
 from ..utils.exceptions import MyCodingAgentError
-from . import cases as evals_cases
-from . import datasets as evals_datasets
 from .evaluation import (
     _DEFAULT_SYSTEM_PROMPT,
     Check,
@@ -33,7 +29,7 @@ from .evaluation import (
     _check_expected,
 )
 from .results import EvalRunResult, build_run_result, write_run_result
-from .runner import _build_tools, _final_output, run_case_set
+from .runner import _build_tools, _final_output
 from .schema import EvalCase, EvalScore
 from .scoring import RunResult, UnknownScorerError, resolve_scorer
 
@@ -42,7 +38,7 @@ logger = logging.getLogger(__name__)
 _TOP_LEVEL_KEYS = {"llm", "run", "evaluation"}
 _LLM_KEYS = {"api_url", "model", "api_key_env", "api_key", "timeout"}
 _RUN_KEYS = {"system_prompt", "task", "max_steps"}
-_EVAL_KEYS = {"checks", "cases", "dataset"}
+_EVAL_KEYS = {"checks"}
 _CHECK_KEYS = {
     "id",
     "name",
@@ -90,17 +86,12 @@ class LoadedRunConfig:
         run_config: The run's connection + prompt + run-parameter fields,
             shaped as the existing `RunConfig` model.
         checks: Inline checks scored against the config's own single run.
-        case_ids: Existing case ids (`evals/cases.py`) to run through the
-            isolated case runner, alongside/instead of `checks`.
-        dataset_id: An existing dataset id (`evals/datasets.py`) to run
-            through the isolated case runner, alongside/instead of `checks`.
         content_hash: SHA-256 hex digest of the config file's raw bytes.
+        llm_section: The parsed `llm` mapping, forwarded to `build_llm_client`.
     """
 
     run_config: RunConfig
     checks: tuple[Check, ...]
-    case_ids: tuple[str, ...]
-    dataset_id: str | None
     content_hash: str
     llm_section: dict[str, Any]
 
@@ -181,19 +172,6 @@ def _parse_max_steps(run_section: dict[str, Any], problems: list[str]) -> int:
         return DEFAULT_MAX_STEPS
 
 
-def _parse_evaluation_refs(
-    eval_section: dict[str, Any], checks: tuple[Check, ...], problems: list[str]
-) -> tuple[tuple[str, ...], str | None]:
-    case_ids = tuple(str(c) for c in (eval_section.get("cases") or []))
-    dataset_id_raw = eval_section.get("dataset")
-    dataset_id = str(dataset_id_raw) if dataset_id_raw else None
-    if not checks and not case_ids and not dataset_id:
-        problems.append(
-            "'evaluation' must declare at least one of: checks, cases, dataset"
-        )
-    return case_ids, dataset_id
-
-
 def load_config_file(path: Path) -> LoadedRunConfig:
     """Load and validate ``path`` into a `LoadedRunConfig`.
 
@@ -237,7 +215,8 @@ def load_config_file(path: Path) -> LoadedRunConfig:
 
     eval_section = _validate_section(data, "evaluation", _EVAL_KEYS, problems)
     checks = _parse_checks(eval_section.get("checks"), problems)
-    case_ids, dataset_id = _parse_evaluation_refs(eval_section, checks, problems)
+    if not checks:
+        problems.append("'evaluation.checks' must declare at least one check")
     max_steps = _parse_max_steps(run_section, problems)
 
     if problems:
@@ -256,8 +235,6 @@ def load_config_file(path: Path) -> LoadedRunConfig:
     return LoadedRunConfig(
         run_config=run_config,
         checks=checks,
-        case_ids=case_ids,
-        dataset_id=dataset_id,
         content_hash=hashlib.sha256(raw_bytes).hexdigest(),
         llm_section=llm_section,
     )
@@ -323,34 +300,14 @@ def _score_checks(
     return scores
 
 
-def _resolve_case_refs(case_ids: tuple[str, ...]) -> list[EvalCase]:
-    if not case_ids:
-        return []
-    all_cases = evals_cases.load_case_set(evals_datasets.DEFAULT_CASES_DIR)
-    by_id = {case.id: case for case in all_cases}
-    resolved = []
-    for case_id in case_ids:
-        case = by_id.get(case_id)
-        if case is None:
-            logger.warning(
-                "config run: case '%s' not found under %s",
-                case_id,
-                evals_datasets.DEFAULT_CASES_DIR,
-            )
-            continue
-        resolved.append(case)
-    return resolved
-
-
 def execute_from_config(
     path: Path, *, results_root: Path | None = None
 ) -> tuple[EvalRunResult, str]:
     """Load, validate, and execute ``path`` end to end.
 
-    Runs the config's inline `checks` (if any) as a single real-cwd agent
-    run scored against every check, plus any `cases`/`dataset` references
-    run through the existing isolated case runner — aggregating every score
-    into one result record, stamped with the config's path and content hash.
+    Runs the config's `task` as a single real-cwd agent turn and scores it
+    against every inline `evaluation.checks` entry, writing one result record
+    stamped with the config's path and content hash.
 
     Returns:
         The written result record and its verdict (`"pass"`/`"fail"`).
@@ -361,24 +318,11 @@ def execute_from_config(
     """
     loaded = load_config_file(path)
 
-    scores: list[EvalScore] = []
-
-    if loaded.checks:
-        llm_client = build_llm_client(loaded.llm_section)
-        task, run_result = _run_agent(
-            loaded.run_config, f"ConfigRun[{path.name}]", llm_client
-        )
-        scores.extend(_score_checks(loaded.checks, task, run_result))
-
-    referenced_cases = list(_resolve_case_refs(loaded.case_ids))
-    if loaded.dataset_id is not None:
-        # This is the project's own evals.datasets.load_dataset (a local
-        # JSON-file store), not huggingface datasets.load_dataset -- no download.
-        dataset = evals_datasets.load_dataset(dataset_id=loaded.dataset_id)  # nosec B615
-        referenced_cases.extend(evals_datasets.resolve_cases(dataset))
-    if referenced_cases:
-        case_scores, _ = run_case_set(referenced_cases)
-        scores.extend(case_scores)
+    llm_client = build_llm_client(loaded.llm_section)
+    task, run_result = _run_agent(
+        loaded.run_config, f"ConfigRun[{path.name}]", llm_client
+    )
+    scores = _score_checks(loaded.checks, task, run_result)
 
     pass_rate = sum(1 for s in scores if s.passed) / len(scores) if scores else 0.0
     aggregate_metrics = {"pass_rate": pass_rate, "checks_total": float(len(scores))}

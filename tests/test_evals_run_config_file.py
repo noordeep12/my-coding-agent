@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import yaml
 
 from my_coding_agent.engine.agent import AgentNode
 from my_coding_agent.engine.llm import LLM
-from my_coding_agent.evals import datasets as evals_datasets
 from my_coding_agent.evals import run_config_file as rcf
 from my_coding_agent.evals.results import load_run_result
 from my_coding_agent.viewer import reader as viewer_reader
@@ -148,14 +145,24 @@ def test_missing_task_is_rejected(tmp_path):
     assert "run.task" in str(excinfo.value)
 
 
-def test_evaluation_with_no_criteria_is_rejected(tmp_path):
+def test_evaluation_with_no_checks_is_rejected(tmp_path):
     data = _full_config()
     data["evaluation"] = {}
     path = _write_config(tmp_path, data)
 
     with pytest.raises(rcf.ConfigValidationError) as excinfo:
         rcf.load_config_file(path)
-    assert "evaluation" in str(excinfo.value)
+    assert "evaluation.checks" in str(excinfo.value)
+
+
+def test_unknown_evaluation_key_is_rejected(tmp_path):
+    data = _full_config()
+    data["evaluation"]["dataset"] = "some-dataset"
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "dataset" in str(excinfo.value)
 
 
 # -- execution ----------------------------------------------------------
@@ -224,74 +231,3 @@ def test_execute_from_config_session_carries_standard_trace_files(
     assert any(row["session_id"] == session_dir.name for row in sessions)
     trace = viewer_reader.load_session(session_dir / "events.jsonl")
     assert trace.nodes
-
-
-def test_execute_from_config_with_case_reference(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-
-    def fake_execute(self, max_steps=50):
-        self.failure_error = None
-        return [{"role": "assistant", "content": "pong"}]
-
-    mocker.patch.object(AgentNode, "execute", fake_execute)
-
-    cases_dir = tmp_path / ".my_coding_agent" / "evals" / "cases"
-    cases_dir.mkdir(parents=True)
-    (cases_dir / "c1.json").write_text(
-        json.dumps(
-            {
-                "id": "c1",
-                "task": "say pong",
-                "scorer": "exact_match",
-                "expected": {"contains": "pong"},
-            }
-        )
-    )
-
-    path = _write_config(
-        tmp_path,
-        {
-            "run": {"task": "unused for case-only run"},
-            "evaluation": {"cases": ["c1"]},
-        },
-    )
-    result, verdict = rcf.execute_from_config(path)
-
-    assert verdict == "pass"
-    assert [s.case_id for s in result.scores] == ["c1"]
-
-
-def test_execute_from_config_with_dataset_reference(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-
-    def fake_execute(self, max_steps=50):
-        self.failure_error = None
-        return [{"role": "assistant", "content": "pong"}]
-
-    mocker.patch.object(AgentNode, "execute", fake_execute)
-
-    cases_dir = evals_datasets.DEFAULT_CASES_DIR
-    cases_dir.mkdir(parents=True)
-    (cases_dir / "d1.json").write_text(
-        json.dumps(
-            {
-                "id": "d1",
-                "task": "say pong",
-                "scorer": "exact_match",
-                "expected": {"contains": "pong"},
-            }
-        )
-    )
-    evals_datasets.create_dataset("my-dataset", ["d1"])
-
-    path = _write_config(
-        tmp_path,
-        {
-            "run": {"task": "unused for dataset-only run"},
-            "evaluation": {"dataset": "my-dataset"},
-        },
-    )
-    result, verdict = rcf.execute_from_config(path)
-
-    assert verdict == "pass"
-    assert [s.case_id for s in result.scores] == ["d1"]

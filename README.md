@@ -319,14 +319,15 @@ evaluation:
     - name: says-pong
       evaluator: exact_match
       expected: { contains: "pong" }
-  cases: []                            # optional: existing case ids, run through the isolated case runner
-  dataset: null                        # optional: an existing dataset id, run the same way
 ```
 
-`llm.api_key` (a raw secret value) is rejected at validation time — the file must stay safe to commit, so only `api_key_env` (an environment variable *name*) is accepted. `evaluation` must declare at least one of `checks`, `cases`, or `dataset`.
+`llm.api_key` (a raw secret value) is rejected at validation time — the file must stay safe to commit, so only `api_key_env` (an environment variable *name*) is accepted. `evaluation.checks` must declare at least one check.
+
+A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml):
 
 ```bash
-my-coding-agent-eval run --config path/to/run.yaml
+my-coding-agent-eval run --config examples/eval_run_config.yaml
+my-coding-agent-eval run --config path/to/your/run.yaml
 ```
 
 The run executes in the real working directory (like the Evaluations tab, unlike the isolated-workspace case runner): its session lands under `.my_coding_agent/`, visible in the **Traces** tab. A validation failure (malformed YAML, unknown key, missing field, unknown evaluator, or a raw API key) prints every problem found and exits `2` without starting an agent run; a scored run exits `0` on pass, `1` on fail. The written result record (`.my_coding_agent/evals/<run_id>/result.json`) carries the config file's path and a content hash, so it stays traceable to the exact configuration version that produced it.
