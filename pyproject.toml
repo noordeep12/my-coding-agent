@@ -56,15 +56,25 @@ target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "C901"]
+select = ["E", "F", "I", "C901", "B", "UP", "SIM", "RUF", "PT", "S", "D", "ERA", "ARG"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # server.py embeds HTML/CSS/JS templates as string literals;
 # wrapping their markup lines to 88 cols would harm readability, not help it.
 "src/my_coding_agent/viewer/server.py" = ["E501"]
+# Missing-docstring rules (D101/D102/D103/D107) are tracked debt: initial volume
+# (~1039 findings) is unmanageable within one mechanical lint-conformance PR.
+# D2xx/D3xx/D4xx docstring format rules stay enforced. See issue #222.
+"src/**/*.py" = ["D101", "D102", "D103", "D107"]
+# pytest idiom: assert is the standard assertion mechanism in tests, not a
+# security concern (bandit S101 flags "assert" broadly; not applicable in tests).
+"tests/**/*.py" = ["D101", "D102", "D103", "D107", "S101"]
 
 [tool.mypy]
 python_version = "3.12"
