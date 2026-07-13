@@ -83,23 +83,9 @@ def test_traces_route_mounts_trace_explorer(server):
     assert b"Trace Explorer" in body
 
 
-def test_evals_route_mounts_eval_dashboard(server):
-    port, _ = server
-    status, body = _get(port, "/evals")
-    assert status == 200
-    assert b"Evaluations" in body
-
-
 def test_sessions_api_still_works_through_shell(server):
     port, _ = server
     status, body = _get(port, "/api/sessions")
-    assert status == 200
-    assert json.loads(body) == []
-
-
-def test_evals_api_still_works_through_shell(server):
-    port, _ = server
-    status, body = _get(port, "/api/evals/runs")
     assert status == 200
     assert json.loads(body) == []
 
@@ -110,7 +96,7 @@ def test_state_round_trips_via_api(server):
     assert status == 200
     assert json.loads(body) == {}
 
-    payload = {"route": "evals", "selection": {"evals": {"view": "runs"}}}
+    payload = {"route": "traces", "selection": {"traces": {"session": "abc123"}}}
     status, body = _post(port, "/api/webui/state", payload)
     assert status == 200
 
@@ -135,34 +121,28 @@ def test_unknown_route_404(server):
     assert status == 404
 
 
-def test_admin_route_returns_settings_form(server):
+def test_evals_route_not_found(server):
     port, _ = server
-    status, body = _get(port, "/admin")
-    assert status == 200
-    assert b"LLM Connection Settings" in body
+    status, _body = _get(port, "/evals")
+    assert status == 404
 
 
-def test_admin_settings_api_round_trips_and_masks_key(server):
+def test_admin_route_not_found(server):
     port, _ = server
-    status, body = _get(port, "/api/admin/settings")
-    assert status == 200
-    data = json.loads(body)
-    assert "api_url" in data and "model" in data
+    status, _body = _get(port, "/admin")
+    assert status == 404
 
-    payload = {
-        "api_url": "http://saved-host:9999/v1",
-        "model": "saved-model",
-        "api_key": "topsecret",  # pragma: allowlist secret
-    }
-    status, body = _post(port, "/api/admin/settings", payload)
-    assert status == 200
 
-    status, body = _get(port, "/api/admin/settings")
-    data = json.loads(body)
-    assert data["api_url"] == "http://saved-host:9999/v1"
-    assert data["model"] == "saved-model"
-    assert data["api_key"] == "********"
-    assert b"topsecret" not in body
+def test_evals_api_not_found(server):
+    port, _ = server
+    status, _body = _get(port, "/api/evals/runs")
+    assert status == 404
+
+
+def test_admin_settings_api_not_found(server):
+    port, _ = server
+    status, _body = _get(port, "/api/admin/settings")
+    assert status == 404
 
 
 # ── Write-dispatch error paths ───────────────────────────────────────────────
@@ -178,13 +158,6 @@ def test_post_invalid_json_body_400(server):
 def test_post_state_non_dict_payload_400(server):
     port, _ = server
     status, body = _post(port, "/api/webui/state", ["not", "a", "dict"])
-    assert status == 400
-    assert json.loads(body) == {"error": "invalid payload"}
-
-
-def test_post_admin_settings_non_dict_payload_400(server):
-    port, _ = server
-    status, body = _post(port, "/api/admin/settings", ["not", "a", "dict"])
     assert status == 400
     assert json.loads(body) == {"error": "invalid payload"}
 

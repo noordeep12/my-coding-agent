@@ -1,10 +1,9 @@
 """Localhost HTTP server for the unified web UI shell.
 
 Serves a persistent-nav single-page shell at ``/`` that mounts the existing
-Trace Explorer and Eval Dashboard (reusing their render helpers, not
-re-implementing them) under ``/traces`` and ``/evals``. State (last-visited
-route, per-tab selection) is persisted to the local SQLite store
-(`store.py`) and restored on load.
+Trace Explorer (reusing its render helpers, not re-implementing them) under
+``/traces``. State (last-visited route, per-tab selection) is persisted to
+the local SQLite store (`store.py`) and restored on load.
 
 Entry point::
 
@@ -28,29 +27,14 @@ import click
 from ..viewer.reader import list_sessions, load_session
 from ..viewer.server import _check_vendor_assets, _full_html
 from ..viewer.sumcheck import check_tree
-from .admin import admin_html, masked_llm_settings, save_llm_settings
-from .evals import server as evals_server
-from .evals.api import handle_evaluation_route
 from .store import Store, default_db_path
 
 logger = logging.getLogger(__name__)
 
 _SID_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
-#: Evaluation-management routes (Evaluation/RunConfig/EvalConfig CRUD + run),
-#: dispatched separately from the eval-config/dataset routes below.
-_EVAL_MGMT_PREFIXES = (
-    "/api/evals/evaluations",
-    "/api/evals/run-configs",
-    "/api/evals/eval-configs",
-)
-
-#: Tab-registration contract: route -> nav label. "admin" is mounted by #155.
-NAV_TABS: tuple[tuple[str, str], ...] = (
-    ("traces", "Traces"),
-    ("evals", "Evals"),
-    ("admin", "Admin"),
-)
+#: Tab-registration contract: route -> nav label.
+NAV_TABS: tuple[tuple[str, str], ...] = (("traces", "Traces"),)
 _DEFAULT_TAB = "traces"
 
 _UI_STATE_KEY = "shell"
@@ -110,7 +94,6 @@ function tabUrl(route, selection){
   const sel = selection[route] || {};
   const params = new URLSearchParams();
   if(route === 'traces' && sel.session) params.set('session', sel.session);
-  if(route === 'evals' && sel.view) params.set('view', sel.view);
   const qs = params.toString();
   return '/' + route + (qs ? ('?' + qs) : '');
 }
@@ -166,7 +149,6 @@ function App(){
       setSelection(prev=>{
         const sel = Object.assign({}, prev[d.tab] || {});
         if(d.session) sel.session = d.session;
-        if(d.view) sel.view = d.view;
         return Object.assign({}, prev, {[d.tab]: sel});
       });
     };
@@ -222,14 +204,6 @@ def _serve_traces(handler: _WebUIHandler) -> None:
     handler._send_html(_full_html())
 
 
-def _serve_evals(handler: _WebUIHandler) -> None:
-    handler._send_html(evals_server.eval_dashboard_html("/evals") or "")
-
-
-def _serve_admin(handler: _WebUIHandler) -> None:
-    handler._send_html(admin_html())
-
-
 def _serve_sessions_api(handler: _WebUIHandler) -> None:
     handler._send_json(list_sessions(handler.base_dir))
 
@@ -238,20 +212,13 @@ def _serve_webui_state_api(handler: _WebUIHandler) -> None:
     handler._send_json(handler.store.get_ui_state(_UI_STATE_KEY) or {})
 
 
-def _serve_admin_settings_api(handler: _WebUIHandler) -> None:
-    handler._send_json(masked_llm_settings(handler.store))
-
-
 #: Static GET routes (no path params), dispatched by exact-path lookup so
 #: `do_GET` stays a flat table lookup rather than a long if/elif chain.
 _STATIC_GET_HANDLERS: dict[str, Any] = {
     "/": _serve_shell,
     "/traces": _serve_traces,
-    "/evals": _serve_evals,
-    "/admin": _serve_admin,
     "/api/sessions": _serve_sessions_api,
     "/api/webui/state": _serve_webui_state_api,
-    "/api/admin/settings": _serve_admin_settings_api,
 }
 
 
@@ -271,12 +238,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, status=404)
 
     def _dispatch_get_api(self, path: str) -> bool:
-        if path.startswith(_EVAL_MGMT_PREFIXES):
-            return self._handle_evaluation_api("GET")
-        if path.startswith("/api/evals/"):
-            return evals_server.handle_eval_api_route(
-                self, path, self.base_dir.resolve() / "evals"
-            )
         match = re.fullmatch(r"/api/sessions/([^/]+)", path)
         if match:
             self._handle_session(match.group(1))
@@ -294,10 +255,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
 
     def _dispatch_write(self, method: str) -> None:
         path = self.path.split("?")[0]
-        if path.startswith(_EVAL_MGMT_PREFIXES):
-            if not self._handle_evaluation_api(method):
-                self._send_json({"error": "not found"}, status=404)
-            return
         payload = self._read_json_body()
         if payload is None:
             return
@@ -306,13 +263,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "invalid payload"}, status=400)
                 return
             self.store.set_ui_state(_UI_STATE_KEY, payload)
-            self._send_json({"ok": True})
-            return
-        if method == "POST" and path == "/api/admin/settings":
-            if not isinstance(payload, dict):
-                self._send_json({"error": "invalid payload"}, status=400)
-                return
-            save_llm_settings(self.store, payload)
             self._send_json({"ok": True})
             return
         self._send_json({"error": "not found"}, status=404)
@@ -325,19 +275,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_json({"error": "invalid json"}, status=400)
             return None
-
-    def _handle_evaluation_api(self, method: str) -> bool:
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length) if length else b""
-        path = self.path.split("?")[0]
-        return handle_evaluation_route(
-            self,
-            method,
-            path,
-            raw,
-            evals_root=self.base_dir.resolve() / "evals",
-            store=self.store,
-        )
 
     def _handle_session(self, session_id: str) -> None:
         if not _SID_RE.match(session_id):
@@ -388,9 +325,9 @@ def run_server(
     _WebUIHandler.base_dir = base
     _WebUIHandler.store = store
     # Threading, not the plain single-connection HTTPServer: a long-running
-    # eval run (POST /evaluations/{id}/run) must not block every other
-    # request (page loads, polling) for the run's duration. Store already
-    # supports concurrent access (sqlite3 check_same_thread=False + a lock).
+    # trace load must not block every other request (page loads, polling)
+    # for its duration. Store already supports concurrent access
+    # (sqlite3 check_same_thread=False + a lock).
     server = ThreadingHTTPServer((host, port), _WebUIHandler)
     click.echo(f"my-coding-agent web UI → http://{host}:{port}")
     try:
