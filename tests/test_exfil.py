@@ -24,7 +24,7 @@ from my_coding_agent.engine.exfil.schema import (
 
 
 @pytest.mark.parametrize(
-    "path,expected_category",
+    ("path", "expected_category"),
     [
         (".env", CATEGORY_ENV_FILE),
         ("/repo/.env.local", CATEGORY_ENV_FILE),
@@ -92,7 +92,7 @@ def test_scan_payload_ignores_benign_content(payload):
 
 
 def test_matched_value_never_appears_in_returned_category():
-    secret_path = "~/.ssh/id_ed25519"
+    secret_path = "~/.ssh/id_ed25519"  # noqa: S105 -- fixture path for the exfil scanner, not a credential
     result = is_sensitive(secret_path)
     assert result is not None
     assert secret_path not in result

@@ -284,7 +284,7 @@ class ToolRegistry:
             # approved exception. The sandboxed path instead runs a fixed argv
             # (`sandbox-exec -p <profile> /bin/sh -c <command>`), so shell=False
             # there — the shell features still work, just inside `/bin/sh -c`.
-            result = subprocess.run(  # nosec B602  # noqa: S602
+            result = subprocess.run(  # nosec B602 # noqa: S603
                 argv,
                 shell=not sandboxed,
                 capture_output=True,
@@ -433,7 +433,8 @@ class ToolRegistry:
     def _head_excerpt(self, tool_call_id: str, text: str) -> str:
         """Bounded degradation when extraction cannot run: a head excerpt of the
         stored text plus guidance pointing at the on-disk file — never the full
-        content, and the run continues rather than aborting."""
+        content, and the run continues rather than aborting.
+        """
         excerpt = text[:EXTRACTION_OUTPUT_MAX_CHARS]
         path = self._artifact_path_hint(tool_call_id)
         hint = (
@@ -506,7 +507,8 @@ class ToolRegistry:
         total_chars: int,
     ) -> str:
         """Build the trailing incompleteness marker for an extraction return.
-        Returns "" when nothing was cut (no-false-positive rule, design D5)."""
+        Returns "" when nothing was cut (no-false-positive rule, design D5).
+        """
         if not (chunk_cut or unscanned or sliced):
             return ""
         reasons = []
@@ -555,7 +557,7 @@ class ToolRegistry:
             f"Chunk:\n{chunk}"
         )
         try:
-            assert self._llm is not None
+            assert self._llm is not None  # noqa: S101
             resp = self._llm.chat_completion(
                 [{"role": "user", "content": prompt}],
                 tools=[],

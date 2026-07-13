@@ -199,7 +199,8 @@ class AgentNode(BaseNode):
 
     def _record_sandbox_activation_if_enabled(self) -> None:
         """Emit the once-per-run sandbox_activation event when the bash sandbox
-        is on (bash-os-sandbox, issue #25); a no-op, no-event call when off."""
+        is on (bash-os-sandbox, issue #25); a no-op, no-event call when off.
+        """
         if not sandbox.is_enabled():
             return
         scope = sandbox.default_scope(Path.cwd())
@@ -345,7 +346,7 @@ class AgentNode(BaseNode):
         so only the recorded ``fired`` outcome matters here.
         """
         ctx = HookContext(event=event, session_id=self.session_id, step=self.step_num)
-        for spec, result in self.hooks.fire(event, ctx):
+        for spec, _result in self.hooks.fire(event, ctx):
             self.recorder.record_hook(
                 event=spec.event,
                 hook_name=spec.name,
@@ -434,7 +435,7 @@ class AgentNode(BaseNode):
             api_url=self.llm.api_url,
             api_key=self.llm.api_key,
             model=self.llm.model,
-            messages=system_messages + [handoff_to_user_message(handoff)],
+            messages=[*system_messages, handoff_to_user_message(handoff)],
             tools=self.tools,
             label=f"{self.label} (cont.)",
             context_reset_threshold=self.context_reset_threshold,

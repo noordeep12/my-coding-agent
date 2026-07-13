@@ -612,7 +612,8 @@ def test_execute_unrecoverable_llm_failure_sets_classified_stop_reason(
     silent_logger, mocker
 ):
     """An unrecoverable LLM error ends the run as a first-class stop (no crash):
-    a classified stop_reason and the error stashed for the CLI resume hint."""
+    a classified stop_reason and the error stashed for the CLI resume hint.
+    """
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
     mocker.patch.object(
@@ -704,7 +705,8 @@ def test_execute_keeps_checkpoint_on_max_steps(silent_logger, mocker):
 def test_execute_drops_own_checkpoint_after_context_reset(silent_logger, mocker):
     """A run that hit a context reset leaves NO own checkpoint, even when the
     continuation propagated an unrecoverable failure: the continuation chain owns
-    the resumable checkpoint, so --resume-last targets it, not this run."""
+    the resumable checkpoint, so --resume-last targets it, not this run.
+    """
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
     err = LLMHTTPStatusError("HTTP 400", status_code=400, retryable=False)
@@ -735,7 +737,8 @@ def test_execute_drops_own_checkpoint_after_context_reset(silent_logger, mocker)
 def test_resumed_run_context_reset_clean_finish_clears_source(silent_logger, mocker):
     """A resumed run that hits a context reset with a cleanly-finishing
     continuation drops BOTH its own and the SOURCE checkpoint, so the superseded
-    source stops being a --resume-last magnet."""
+    source stops being a --resume-last magnet.
+    """
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
     agent.resumed_from = "sourcesess"
@@ -764,7 +767,8 @@ def test_resumed_run_context_reset_clean_finish_clears_source(silent_logger, moc
 def test_handoff_summary_failure_keeps_main_checkpoint(silent_logger, mocker):
     """A handoff-summary LLM failure BEFORE a continuation is spawned stays a
     normal main-session failure: the reset flag is never set, the own checkpoint
-    is kept, and the resume hint points at the main session."""
+    is kept, and the resume hint points at the main session.
+    """
     agent = _make_agent(silent_logger)
     _stub_run_internals(agent, mocker)
     agent.llm.context_window = 10000
@@ -900,7 +904,8 @@ def test_resumed_run_clears_source_checkpoint_on_clean_finish(
     silent_logger, mocker, tmp_path, monkeypatch
 ):
     """A resumed run that finishes cleanly clears BOTH its own and the source
-    session's checkpoint, so --resume-last stops targeting the done source."""
+    session's checkpoint, so --resume-last stops targeting the done source.
+    """
     monkeypatch.chdir(tmp_path)
     cp = _checkpoint(step=4)
     save_checkpoint(Path(".my_coding_agent") / cp.session_id, cp)
@@ -932,7 +937,8 @@ def test_resumed_run_keeps_source_checkpoint_on_failure(
     silent_logger, mocker, tmp_path, monkeypatch
 ):
     """A resumed run that itself fails keeps its own checkpoint and leaves the
-    source session's checkpoint in place (both stay resumable)."""
+    source session's checkpoint in place (both stay resumable).
+    """
     monkeypatch.chdir(tmp_path)
     cp = _checkpoint(step=4)
     save_checkpoint(Path(".my_coding_agent") / cp.session_id, cp)
@@ -977,7 +983,8 @@ def test_resume_past_budget_deletes_neither_checkpoint(
     silent_logger, mocker, tmp_path, monkeypatch
 ):
     """Resuming a session already at/over the budget runs zero steps and must
-    delete NOTHING — the source stays resumable for a larger-budget re-resume."""
+    delete NOTHING — the source stays resumable for a larger-budget re-resume.
+    """
     monkeypatch.chdir(tmp_path)
     cp = _checkpoint(step=4)
     save_checkpoint(Path(".my_coding_agent") / cp.session_id, cp)
@@ -1270,7 +1277,8 @@ def test_usage_summary_decomposes_by_kind(silent_logger):
 def test_add_child_usage_folds_into_grand_total(silent_logger):
     """Parent rollup grand total == sum of every LLM call of every kind across
     the parent and its descendants, including transitively via a child's own
-    rollup (D3)."""
+    rollup (D3).
+    """
     agent = _make_agent(
         silent_logger,
         llm_calls=[{"kind": "main", "prompt": 10, "completion": 5, "total": 15}],
@@ -1372,7 +1380,8 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
 def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
     """An unrecoverable failure inside a post-reset continuation is surfaced to
     the top-level run: failure_error/stop_reason/failure_session_id name the
-    continuation's resumable session (D6 across the reset boundary)."""
+    continuation's resumable session (D6 across the reset boundary).
+    """
     agent = _make_agent(
         silent_logger,
         messages=[

@@ -10,6 +10,8 @@ startup behaviour are verified as real Python execution.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from my_coding_agent.utils.exceptions import MyCodingAgentError
@@ -42,7 +44,9 @@ class TestVendorAssets:
                 continue
             (tmp_path / name).write_text("// stub", encoding="utf-8")
         monkeypatch.setattr("my_coding_agent.viewer.server._VENDOR_DIR", tmp_path)
-        with pytest.raises(MyCodingAgentError, match="markdown-it.bundle.js"):
+        with pytest.raises(
+            MyCodingAgentError, match=re.escape("markdown-it.bundle.js")
+        ):
             _check_vendor_assets()
 
     def test_check_vendor_assets_fails_fast_when_dompurify_bundle_missing(
@@ -53,7 +57,7 @@ class TestVendorAssets:
                 continue
             (tmp_path / name).write_text("// stub", encoding="utf-8")
         monkeypatch.setattr("my_coding_agent.viewer.server._VENDOR_DIR", tmp_path)
-        with pytest.raises(MyCodingAgentError, match="dompurify.bundle.js"):
+        with pytest.raises(MyCodingAgentError, match=re.escape("dompurify.bundle.js")):
             _check_vendor_assets()
 
     def test_no_network_calls_in_render_pipeline_source(self):
@@ -65,7 +69,8 @@ class TestVendorAssets:
         assert "window.markdownit" not in src  # instantiated once, at module scope
         assert "window.DOMPurify.sanitize" in src
         assert "fetch(" not in src
-        assert "http://" not in src and "https://" not in src
+        assert "http://" not in src
+        assert "https://" not in src
 
 
 # ── Render pipeline: parse (html:false) → sanitize → single insertion path ──

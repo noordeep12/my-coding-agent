@@ -8,7 +8,7 @@ from importlib.metadata import version as _pkg_version
 
 project = "my-coding-agent"
 author = "Noordeep Singh"
-copyright = "2026, Noordeep Singh"  # noqa: A001  (Sphinx requires this name)
+copyright = "2026, Noordeep Singh"
 
 # Single-source the version from package metadata (consistent with G-13).
 release = _pkg_version("my-coding-agent")

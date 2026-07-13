@@ -71,7 +71,7 @@ def summarize_conversation(
     Returns:
         The assistant's summary text (empty string if none was produced).
     """
-    summary_messages = messages + [{"role": "user", "content": prompt}]
+    summary_messages = [*messages, {"role": "user", "content": prompt}]
     resp = llm.chat_completion(summary_messages, tools=[], kind=kind)
     message = llm_parsing.extract_message(resp)
     # Reasoning models (e.g. Qwen3-thinking) often end the summary turn with a

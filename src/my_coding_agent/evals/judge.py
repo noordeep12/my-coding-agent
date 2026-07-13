@@ -399,7 +399,8 @@ def score_with_judge(
 @dataclass(frozen=True)
 class LabelledCase:
     """One human-labelled example for calibration: a task/output pair and the
-    human's score for a single criterion (or an overall label)."""
+    human's score for a single criterion (or an overall label).
+    """
 
     task: str
     output: str
@@ -409,7 +410,8 @@ class LabelledCase:
 @dataclass(frozen=True)
 class CalibrationResult:
     """Agreement between the judge and human labels, plus the reliability
-    verdict against a stated threshold."""
+    verdict against a stated threshold.
+    """
 
     agreement: float
     threshold: float

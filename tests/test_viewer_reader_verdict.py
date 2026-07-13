@@ -1,6 +1,7 @@
 """Tests that the reader side-reads a session's `verdict.json` sibling into
 `TraceSession.verdict`, and degrades to `None` on absence or malformed content
-(session-verdict-visibility)."""
+(session-verdict-visibility).
+"""
 
 from __future__ import annotations
 

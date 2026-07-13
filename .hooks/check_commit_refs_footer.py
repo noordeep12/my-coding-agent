@@ -6,7 +6,8 @@ import sys
 
 ISSUE_RE = re.compile(r"^Refs: #\d+$")
 
-lines = open(sys.argv[1]).read().splitlines()
+with open(sys.argv[1]) as f:
+    lines = f.read().splitlines()
 if not any(ISSUE_RE.match(line) for line in lines):
     print("Commit message is missing a valid Refs: footer.")
     print("Every commit must reference an existing GitHub issue:")

@@ -200,9 +200,9 @@ def attach_session_log(path: str | os.PathLike[str]) -> _SessionLogHandle:
     colored_path = plain_path.with_name("stderr_colored.log")
     plain_path.parent.mkdir(parents=True, exist_ok=True)
 
-    plain_file = open(plain_path, "a", encoding="utf-8")
+    plain_file = open(plain_path, "a", encoding="utf-8")  # noqa: SIM115 -- handle outlives this function, returned to caller
     try:
-        colored_file = open(colored_path, "a", encoding="utf-8")
+        colored_file = open(colored_path, "a", encoding="utf-8")  # noqa: SIM115 -- handle outlives this function, returned to caller
     except Exception:
         plain_file.close()
         raise

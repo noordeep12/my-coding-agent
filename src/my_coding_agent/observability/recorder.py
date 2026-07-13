@@ -31,7 +31,7 @@ TOOL_CALL = "tool_call"
 HANDOFF = "handoff"
 REPORT = "report"
 SESSION_END = "session_end"
-TOKEN_TRACKING = "token_tracking"
+TOKEN_TRACKING = "token_tracking"  # noqa: S105 -- event-type label, not a credential
 FINISH_CHECK = "finish_check"
 SUMMARIZER = "summarizer"
 ANOMALY = "anomaly"
@@ -57,7 +57,7 @@ current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 # The active run's Recorder, so ``delegate`` can attach the spawned child's
 # session id to the delegate tool call for an exact parent→child tree link.
-current_recorder: contextvars.ContextVar["Recorder | None"] = contextvars.ContextVar(
+current_recorder: contextvars.ContextVar[Recorder | None] = contextvars.ContextVar(
     "current_recorder", default=None
 )
 

@@ -79,7 +79,7 @@ def parse_tool_call(
         )
 
     # func_name is truthy here, which is only possible when func_block is truthy.
-    assert func_block is not None
+    assert func_block is not None  # noqa: S101
     try:
         args = llm_parsing.parse_tool_args(func_block.get("arguments", {}))
     except json.JSONDecodeError as exc:

@@ -80,7 +80,9 @@ def test_teestream_flush_propagates():
 
     orig, plain, colored = _Track(), _Track(), _Track()
     _TeeStream(orig, plain, colored).flush()
-    assert orig.flushed and plain.flushed and colored.flushed
+    assert orig.flushed
+    assert plain.flushed
+    assert colored.flushed
 
 
 def test_teestream_getattr_delegates_to_original():

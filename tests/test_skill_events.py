@@ -209,7 +209,8 @@ def test_load_dedup_error_distinguishable_in_events(tmp_path, bare_llm):
     # All read from the envelope only (ok verdict + output content), no free-text
     # parsing beyond the structured result (skill-event-capture).
     load_out = json.loads(load_ev["result"])
-    assert load_ev["ok"] is True and load_out["output"].startswith("Skill: a")
+    assert load_ev["ok"] is True
+    assert load_out["output"].startswith("Skill: a")
     assert "FULL BODY A" in load_out["output"]
 
     dedup_out = json.loads(dedup_ev["result"])

@@ -53,7 +53,7 @@ _IOREG_PATH = "/usr/sbin/ioreg"
 class _Sample:
     """One instantaneous reading. Plain slots class — created ~once/second."""
 
-    __slots__ = ("t", "ram_pct", "cpu_pct", "gpu_pct", "net_bytes", "disk_bytes")
+    __slots__ = ("cpu_pct", "disk_bytes", "gpu_pct", "net_bytes", "ram_pct", "t")
 
     def __init__(
         self,
@@ -205,7 +205,7 @@ class ResourceSampler:
         never the other resources.
         """
         try:
-            out = subprocess.run(
+            out = subprocess.run(  # noqa: S603 -- fixed absolute path, fixed argv, no shell
                 [_IOREG_PATH, "-r", "-d", "1", "-c", "IOAccelerator"],
                 capture_output=True,
                 text=True,

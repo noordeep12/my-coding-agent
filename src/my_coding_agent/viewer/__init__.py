@@ -18,6 +18,6 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 __all__ = [
     "TraceNode",
     "TraceSession",
-    "load_session",
     "list_sessions",
+    "load_session",
 ]

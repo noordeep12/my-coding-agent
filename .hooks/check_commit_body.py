@@ -3,7 +3,8 @@
 
 import sys
 
-lines = open(sys.argv[1]).readlines()
+with open(sys.argv[1]) as f:
+    lines = f.readlines()
 non_comment = [line for line in lines if not line.startswith("#")]
 body = "".join(non_comment[2:]).strip()  # skip subject line + blank separator
 if not body:

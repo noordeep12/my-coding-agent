@@ -297,7 +297,8 @@ def test_invoke_tool_plain_string_not_truncated(bare_executor, tmp_path):
 
 def test_invoke_tool_artifact_tuple_is_previewed(bare_executor, mocker):
     """A (None, dict) artifact tuple with a large stdout is offloaded: the agent
-    gets a bounded preview excerpt + skim guidance (not the whole blob)."""
+    gets a bounded preview excerpt + skim guidance (not the whole blob).
+    """
     bare_executor.llm._session_log_path = None
     from my_coding_agent.engine.tool_execution.output import PREVIEW_MAX_CHARS
 
@@ -305,12 +306,12 @@ def test_invoke_tool_artifact_tuple_is_previewed(bare_executor, mocker):
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
         ),
     )
-    env, status, record = _invoke(
+    env, _status, record = _invoke(
         bare_executor, "c1", "bash", {"command": "x"}, ToolsRegistry()
     )
     assert "[Preview:" in env["output"]
@@ -339,7 +340,7 @@ def test_invoke_tool_success(bare_executor, tmp_path):
 
 
 def test_invoke_tool_bash_success_envelope(bare_executor):
-    """bash structured JSON maps into the schema with ok / exit_code metadata."""
+    """Bash structured JSON maps into the schema with ok / exit_code metadata."""
     bare_executor.llm._session_log_path = None
 
     class _Reg(ToolsRegistry):

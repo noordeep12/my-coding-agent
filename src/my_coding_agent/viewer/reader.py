@@ -484,7 +484,10 @@ def _nest_summarizer_nodes(graph: _Graph, session_id: str, step: int) -> None:
 
 
 def _build_router_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],  # noqa: ARG001 -- EventBuilder callback signature must stay uniform
 ) -> tuple[str, TraceNode]:
     """Build the ToolRoutingNode node for a ``router`` event."""
     node_id = f"{session_id}::step{step}::router"
@@ -503,7 +506,10 @@ def _build_router_node(
 
 
 def _build_llm_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],
 ) -> tuple[str, TraceNode]:
     """Build the LLMCallNode node for an ``llm_call`` event."""
     counters["llm"] += 1
@@ -568,7 +574,10 @@ def _refusal_metadata(result: Any) -> dict[str, Any] | None:
 
 
 def _build_tool_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],
 ) -> tuple[str, TraceNode]:
     """Build the ToolDispatchNode node for a ``tool_call`` event."""
     counters["tool"] += 1
@@ -595,7 +604,10 @@ def _build_tool_node(
 
 
 def _build_handoff_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],  # noqa: ARG001 -- EventBuilder callback signature must stay uniform
 ) -> tuple[str, TraceNode]:
     """Build the ContextGuardNode node for a ``handoff`` event."""
     node_id = f"{session_id}::step{step}::handoff"
@@ -615,7 +627,10 @@ def _build_handoff_node(
 
 
 def _build_report_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],  # noqa: ARG001 -- EventBuilder callback signature must stay uniform
 ) -> tuple[str, TraceNode]:
     """Build the subagent report node for a ``report`` event.
 
@@ -638,7 +653,10 @@ def _build_report_node(
 
 
 def _build_summarizer_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],  # noqa: ARG001 -- EventBuilder callback signature must stay uniform
 ) -> tuple[str, TraceNode]:
     """Build the ContextSummarizerNode node for a ``summarizer`` event."""
     node_id = f"{session_id}::step{step}::summarizer"
@@ -665,7 +683,10 @@ def _build_summarizer_node(
 
 
 def _build_finalize_step_node(
-    ev: dict[str, Any], session_id: str, step: int, counters: dict[str, int]
+    ev: dict[str, Any],
+    session_id: str,
+    step: int,
+    counters: dict[str, int],  # noqa: ARG001 -- EventBuilder callback signature must stay uniform
 ) -> tuple[str, TraceNode]:
     """Build the single FinalizeStepNode node for a merged ``finalize_step`` event.
 

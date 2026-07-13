@@ -43,10 +43,9 @@ _VENDOR_FILES = (
     "markdown-it.bundle.js",
     "dompurify.bundle.js",
 )
-_VENDOR_TOKEN = "/*__VENDOR__*/"
+_VENDOR_TOKEN = "/*__VENDOR__*/"  # noqa: S105 -- template placeholder marker, not a credential
 
 # ── Embedded single-page HTML (Apple-minimalist Preact UI) ────────────────────
-# ruff: noqa: E501
 EMBEDDED_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1266,7 +1265,7 @@ class _TraceHandler(BaseHTTPRequestHandler):
         try:
             session = load_session(events_path)
             self._send_json(dataclasses.asdict(session))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error("Error loading session %s: %s", events_path, exc)
             self._send_json({"error": str(exc)}, status=500)
 

@@ -46,7 +46,7 @@ def test_extract_message_null_message_returns_empty_dict(fake_response):
 
 
 @pytest.mark.parametrize(
-    "reason,expected",
+    ("reason", "expected"),
     [("STOP", "stop"), ("Tool_Calls", "tool_calls"), ("", "")],
 )
 def test_extract_finish_reason_lowercases(reason, expected, fake_response):

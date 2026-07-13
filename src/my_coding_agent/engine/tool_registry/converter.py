@@ -6,7 +6,8 @@ function signature to build the JSON schema expected by the LLM API.
 
 import inspect
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .exceptions import ToolDefinitionError
 

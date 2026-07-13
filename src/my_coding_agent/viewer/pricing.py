@@ -8,7 +8,7 @@ rather than crashing on an unrecognised model name.
 
 from __future__ import annotations
 
-# (prompt_usd_per_1M, completion_usd_per_1M)
+# (prompt_usd_per_1M, completion_usd_per_1M) -- comment, not code  # noqa: ERA001
 PRICING: dict[str, dict[str, float]] = {
     # Anthropic Claude
     "claude-opus-4-8": {"prompt": 15.0, "completion": 75.0},

@@ -30,7 +30,8 @@ DEMARCATION_CLOSE = "\n</untrusted_external_content>"
 @dataclass(frozen=True)
 class Reduction:
     """A capability-reduction decision for an action attempted while
-    untrusted content is active (analogous to ``policy.Refusal``)."""
+    untrusted content is active (analogous to ``policy.Refusal``).
+    """
 
     rule_id: str
     reason: str

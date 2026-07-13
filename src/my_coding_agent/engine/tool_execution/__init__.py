@@ -75,10 +75,10 @@ if TYPE_CHECKING:
     from ..llm import LLM
 
 __all__ = [
-    "ToolExecutor",
-    "ToolRegistry",
     "MAX_TOOL_OUTPUT_CHARS",
     "TOOL_SCHEMA_VERSION",
+    "ToolExecutor",
+    "ToolRegistry",
     "build_tool_result",
     "validate_tool_result",
 ]
@@ -87,7 +87,8 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Lazily resolve ``ToolRegistry`` so it stays part of this module's public
     surface (``__all__``) without an eager import — see ``ToolExecutor.__init__``
-    for why that import must be deferred (breaks a cycle with tool_registry)."""
+    for why that import must be deferred (breaks a cycle with tool_registry).
+    """
     if name == "ToolRegistry":
         from ..tool_registry import ToolRegistry
 
@@ -189,7 +190,8 @@ def _find_duplicate(session_id: str | None, text: str) -> dict[str, Any] | None:
 
 def _build_duplicate_notice(duplicate: dict[str, Any], path: str | None) -> str:
     """Build the agent-facing pointer for a deduplicated stream — no excerpt,
-    just enough to retrieve the exact bytes deterministically."""
+    just enough to retrieve the exact bytes deterministically.
+    """
     location = f" (on disk at {path})" if path else ""
     return (
         f"[This output is already stored — it duplicates tool_call_id="
@@ -324,7 +326,8 @@ class ToolExecutor:
             self._append_parse_error(item)
             return
         # parse_tool_call guarantees func_name/args are set when error is None.
-        assert item.func_name is not None and item.args is not None
+        assert item.func_name is not None  # noqa: S101
+        assert item.args is not None  # noqa: S101
         args = self.before_tool_call(item.func_name, item.args)
         self.logger.tool("%s → %s(%s)", item.tool_call_id, item.func_name, args)
         hook_firings: list[tuple[HookSpec, HookResult]] = []
@@ -367,9 +370,9 @@ class ToolExecutor:
                     item.func_name,
                     args,
                 )
-                for item, args in zip(group, prepared_args)
+                for item, args in zip(group, prepared_args, strict=True)
             ]
-        for item, args, future in zip(group, prepared_args, futures):
+        for item, args, future in zip(group, prepared_args, futures, strict=True):
             raw, failure, start_mono, end_mono, started_at, hook_firings = (
                 future.result()
             )

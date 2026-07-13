@@ -30,12 +30,12 @@ __all__ = [
     "ENV_VAR",
     "HostCapability",
     "SandboxScope",
-    "is_enabled",
-    "probe_host_capability",
-    "default_scope",
     "build_profile",
-    "wrap_command",
+    "default_scope",
+    "is_enabled",
     "is_likely_denial",
+    "probe_host_capability",
+    "wrap_command",
 ]
 
 
@@ -72,7 +72,7 @@ def probe_host_capability() -> HostCapability:
 # nosec B108 — these are sandbox *allowlist* entries the profile permits
 # writes to, not a location this module itself writes a file to; the
 # hardcoded-tmp-dir check doesn't apply to this usage.
-_TEMP_ALLOWLIST_CANDIDATES = ("/tmp", "/private/tmp")  # nosec B108
+_TEMP_ALLOWLIST_CANDIDATES = ("/tmp", "/private/tmp")  # nosec B108 # noqa: S108
 
 
 def default_scope(workspace_root: Path | str) -> SandboxScope:

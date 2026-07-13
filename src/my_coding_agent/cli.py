@@ -109,7 +109,8 @@ def _all_tools() -> list:
 
 def _build_tools(skills: dict) -> list:
     """Return the run's toolset: the standard tools, plus ``use_skill`` iff skills
-    were discovered. With no skills the result is byte-identical to today (D5)."""
+    were discovered. With no skills the result is byte-identical to today (D5).
+    """
     tools = _all_tools()
     if skills:
         tools.append(tool(ToolRegistry.use_skill))
@@ -133,7 +134,9 @@ def _read_interactive_prompt() -> str:
         history=FileHistory(str(_HISTORY_FILE)),
         key_bindings=kb,
         multiline=True,
-        prompt_continuation=lambda width, line_number, wrap_count: (
+        # prompt_toolkit calls this with (width, line_number, wrap_count); only
+        # width is used, but the other two are required by its call contract.
+        prompt_continuation=lambda width, line_number, wrap_count: (  # noqa: ARG005
             "  " + "·" * (width - 2)
         ),
         enable_history_search=True,
@@ -145,7 +148,7 @@ def _read_interactive_prompt() -> str:
     )
     click.echo("─" * 60)
     try:
-        text: str = session.prompt("❯ ")
+        text: str = session.prompt("❯ ")  # noqa: RUF001 -- deliberate prompt glyph
     except (EOFError, KeyboardInterrupt):
         text = ""
     click.echo("─" * 60)
@@ -250,7 +253,7 @@ def main(
     no_exfil_guard: bool,
     use_sandbox: bool,
 ) -> None:
-    """Run the coding-agent pipeline.
+    r"""Run the coding-agent pipeline.
 
     With no arguments this always starts an interactive terminal session
     (multi-line prompt, history, Esc-Enter to submit) — see \b--prompt to
@@ -398,7 +401,7 @@ def _build_resumed_agent(resume_id: str | None, resume_last: bool) -> AgentNode:
                 err=True,
             )
             sys.exit(2)
-    assert session_id is not None  # one of the two branches set it
+    assert session_id is not None  # noqa: S101 -- one of the two branches set it
     try:
         checkpoint = load_checkpoint(_SESSIONS_DIR / session_id)
     except CheckpointError as exc:

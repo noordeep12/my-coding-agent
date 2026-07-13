@@ -57,7 +57,8 @@ def test_print_banner_contains_labels_and_values(monkeypatch):
     assert "qwen-test" in out  # model value
     assert "abc123" in out  # session id
     assert "131,072" in out  # context window formatted with commas
-    assert "MODEL" in out and "BRANCH" in out  # info-row labels
+    assert "MODEL" in out
+    assert "BRANCH" in out
     assert "bash(command)" in out  # tool signature row
 
 

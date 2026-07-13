@@ -56,15 +56,43 @@ target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "C901"]
+select = ["E", "F", "I", "C901", "B", "UP", "SIM", "RUF", "PT", "S", "D", "ERA", "ARG"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ruff.lint.per-file-ignores]
 # server.py embeds HTML/CSS/JS templates as string literals;
 # wrapping their markup lines to 88 cols would harm readability, not help it.
-"src/my_coding_agent/viewer/server.py" = ["E501"]
+# The same templates deliberately use typographic characters (›, −) in the
+# rendered UI, which RUF001 otherwise flags as ambiguous.
+"src/my_coding_agent/viewer/server.py" = ["E501", "RUF001"]
+# Missing-docstring rules (D101/D102/D103/D107) are tracked debt: initial volume
+# (~1039 findings) is unmanageable within one mechanical lint-conformance PR.
+# D2xx/D3xx/D4xx docstring format rules stay enforced. See issue #222.
+# D205/D415 are also tracked debt (~114 findings): most docstrings wrap their
+# summary sentence across physical lines, so satisfying D205 requires rewriting
+# the summary/description prose, not a mechanical fix; a naive fix trades D205
+# for D415. See issue #223.
+"src/**/*.py" = ["D101", "D102", "D103", "D107", "D205", "D415"]
+# pytest idiom: assert is the standard assertion mechanism in tests, not a
+# security concern (bandit S101 flags "assert" broadly; not applicable in tests).
+# S108: "/tmp/..." strings here are dummy tool-call args/fixture data, never
+# paths this test suite actually writes to.
+# ARG001/ARG002/ARG005: unused-argument findings here are almost entirely test
+# doubles that intentionally mirror a real method's signature -- pytest fixture
+# parameters (renaming breaks fixture injection, which pytest resolves by exact
+# parameter name) and monkeypatched stand-ins for ToolsRegistry methods (whose
+# names are inspected at runtime by engine/tool_execution/args.py's arg-name
+# validation; renaming one silently broke test_run_success during discovery,
+# with no lint signal). Renaming for lint conformance is not safe here.
+"tests/**/*.py" = [
+    "D101", "D102", "D103", "D107", "D205", "D415", "S101", "S108",
+    "ARG001", "ARG002", "ARG005",
+]
 
 [tool.mypy]
 python_version = "3.12"

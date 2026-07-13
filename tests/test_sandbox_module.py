@@ -32,7 +32,9 @@ pytestmark = pytest.mark.skipif(
 
 
 def _run(argv):
-    return subprocess.run(argv, capture_output=True, text=True, timeout=10)
+    return subprocess.run(  # noqa: S603 -- test-only helper, argv is fixed by callers in this file
+        argv, capture_output=True, text=True, timeout=10
+    )
 
 
 class TestHostCapability:

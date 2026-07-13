@@ -15,7 +15,7 @@ class ToolDispatchNode(BaseNode):
     name = "tool_dispatch"
 
     def run(self, ctx: RunContext) -> None:
-        from ...engine.tool_execution import ToolExecutor  # noqa: PLC0415 (lazy import)
+        from ...engine.tool_execution import ToolExecutor
 
         if not ctx.messages:
             ctx.signal = "CONTINUE"
