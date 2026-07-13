@@ -338,6 +338,7 @@ The run executes in the real working directory (unlike the isolated-workspace ca
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the module layout, agent loop, tool dispatch, context handoff, and session persistence.
 - [`CONTRIBUTE.md`](CONTRIBUTE.md) — development standards, tooling, testing, and commit conventions.
+- [`CHANGELOG.md`](CHANGELOG.md) — notable changes per release, in Keep a Changelog format.
 - [`SECURITY.md`](SECURITY.md) — the dangerous-command refusal gate (how to disable it, `--no-safety-gate` / `MCA_DISABLE_DANGEROUS_COMMAND_GATE`, and how to extend its rule set) and the network egress filter (how to disable it, `--no-egress-filter` / `MCA_DISABLE_EGRESS_FILTER`, and how to pick a blocklist source).
 - [Sandboxing](#sandboxing) — the opt-in OS-level `bash` sandbox (`--sandbox` / `MCA_BASH_SANDBOX`): scope, mechanism, and degradation.
 
