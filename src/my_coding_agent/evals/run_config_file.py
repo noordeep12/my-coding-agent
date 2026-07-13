@@ -62,8 +62,8 @@ _ENV_FIELDS: dict[str, tuple[str, str]] = {
     "api_url": ("OMLX_API_URL", "http://127.0.0.1:8321/v1"),
     "model": ("OMLX_MODEL", "Qwen3.6-35B-A3B-6bit"),
 }
-_DEFAULT_API_KEY_ENV = "OMLX_API_KEY"
-_DEFAULT_API_KEY = "changeme"
+_DEFAULT_API_KEY_ENV = "OMLX_API_KEY"  # pragma: allowlist secret
+_DEFAULT_API_KEY = "changeme"  # pragma: allowlist secret
 _DEFAULT_TIMEOUT = 30.0
 
 
@@ -141,9 +141,7 @@ def _validate_section(
     return section
 
 
-def _parse_checks(
-    raw_checks: Any, problems: list[str]
-) -> tuple[Check, ...]:
+def _parse_checks(raw_checks: Any, problems: list[str]) -> tuple[Check, ...]:
     if raw_checks in (None, ""):
         return ()
     if not isinstance(raw_checks, list):
@@ -374,7 +372,9 @@ def execute_from_config(
 
     referenced_cases = list(_resolve_case_refs(loaded.case_ids))
     if loaded.dataset_id is not None:
-        dataset = evals_datasets.load_dataset(loaded.dataset_id)
+        # This is the project's own evals.datasets.load_dataset (a local
+        # JSON-file store), not huggingface datasets.load_dataset -- no download.
+        dataset = evals_datasets.load_dataset(dataset_id=loaded.dataset_id)  # nosec B615
         referenced_cases.extend(evals_datasets.resolve_cases(dataset))
     if referenced_cases:
         case_scores, _ = run_case_set(referenced_cases)

@@ -48,7 +48,7 @@ def _full_config(**overrides):
         "llm": {
             "api_url": "http://example.test/v1",
             "model": "test-model",
-            "api_key_env": "TEST_API_KEY",
+            "api_key_env": "TEST_API_KEY",  # pragma: allowlist secret
             "timeout": 5,
         },
         "run": {
@@ -130,7 +130,7 @@ def test_unknown_evaluator_is_rejected(tmp_path):
 
 def test_raw_api_key_is_rejected(tmp_path):
     data = _full_config()
-    data["llm"]["api_key"] = "sk-super-secret"
+    data["llm"]["api_key"] = "sk-super-secret"  # pragma: allowlist secret
     path = _write_config(tmp_path, data)
 
     with pytest.raises(rcf.ConfigValidationError) as excinfo:
