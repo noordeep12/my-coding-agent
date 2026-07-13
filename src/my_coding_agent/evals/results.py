@@ -31,6 +31,9 @@ class EvalRunResult:
         dataset: The case-set/dataset reference this run executed.
         scores: One `EvalScore` per case.
         aggregate_metrics: Run-level metrics (e.g. `{"pass_rate": 0.5}`).
+        config_path: Path to the YAML run config that produced this run, if any.
+        config_hash: Content hash of that config file, so a result stays
+            traceable to the exact configuration version that produced it.
     """
 
     schema_version: int
@@ -41,6 +44,8 @@ class EvalRunResult:
     dataset: str
     scores: list[EvalScore]
     aggregate_metrics: dict[str, float] = field(default_factory=dict)
+    config_path: str | None = None
+    config_hash: str | None = None
 
 
 def build_run_result(
@@ -102,4 +107,6 @@ def load_run_result(run_dir: Path) -> EvalRunResult:
         dataset=raw["dataset"],
         scores=scores,
         aggregate_metrics=raw.get("aggregate_metrics", {}),
+        config_path=raw.get("config_path"),
+        config_hash=raw.get("config_hash"),
     )

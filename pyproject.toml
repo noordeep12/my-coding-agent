@@ -20,6 +20,7 @@ dependencies = [
     "prompt-toolkit>=3.0",
     "psutil>=7.2.2",
     "python-dotenv>=1.0",
+    "pyyaml>=6.0.2",
     "rich>=15.0.0",
 ]
 
@@ -46,6 +47,7 @@ dev = [
     "myst-parser>=4.0",
     "sphinx>=9.1.0",
     "types-psutil>=7.2.2.20260518",
+    "types-PyYAML>=6.0.12",
 ]
 
 [tool.ruff]
