@@ -126,7 +126,7 @@ class LLM:
                 )
                 self._context_window = self.DEFAULT_CONTEXT_WINDOW
         # available_models sets _context_window on success; the except sets it too.
-        assert self._context_window is not None
+        assert self._context_window is not None  # noqa: S101
         return self._context_window
 
     @context_window.setter
@@ -163,7 +163,7 @@ class LLM:
                 time.sleep(backoff)
         # The loop runs at least once (_HTTP_RETRIES >= 1), so reaching here means a
         # transient error was caught and last_exc is set. assert proves this to mypy.
-        assert last_exc is not None
+        assert last_exc is not None  # noqa: S101
         raise last_exc
 
     @staticmethod

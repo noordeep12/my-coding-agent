@@ -34,7 +34,7 @@ def _git_branch() -> str:
     try:
         return (
             subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],  # noqa: S607 -- relies on `git` from PATH, standard dev tooling
                 stderr=subprocess.DEVNULL,
             )
             .decode()

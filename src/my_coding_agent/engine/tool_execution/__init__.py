@@ -326,7 +326,7 @@ class ToolExecutor:
             self._append_parse_error(item)
             return
         # parse_tool_call guarantees func_name/args are set when error is None.
-        assert item.func_name is not None and item.args is not None
+        assert item.func_name is not None and item.args is not None  # noqa: S101
         args = self.before_tool_call(item.func_name, item.args)
         self.logger.tool("%s → %s(%s)", item.tool_call_id, item.func_name, args)
         hook_firings: list[tuple[HookSpec, HookResult]] = []

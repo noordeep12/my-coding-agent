@@ -284,7 +284,7 @@ class ToolRegistry:
             # approved exception. The sandboxed path instead runs a fixed argv
             # (`sandbox-exec -p <profile> /bin/sh -c <command>`), so shell=False
             # there — the shell features still work, just inside `/bin/sh -c`.
-            result = subprocess.run(  # nosec B602
+            result = subprocess.run(  # nosec B602 # noqa: S603
                 argv,
                 shell=not sandboxed,
                 capture_output=True,
@@ -557,7 +557,7 @@ class ToolRegistry:
             f"Chunk:\n{chunk}"
         )
         try:
-            assert self._llm is not None
+            assert self._llm is not None  # noqa: S101
             resp = self._llm.chat_completion(
                 [{"role": "user", "content": prompt}],
                 tools=[],

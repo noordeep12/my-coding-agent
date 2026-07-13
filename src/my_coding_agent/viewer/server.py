@@ -43,7 +43,7 @@ _VENDOR_FILES = (
     "markdown-it.bundle.js",
     "dompurify.bundle.js",
 )
-_VENDOR_TOKEN = "/*__VENDOR__*/"
+_VENDOR_TOKEN = "/*__VENDOR__*/"  # noqa: S105 -- template placeholder marker, not a credential
 
 # ── Embedded single-page HTML (Apple-minimalist Preact UI) ────────────────────
 EMBEDDED_HTML = """<!DOCTYPE html>

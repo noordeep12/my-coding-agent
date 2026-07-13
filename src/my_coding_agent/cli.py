@@ -399,7 +399,7 @@ def _build_resumed_agent(resume_id: str | None, resume_last: bool) -> AgentNode:
                 err=True,
             )
             sys.exit(2)
-    assert session_id is not None  # one of the two branches set it
+    assert session_id is not None  # noqa: S101 -- one of the two branches set it
     try:
         checkpoint = load_checkpoint(_SESSIONS_DIR / session_id)
     except CheckpointError as exc:

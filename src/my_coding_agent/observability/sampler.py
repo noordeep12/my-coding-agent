@@ -205,7 +205,7 @@ class ResourceSampler:
         never the other resources.
         """
         try:
-            out = subprocess.run(
+            out = subprocess.run(  # noqa: S603 -- fixed absolute path, fixed argv, no shell
                 [_IOREG_PATH, "-r", "-d", "1", "-c", "IOAccelerator"],
                 capture_output=True,
                 text=True,
