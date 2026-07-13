@@ -421,3 +421,30 @@ removed with the rest of the web UI's Evals and Admin tabs (issue #194); the
 `evals/evaluation.py` domain models, persistence, and `run_evaluation` above
 are untouched and remain callable directly.
 
+---
+
+## Lint Enforcement Parity (CONTRIBUTE.md §48, issue #212)
+
+`pyproject.toml`'s `[tool.ruff.lint]` now enables every family CONTRIBUTE.md
+§48's mapping table requires (`B`, `UP`, `SIM`, `RUF`, `PT`, `S`, `D`, `ERA`,
+`ARG`, alongside the pre-existing `E`/`F`/`I`/`C901`), closing the gap where
+six documented rule sections had no enabled tool rule. This was a
+lint-conformance pass only — no behavioural change.
+
+Two narrow, per-file-ignore exceptions exist, both documented in-place in
+`pyproject.toml` with issue references:
+
+- `D101`/`D102`/`D103`/`D107` (missing-docstring) and `D205`/`D415`
+  (docstring summary/description formatting) are tracked debt (issues #222,
+  #223) — the initial violation volume (~1039 and ~114 findings
+  respectively) requires rewriting docstring prose at a scale that doesn't
+  fit one mechanical PR. `D2xx`/`D3xx`/`D4xx` format rules besides `D205`/
+  `D415` are fully enforced.
+- `ARG001`/`ARG002`/`ARG005` (unused-argument) are scoped out in `tests/**`
+  only: most findings are test doubles that intentionally mirror a real
+  method's signature — pytest fixture parameters (renamed, they stop being
+  injected) and monkeypatched `ToolsRegistry` method replacements (their
+  parameter names are inspected at runtime by `engine/tool_execution/args.py`'s
+  arg-validation logic, so renaming one silently changes which call
+  arguments get treated as unknown).
+
