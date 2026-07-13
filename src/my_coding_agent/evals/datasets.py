@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..utils.exceptions import MyCodingAgentError
 from .cases import load_case_set
 from .results import EvalRunResult, build_run_result, write_run_result
 from .runner import run_case_set
@@ -35,12 +36,8 @@ DEFAULT_CASES_DIR = Path(".my_coding_agent/evals/cases")
 VERSIONS_FILE = "versions.jsonl"
 
 
-class DatasetError(Exception):
+class DatasetError(MyCodingAgentError):
     """Base exception for dataset operations."""
-
-    def __init__(self, message: str, *, hint: str | None = None) -> None:
-        super().__init__(message)
-        self.hint = hint
 
 
 class DatasetNotFoundError(DatasetError):
