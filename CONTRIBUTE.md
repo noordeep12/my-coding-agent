@@ -517,10 +517,10 @@ print("debug info")        # uncontrollable output
 
 The rules above apply to library-layer packages (`engine/`, `pipeline/`,
 `evals/`, `observability/`, `viewer/` internals). Application entry points —
-the CLI commands (`pipeline/examples/simple.py`, `evals/cli.py`) and the HTTP
-servers (`webui/server.py`, `viewer/server.py`) — own logging configuration
-and set it up **once, at startup**, using the shared helpers in
-`utils/logging_core.py`. Never configure logging as an import side effect.
+the CLI commands (`src/my_coding_agent/cli.py`, `evals/cli.py`) and the HTTP
+server (`viewer/server.py`) — own logging configuration and set it up
+**once, at startup**, using the shared helpers in `utils/logging_core.py`.
+Never configure logging as an import side effect.
 
 ---
 
@@ -598,8 +598,8 @@ Algorithm improvements first → data structure improvements → implementation 
 
 ### 35. HTTP API & Storage Conventions
 
-The web UI and viewer expose JSON APIs over stdlib `http.server`, and the web
-UI persists state in SQLite (`webui/store.py`). Keep both surfaces consistent.
+The viewer exposes JSON APIs over stdlib `http.server`. Any storage layer
+added for these or future JSON APIs follows the SQLite conventions below.
 
 #### REST route conventions
 
@@ -911,7 +911,7 @@ source = ["src/my_coding_agent"]
 
 [tool.coverage.report]
 show_missing = true
-omit = ["*/schema.py", "*/examples/simple.py"]
+omit = ["*/schema.py"]
 ```
 
 #### Multi-Environment Testing with Tox
