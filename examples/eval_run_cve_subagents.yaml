@@ -1,0 +1,36 @@
+# Example declarative eval run config: a multi-subagent CVE collection task.
+#
+# Run it with:
+#
+#   my-coding-agent-eval run --config examples/eval_run_cve_subagents.yaml
+#
+# Exit codes: 2 if the config fails validation (no agent run happens),
+# 0 if every check passes, 1 if any check fails.
+#
+# Only `exact_match` is registered as a config-loadable evaluator today, so
+# both checks below are `contains` checks against the final markdown output
+# rather than checks on subagent behavior itself.
+
+llm:
+  api_url: http://127.0.0.1:8321/v1
+  model: Qwen3.6-35B-A3B-6bit
+  api_key_env: OMLX_API_KEY  # pragma: allowlist secret
+  timeout: 30
+
+run:
+  system_prompt: "You are a coding assistant completing a single evaluation task."
+  task: |
+    Use subagents to achieve this task:
+    subagent1: collect the most recently added CVEs in the CISA KEV database via https://vulnerability.circl.lu/api/cisa_kev/ (expected_report: the CVE ids and summary you found, as a short list)
+    subagent2: collect the most recently added CVEs in the GitHub Advisories database via https://api.github.com/advisories (expected_report: the CVE ids and summary you found, as a short list)
+    Then summarize both into one markdown table.
+  max_steps: 30
+
+evaluation:
+  checks:
+    - name: has-cve-id
+      evaluator: exact_match
+      expected: { contains: "CVE-" }
+    - name: has-markdown-table
+      evaluator: exact_match
+      expected: { contains: "|" }
