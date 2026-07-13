@@ -3,10 +3,10 @@
 import json
 from pathlib import Path
 
-from my_coding_agent.pipeline.nodes.agent import AgentNode
 from my_coding_agent.engine.checkpoint import Checkpoint
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
 from my_coding_agent.engine.tool_registry.skills import Skill
+from my_coding_agent.pipeline.nodes.agent import AgentNode
 from my_coding_agent.utils import detach_session_log
 
 _SYSTEM = {"role": "system", "content": "SYSTEM PROMPT (stable)"}
@@ -109,7 +109,9 @@ def _capture_delegate_child(mocker, skills):
         captured.update(kwargs)
         return fake
 
-    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_node)
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_node
+    )
     reg = ToolsRegistry(skills=skills)
     reg._tools = [{"type": "function", "function": {"name": "use_skill"}}]
     reg.delegate(task="do X")

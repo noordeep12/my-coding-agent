@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from my_coding_agent.pipeline.nodes.agent import AgentNode as Agent
 from my_coding_agent.engine.checkpoint import (
     Checkpoint,
     checkpoint_path,
@@ -26,6 +25,7 @@ from my_coding_agent.engine.llm import LLM
 from my_coding_agent.engine.llm.errors import LLMHTTPStatusError, LLMTransportError
 from my_coding_agent.engine.schema import REPORT_SOURCE_FALLBACK
 from my_coding_agent.pipeline.context import RunContext
+from my_coding_agent.pipeline.nodes.agent import AgentNode as Agent
 from my_coding_agent.pipeline.nodes.context_guard import ContextGuardNode
 from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
 from my_coding_agent.pipeline.nodes.tool_routing import (
@@ -1502,7 +1502,9 @@ def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
         "HTTP 400", status_code=400, retryable=False
     )
     failed_cont.execute.return_value = [{"role": "assistant", "content": "partial"}]
-    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", return_value=failed_cont)
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent.AgentNode", return_value=failed_cont
+    )
 
     ctx = _make_ctx(
         agent.llm,

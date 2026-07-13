@@ -21,7 +21,9 @@ def _delegate_system_prompt(mocker):
         captured["messages"] = kwargs["messages"]
         return fake_agent
 
-    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node)
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node
+    )
     ToolsRegistry().delegate(task="do X", known_facts="ctx")
     return captured["messages"][0]["content"]
 

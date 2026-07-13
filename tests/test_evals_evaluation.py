@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from my_coding_agent.pipeline.nodes.agent import AgentNode
 from my_coding_agent.evals import evaluation as ev
+from my_coding_agent.pipeline.nodes.agent import AgentNode
 
 
 def _dirs(tmp_path):
