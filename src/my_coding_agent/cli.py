@@ -134,7 +134,9 @@ def _read_interactive_prompt() -> str:
         history=FileHistory(str(_HISTORY_FILE)),
         key_bindings=kb,
         multiline=True,
-        prompt_continuation=lambda width, line_number, wrap_count: (
+        # prompt_toolkit calls this with (width, line_number, wrap_count); only
+        # width is used, but the other two are required by its call contract.
+        prompt_continuation=lambda width, line_number, wrap_count: (  # noqa: ARG005
             "  " + "·" * (width - 2)
         ),
         enable_history_search=True,
