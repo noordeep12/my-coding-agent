@@ -83,20 +83,18 @@ src/my_coding_agent/
 │   ├── sumcheck.py              ← Deterministic, LLM-free usage sum-check over a session tree (--check)
 │   └── _vendor/                 ← Offline-vendored UI libs (Preact, hooks, htm) — no CDN
 │
-├── evals/                       ← Repeatable case runner and result store — leaf package (issue #139)
-│   ├── __init__.py              ← Re-export facade (load_case_set, run_case_set, …); import registers the judge scorer
+├── evals/                       ← Declarative-run-config scoring and result store — leaf package (issue #139)
+│   ├── __init__.py              ← Re-export facade (EvalCase, compare_runs, …); import registers the judge scorer
 │   ├── schema.py                ← EvalCase/EvalScore frozen dataclasses + RESULT_SCHEMA_VERSION
-│   ├── cases.py                 ← load_case_set(): one EvalCase per *.json file + save/delete writers
-│   ├── datasets.py              ← Versioned case-id collections: append-only versions.jsonl (issue #141)
 │   ├── scoring.py               ← Scorer protocol + registry; ExactMatchScorer baseline
-│   ├── runner.py                ← run_case_set(): isolated per-case agent run + scoring + aggregates
+│   ├── runner.py                ← Shared agent-run helpers (_build_tools, _final_output) for run_config_file.py
 │   ├── results.py               ← EvalRunResult: atomic write + round-trip load of result.json
 │   ├── compare.py               ← Two-run regression gate: metric deltas + pass↔fail flips + verdict (issue #142)
 │   ├── trajectory.py            ← TrajectoryScorer: scores the execution path over four dimensions (issue #140)
 │   ├── judge.py                 ← Rubric-based LLM judge scorer + calibration (issue #103)
 │   ├── evaluation.py            ← Evaluation/RunConfig/EvalConfig domain models + run_evaluation() (issue #162)
 │   ├── run_config_file.py       ← Declarative YAML run config: load/validate + execute-from-config (issue #192)
-│   └── cli.py                   ← my-coding-agent-eval console script (run + compare subcommand)
+│   └── cli.py                   ← my-coding-agent-eval console script (compare subcommand only)
 │
 ├── utils/                       ← Generic helpers
 │   ├── __init__.py              ← Re-export facade (get_logger, print_banner, etc.)
@@ -249,23 +247,20 @@ The read-side of the observability system. Separated from `observability/` becau
 
 A leaf package: depends one-way on `engine`/`pipeline` (to drive `AgentNode.execute`) and never the reverse. Turns "did this change help or hurt?" from anecdote into a repeatable, scored, persisted answer.
 
-All exception classes here (`UnknownScorerError`, `RubricError`, `JudgeError`, `DatasetError`, `CaseNotFoundError`, `EvaluationError`, `DatasetVersionMismatchError`) inherit `utils.exceptions.MyCodingAgentError` per §29 (issue #179), so a caller catching the project-wide base handles evals failures too; a conformance test (`tests/test_exceptions.py`) enforces this for every exception class under `src/my_coding_agent/`.
+All exception classes here (`UnknownScorerError`, `RubricError`, `JudgeError`, `EvaluationError`, `DatasetVersionMismatchError`) inherit `utils.exceptions.MyCodingAgentError` per §29 (issue #179), so a caller catching the project-wide base handles evals failures too; a conformance test (`tests/test_exceptions.py`) enforces this for every exception class under `src/my_coding_agent/`.
 
-- **`schema.py`** — `EvalCase` (id, task prompt, scorer ref, expected/threshold payload, optional dataset ref + tags) and `EvalScore` (case id, pass/fail, numeric metrics dict, per-check detail, optional `session_id` — additive, `None` on records predating it, issue #193) frozen dataclasses; `RESULT_SCHEMA_VERSION`. Stdlib-only leaf, same convention as `engine/sandbox/schema.py`.
-- **`cases.py`** — `load_case_set(case_dir)` loads one `EvalCase` per `*.json` file; a malformed file (bad JSON, missing key, wrong type) or a duplicate id is skipped with a warning rather than failing the whole set.
+- **`schema.py`** — `EvalCase` (id, task prompt, scorer ref, expected/threshold payload, optional dataset ref + tags — constructed internally by `run_config_file.py` per config, never loaded from a file) and `EvalScore` (case id, pass/fail, numeric metrics dict, per-check detail, optional `session_id` — additive, `None` on records predating it, issue #193) frozen dataclasses; `RESULT_SCHEMA_VERSION`. Stdlib-only leaf, same convention as `engine/sandbox/schema.py`.
 - **`scoring.py`** — `Scorer` protocol (`score(case, run_result) -> EvalScore`); `RunResult` (final output text + a trace handle — the run's session dir/id, not a parsed `TraceSession`, so the baseline scorer doesn't pay for `viewer.reader` parsing it doesn't need); `ExactMatchScorer`, the one baseline deterministic scorer (`equals`/`contains` check on the final output); a module-level registry (`resolve_scorer`/`register_scorer`) keyed by the case's scorer ref — the single extension point future trajectory (#140) and judge (#103) scorers register against without changing the runner.
-- **`runner.py`** — `run_case_set(cases)` runs each case's agent turn in a fresh `tempfile.TemporaryDirectory`, `os.chdir`-ing into it for the run's duration (restored in `finally`) since `AgentNode` has no workspace parameter and always resolves its session dir off `Path.cwd()` — the same isolation idiom already used by `monkeypatch.chdir(tmp_path)` across the test suite. Builds its own minimal system prompt + full `ToolRegistry` toolset rather than importing the CLI's private `_build_fresh_agent` (`cli.py`), since reaching into another entrypoint module's underscore-prefixed internals would be a layering violation. A case whose agent run raises, or whose `agent.failure_error` is set, is scored as a failed case via `RunResult.errored`, not a crashed runner; the loop continues to the remaining cases. Aggregates per-case scores into run-level metrics (`pass_rate`).
-- **`results.py`** — `EvalRunResult` (schema version, run id, timestamp, agent version, model, dataset ref, per-case `EvalScore`s, aggregate metrics); `write_run_result` writes atomically (`tempfile.mkstemp` + `os.replace`) under `.my_coding_agent/evals/<run_id>/result.json`; `load_run_result` round-trips it back, ignoring unknown keys so a reader written against an older schema version tolerates a newer record. After the atomic write, `_write_verdict_artifacts` (issue #193) writes a `verdict.json` — `{run_id, case_id, passed, metrics, detail, result_path}` — into `.my_coding_agent/<session_id>/` for each score naming a session whose directory still exists on disk (the real-cwd run paths; the case runner's temp-workspace sessions are gone before the result is written and get no artifact, by design), so a verdict is reachable starting from only a session id without scanning every result record. A write failure logs a warning and never fails the run — same fault-tolerance posture as `tool_execution`'s `_write_artifact_file`; trace files (`events.jsonl`, `session_data.json`) are never touched.
-- **`reporting.py`** — `render_verdict(result)` (issue #193): the one shared terminal renderer for a completed run — per-check status/id/metrics then wrapped `detail`/rationale (judge verdicts' `criteria`/`overall_rationale` get dedicated formatting, other `detail` shapes fall back to generic key/value lines), then the run-level summary line. `cli.py`'s bare invocation calls it after `write_run_result`; the `yaml-run-config` change's `run` subcommand (issue #192) is meant to call the same function so both terminal paths render identically.
-- **`cli.py`** — `my-coding-agent-eval` console script (Click): the root command (`--cases`, default `.my_coding_agent/evals/cases/`) runs a case set, writes the result record, renders the full per-check verdict via `reporting.render_verdict` (issue #193), and exits non-zero on any case failure or an empty case set; it is a `click.group(invoke_without_command=True)` rather than a plain command so its existing `--cases` invocation is unchanged while also hosting the `compare` subcommand below.
-- **`compare.py`** — `evals/compare.py` (issue #142): two-run regression gate consuming persisted #139 result records — reads only what's already on disk, no re-run. `compare_runs(baseline, candidate)` computes per-metric aggregate deltas plus the per-case pass↔fail flip set (`CaseFlip`, with `is_regression` true only for pass→fail), so a flat aggregate can't hide a subset regression. It uses the exact `id@vVERSION` stamp already carried on `EvalRunResult.dataset` (`datasets.dataset_ref`) as the comparability guard: a dataset mismatch raises `DatasetVersionMismatchError` by default, or is downgraded to a printed warning via `allow_version_mismatch=True` — a metric move against a changed test set is not a real signal, so refusing is the default rather than the override. `ThresholdConfig` (per-metric floors + a `no_case_regressed` rule, default on) and `evaluate_verdict` turn the comparison into a `Verdict(passed, reasons)`, with a reason string naming every violated floor and every regressed case id — never a silent failure. `cli.py`'s `compare` subcommand (`my-coding-agent-eval compare A B`, args each either a run id under `.my_coding_agent/evals/` or a direct result-directory path) wires this into a CI gate: prints deltas/flips/verdict, exits `0`/non-zero mirroring `my-coding-agent-webui --check`, advisory to a human merge decision and never an auto-merge.
+- **`runner.py`** — `_build_tools()`/`_final_output()`: the minimal system-prompt-free toolset and final-assistant-message extraction shared by a config-driven run (`run_config_file.py`), kept separate from the CLI's private `_build_fresh_agent` (`cli.py`) since reaching into another entrypoint module's underscore-prefixed internals would be a layering violation. (The former case-set runner, `run_case_set`/isolated-temp-workspace execution, was removed along with the JSON case-file feature — see the note below.)
+- **`results.py`** — `EvalRunResult` (schema version, run id, timestamp, agent version, model, dataset ref, per-case `EvalScore`s, aggregate metrics); `write_run_result` writes atomically (`tempfile.mkstemp` + `os.replace`) under `.my_coding_agent/evals/<run_id>/result.json`; `load_run_result` round-trips it back, ignoring unknown keys so a reader written against an older schema version tolerates a newer record. After the atomic write, `_write_verdict_artifacts` (issue #193) writes a `verdict.json` — `{run_id, case_id, passed, metrics, detail, result_path}` — into `.my_coding_agent/<session_id>/` for each score naming a session whose directory still exists on disk (real-cwd config-driven runs; a write failure logs a warning and never fails the run — same fault-tolerance posture as `tool_execution`'s `_write_artifact_file`; trace files (`events.jsonl`, `session_data.json`) are never touched.
+- **`reporting.py`** — `render_verdict(result)` (issue #193): the one shared terminal renderer for a completed run — per-check status/id/metrics then wrapped `detail`/rationale (judge verdicts' `criteria`/`overall_rationale` get dedicated formatting, other `detail` shapes fall back to generic key/value lines), then the run-level summary line. `cli.py`'s `--config` handling on the main `my-coding-agent` entrypoint calls it after `write_run_result`.
+- **`cli.py`** — `my-coding-agent-eval` console script (Click): a `click.group()` hosting only the `compare` subcommand below (no bare invocation). A run is always produced elsewhere — via `uv run my-coding-agent --config <run.yaml>` (`src/my_coding_agent/cli.py`, folded in when the `run` subcommand was removed) — so this entrypoint's job is purely gating two persisted results against each other.
+- **`compare.py`** — `evals/compare.py` (issue #142): two-run regression gate consuming persisted #139 result records — reads only what's already on disk, no re-run. `compare_runs(baseline, candidate)` computes per-metric aggregate deltas plus the per-case pass↔fail flip set (`CaseFlip`, with `is_regression` true only for pass→fail), so a flat aggregate can't hide a subset regression. It uses the exact string already carried on `EvalRunResult.dataset` (`"config:<path>"` for a config-driven run) as the comparability guard: a mismatch raises `DatasetVersionMismatchError` by default, or is downgraded to a printed warning via `allow_version_mismatch=True` — a metric move against a changed config is not a real signal, so refusing is the default rather than the override. `ThresholdConfig` (per-metric floors + a `no_case_regressed` rule, default on) and `evaluate_verdict` turn the comparison into a `Verdict(passed, reasons)`, with a reason string naming every violated floor and every regressed case id — never a silent failure. `cli.py`'s `compare` subcommand (`my-coding-agent-eval compare A B`, args each either a run id under `.my_coding_agent/evals/` or a direct result-directory path) wires this into a CI gate: prints deltas/flips/verdict, exits `0`/non-zero mirroring `my-coding-agent-webui --check`, advisory to a human merge decision and never an auto-merge.
 - **`trajectory.py`** — `TrajectoryScorer` (issue #140): scores a run's execution *path*, not just its final answer, registered under the `"trajectory"` ref. `load_trajectory(session_dir)` reuses `viewer.reader.load_session` for the parsed trace and reads `session_data.json`'s `tool_records` + cost rollup (`CostRollup`) — the same source `RunResult.session_dir` points at. Four deterministic dimension functions each return a `DimensionScore` (`value` in `[0, 1]` + structured `detail`): `score_tool_selection` (flags `not_found` — off-toolset — outcomes, keyed off the literal `"not found"`/`"wrong arguments for"` substrings `engine/tool_execution`'s `invoke_tool` always embeds in a failure's `error` text, since the reason isn't persisted as its own field), `score_argument_validity` (flags `wrong_args` outcomes), `score_error_handling` (replays `pipeline.anomaly.trailing_streak` over successive prefixes of `tool_records` — the same signal `AnomalyDetectNode` computes live, one step at a time — to catch a same-signature failure streak the run never reacted to, even if a later call broke it), and `score_efficiency` (steps/tokens/wall-clock from the cost rollup, scored against an optional case-supplied `EfficiencyBaseline`, plus a baseline-free `score_redundancy` sub-signal: work performed after the last call to a state-changing tool — `STATE_CHANGING_TOOLS = {"bash", "write_file"}`, a conservative allowlist rather than trying to classify individual `bash` commands). `TrajectoryScorer.score` averages the four dimension values into one `EvalScore`, passing at/above `case.expected["pass_threshold"]` (default `0.7`).
 - **`judge.py`** — rubric-based LLM judge (issue #103), the only non-deterministic scorer. A `Rubric` (declared criteria, a shared integer score scale, per-criterion anchors) is either a disk JSON artifact loaded by `load_rubric` or an inline mapping of the same shape declared directly in `case.expected["rubric"]` (issue #200) — `resolve_rubric` branches on the value's type (a mapping triggers the inline path, anything else resolves as a path) and both forms validate through the same `_rubric_from_dict`; a case never grades against a free-form "is this good?" prompt, and a malformed rubric (inline or on disk) raises `RubricError` rather than falling back to one. `score_with_judge` makes one bounded model call through `engine.llm` tagged with the distinct `CALL_KIND_JUDGE` call kind (so judge cost is captured and attributable like any other call) and parses the response into a `JudgeVerdict` — a score + rationale per criterion plus an overall score/rationale, so systematic judge bias (verbosity/confidence preference) is inspectable in the persisted result rather than hidden behind one number. Response parsing first strips `<think>...</think>` reasoning, then extracts the JSON candidate — the last fenced ` ```json ` block if present (the model's actual answer, which follows any illustrative example it may have echoed earlier in its own reasoning), else the outermost `{...}` span, else `JudgeError` — and, before any of that, checks `extract_finish_reason` (`engine/llm/parsing.py`): a `finish_reason == "length"` (truncated) response raises `JudgeError` immediately rather than risking a partial or example snippet being mistaken for the real verdict. `JudgeScorer` adapts a `JudgeVerdict` to the `scoring.Scorer` contract and self-registers under the `"judge"` ref on import; an errored agent run, missing/malformed rubric, truncated response, or unparseable verdict are all recorded as a failed `EvalScore` with the reason in `detail`, never a crashed run. `calibrate` scores a human-labelled set with the judge and reports agreement via `cohens_kappa`, flagging the judge `reliable=False` when agreement falls below `DEFAULT_RELIABILITY_THRESHOLD` rather than letting an uncalibrated judge be silently trusted.
-- **`run_config_file.py`** — declarative YAML run config (issue #192): a single plain-text YAML file as the complete, self-contained definition of an eval/pipeline run (LLM connection, prompts, run parameters, inline evaluation checks — an example lives at `examples/eval_run_config.yaml`), so it can be read/diffed/edited without a running server or the web UI. `load_config_file` parses with `yaml.safe_load` and validates before anything runs — malformed YAML, an unknown top-level/section key, a missing `run.task`, an empty or invalid `evaluation.checks`, an unknown evaluator ref, or a raw `llm.api_key` value (rejected in favor of `api_key_env`, an environment-variable *name*, never a secret value) are collected and raised together as one `ConfigValidationError`. Connection fields resolve config value → environment variable → documented default, mirroring `webui/admin.py`'s resolution order with "config" replacing "saved settings". The parsed `llm`/`run` sections map onto the existing `RunConfig` model and `evaluation.checks` onto the existing `Check` model — no parallel schema; deliberately does not accept `cases`/`dataset` references (that would duplicate the same "list of scored assertions" concept the case/dataset stores already own — see `evals/cases.py`/`evals/datasets.py` — rather than add a second one). `execute_from_config` reuses existing machinery only: the config's `task` runs as one real-cwd agent turn (mirroring `evaluation.run_evaluation`, so the session lands under the project's `.my_coding_agent/`, visible to the Traces tab), scored against every inline check via the scorer registry, aggregated into one `EvalRunResult` stamped with the config file's path and a SHA-256 content hash (`EvalRunResult.config_path`/`config_hash`, additive fields) so a result stays traceable to the exact configuration version that produced it. `cli.py`'s `run` subcommand (`my-coding-agent-eval run --config <file>`) wires this in: a validation failure exits `2` with every problem named, before any agent run or session directory is created; a scored run exits `0` on pass, `1` on fail. `_score_checks` stamps each `EvalScore` with `run_result.session_id` (mirroring `evaluation.py`'s identical `replace(...)` call) so `results._write_verdict_artifacts` (issue #196) can locate the session directory and write its `verdict.json` sibling — without it, a config-driven run's session would never carry a discoverable verdict (session-verdict-visibility, issue #198).
+- **`run_config_file.py`** — declarative YAML run config (issue #192): a single plain-text YAML file as the complete, self-contained definition of an eval/pipeline run (LLM connection, prompts, run parameters, inline evaluation checks — an example lives at `examples/eval_run_config.yaml`), so it can be read/diffed/edited without a running server or the web UI. `load_config_file` parses with `yaml.safe_load` and validates before anything runs — malformed YAML, an unknown top-level/section key, a missing `run.task`, an empty or invalid `evaluation.checks`, an unknown evaluator ref, or a raw `llm.api_key` value (rejected in favor of `api_key_env`, an environment-variable *name*, never a secret value) are collected and raised together as one `ConfigValidationError`. Connection fields resolve config value → environment variable → documented default, mirroring `webui/admin.py`'s resolution order with "config" replacing "saved settings". The parsed `llm`/`run` sections map onto the existing `RunConfig` model and `evaluation.checks` onto the existing `Check` model — no parallel schema. `execute_from_config` reuses existing machinery only: the config's `task` runs as one real-cwd agent turn (mirroring `evaluation.run_evaluation`, so the session lands under the project's `.my_coding_agent/`, visible to the Traces tab), scored against every inline check via the scorer registry, aggregated into one `EvalRunResult` stamped with the config file's path and a SHA-256 content hash (`EvalRunResult.config_path`/`config_hash`, additive fields) so a result stays traceable to the exact configuration version that produced it. The main entrypoint's `--config <file>` flag (`uv run my-coding-agent --config <file>`, `src/my_coding_agent/cli.py`) wires this in: a validation failure exits `2` with every problem named, before any agent run or session directory is created; a scored run exits `0` on pass, `1` on fail. `_score_checks` stamps each `EvalScore` with `run_result.session_id` (mirroring `evaluation.py`'s identical `replace(...)` call) so `results._write_verdict_artifacts` (issue #196) can locate the session directory and write its `verdict.json` sibling — without it, a config-driven run's session would never carry a discoverable verdict (session-verdict-visibility, issue #198).
 
-`.my_coding_agent/evals/cases/` and `.my_coding_agent/evals/datasets/` (un-ignored via the same `.gitignore` negation pattern as `.my_coding_agent/skills/`) are the on-disk home for case-set/dataset content this package's own `cli.py`/`compare.py`/CLI-driven regression workflow reads and writes. As of the Evaluation entity (issue #162, see below) this content no longer seeds the (since-retired, issue #194) web UI's Evaluations tab, which read exclusively from `.my_coding_agent/evals/{evaluations,run_configs,eval_configs}/` — so the three example cases that used to ship here (`hello_world` exact-match, `trajectory_smoke` trajectory, `cve_aggregation` judge) were migrated into equivalent Evaluation/RunConfig/EvalConfig records instead of being duplicated in both places; nothing ships committed under either directory — they appear on disk only once a user creates a case or dataset, exactly as `evals.cases`/`evals.datasets` and the CLI expect. `.my_coding_agent/evals/rubrics/cve_aggregation_rubric.json` (also un-ignored, same pattern) stays live: the migrated `cve_aggregation` EvalConfig's judge Check still references it by path for delegation, source correctness, and synthesis quality scoring against live external APIs (CISA KEV via `vulnerability.circl.lu`, GitHub Advisories via `api.github.com`) rather than recorded fixtures — deliberate, since a fixed expected answer would defeat the point of judge-scoring it.
-
-`runner.py` scores a case from *inside* `_run_and_score_case`'s `tempfile.TemporaryDirectory` block, before the workspace (and the session dir nested under it) is torn down — a scorer that only reads `RunResult.final_output` (the baseline `ExactMatchScorer`) never noticed the workspace disappearing, but a trace-reading scorer like `TrajectoryScorer` needs `events.jsonl`/`session_data.json` to still be on disk when `Scorer.score` runs.
+**JSON case-file feature removed.** The former `cases.py` (`load_case_set`/`save_case`/`delete_case`, one `EvalCase` per `*.json` file under `.my_coding_agent/evals/cases/`) and `datasets.py` (versioned case-id collections under `.my_coding_agent/evals/datasets/<dataset_id>/versions.jsonl`, issue #141) were deleted, along with `runner.py`'s `run_case_set`/`_run_and_score_case` (isolated-`tempfile.TemporaryDirectory` per-case execution) and `cli.py`'s bare `my-coding-agent-eval`/`--cases` invocation — every eval run is now defined declaratively via YAML (`run_config_file.py`) rather than as a directory of loose case files. `EvalCase` itself stays (`schema.py`): `run_config_file.py` constructs one internally per config so scoring (`scoring.py`/`judge.py`/`trajectory.py`) has a single shared type to score against. `.my_coding_agent/evals/rubrics/cve_aggregation_rubric.json` (un-ignored via the same `.gitignore` negation pattern as `.my_coding_agent/skills/`) stays live: the `cve_aggregation` example config's judge check still references it by path for delegation, source correctness, and synthesis quality scoring against live external APIs (CISA KEV via `vulnerability.circl.lu`, GitHub Advisories via `api.github.com`) rather than recorded fixtures — deliberate, since a fixed expected answer would defeat the point of judge-scoring it.
 
 ### `utils/` — Generic Helpers
 
@@ -305,8 +300,13 @@ CLI (Click)
         System prompt: stable core (identity, tool-usage/safety rules, envelope
           contract, environment facts) + trailing timestamp — no tool docs, no
           repo state (tools reach the model only via the structured schema)
-        User prompt: task from --prompt / --interactive / default
+        User prompt: task from --prompt, else the interactive terminal UI
+          (default), else the hardcoded default task if nothing is entered
         Tools: all ToolRegistry methods
+  │
+  └── --config <file>: bypasses AgentNode's default wiring above and
+        dispatches through evals/run_config_file.py's execute_from_config()
+        instead (declarative YAML run: LLM connection, task, inline checks)
 ```
 
 ---
@@ -345,34 +345,16 @@ The Trace Explorer's machine-wide resource badge (`🖥 cpu/ram/gpu`, node-resou
 
 ---
 
-## Evals: datasets (issue #141)
+## Evals: datasets — removed
 
-`evals/datasets.py` (leaf module, no dependency on `engine`/`pipeline`) models a
-**dataset** — a named, ordered collection of eval case ids with a stable id
-and a **version** that bumps on every membership change. Each dataset lives
-under `.my_coding_agent/evals/datasets/<dataset_id>/versions.jsonl`, an
-append-only log of version records (`version`, `case_ids`, `op`, `note`,
-`created_at`); mutating a dataset (`add_case`, `retire_case`,
-`add_failure_case`) never rewrites history — it appends a new version record,
-so any prior version's membership stays loadable via
-`load_dataset(id, version=...)`. `add_failure_case` additionally writes a new
-case file (id, task, scorer ref, expected data) under
-`.my_coding_agent/evals/cases/`, turning a recorded run failure into a
-regression case. `list_datasets` enumerates every dataset at its current
-version for runner/comparison/dashboard consumers. Datasets reference cases
-by id only, not case content; `resolve_cases` resolves a dataset's ordered
-ids to loaded `EvalCase` records via `evals.cases.load_case_set` (#139), and
-`run_dataset` runs those cases through `evals.runner.run_case_set` and
-writes the result via `evals.results.write_run_result`, stamping the exact
-dataset id + version onto `EvalRunResult.dataset` as `"<id>@v<version>"` —
-the string the eval harness core result-record contract (#139) already
-reserves for the run's dataset reference — so a downstream comparison (#142)
-can tell whether two runs used the same dataset version. Nothing ships
-committed under `.my_coding_agent/evals/datasets/` — the former bundled
-`example` dataset (and the example cases it wrapped) was removed when the
-web UI's Evaluations tab moved to its own Evaluation records — so users
-create their own datasets from case ids that reference files under their
-cases directory.
+`evals/datasets.py` (versioned case-id collections, issue #141) and
+`evals/cases.py` (the JSON case-file store it resolved against) were deleted:
+every eval run is now defined declaratively via a YAML run config
+(`evals/run_config_file.py`, `uv run my-coding-agent --config <run.yaml>`)
+rather than as a case id resolved against a versioned dataset. `compare.py`'s
+comparability guard still works unchanged — it just compares whatever string
+is stamped on `EvalRunResult.dataset` (`"config:<path>"` for a config-driven
+run) rather than a `"<id>@v<version>"` dataset stamp.
 
 ## Evaluation entity: RunConfig + EvalConfig (issue #162)
 
@@ -384,8 +366,7 @@ hand per case, with no reusable "run recipe." `evals/evaluation.py` (leaf
 module, no dependency on `engine`/`pipeline` beyond driving `AgentNode` at
 run time) adds three frozen-dataclass domain models, one JSON file per
 object under `.my_coding_agent/evals/{run_configs,eval_configs,evaluations}/`
-(`_write`/`_read`/`_list`, the same one-file-per-object convention
-`evals/cases.py` uses):
+(`_write`/`_read`/`_list`, a one-file-per-object convention):
 
 - **`RunConfig`** — a persisted, reusable "how the agent runs": prompt
   template(s), model/provider, temperature/tokens/top_p, tool/memory/
@@ -396,8 +377,8 @@ object under `.my_coding_agent/evals/{run_configs,eval_configs,evaluations}/`
   multiple Evaluations.
 - **`EvalConfig`** — a persisted, reusable ordered `Rule -> Check` tree.
   Each `Check` (id, name, method label, evaluator ref, `expected`,
-  `threshold`) maps onto the exact same `expected` shape a dataset
-  case's `EvalCase.expected` already carries per scorer (`_check_expected`
+  `threshold`) maps onto the exact same `expected` shape `EvalCase.expected`
+  already carries per scorer (`_check_expected`
   translates a Check's `expected`/`method`/`threshold` onto the scorer
   registry's existing contract — no new scoring semantics). `EvalConfig`
   creation/update calls `validate_eval_config`, which resolves every
@@ -419,8 +400,7 @@ against that single run's output (`_score_checks`, via the existing
 scorer registry) and writes the result through the existing
 `results.write_run_result` — this module adds no new execution or scoring
 engine, only the binding, persistence, and orchestration on top of what
-`evals/runner.py` and `evals/scoring.py` already do. Unlike `runner.py`'s
-isolated-`tempfile.TemporaryDirectory`/`os.chdir` pattern for dataset cases,
+`evals/runner.py` and `evals/scoring.py` already do.
 `run_evaluation` runs in the process's actual current working directory —
 deliberately not isolated. Two things broke under isolation and drove this
 choice: `AgentNode`'s session directory always resolves off `Path.cwd()`
@@ -440,10 +420,4 @@ and the embedded two-pane Evaluations page (`webui/evals/server.py`) were
 removed with the rest of the web UI's Evals and Admin tabs (issue #194); the
 `evals/evaluation.py` domain models, persistence, and `run_evaluation` above
 are untouched and remain callable directly.
-
-Because `evals/cases.py` and `evals/evaluation.py` are independent
-persistence layers with no cross-references, migrating a dataset case into
-an Evaluation is a manual, one-time translation (construct an equivalent
-RunConfig + EvalConfig referencing the same rubric file path for a judge
-Check) — there is no automated sync or dual-write between the two systems.
 

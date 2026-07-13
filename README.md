@@ -62,14 +62,14 @@ It points to `main()` in `src/my_coding_agent/cli.py`. To change the default com
 ## CLI Usage
 
 ```bash
-# Default: run with the default commit-and-push task
+# Default: interactive paste mode (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel)
 uv run my-coding-agent
 
-# Custom prompt:
+# Custom prompt, skipping the interactive prompt:
 uv run my-coding-agent --prompt "Your task here"
 
-# Interactive paste mode (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel)
-uv run my-coding-agent --interactive
+# Run a declarative YAML run config end to end (LLM connection, task, inline checks)
+uv run my-coding-agent --config examples/eval_run_config.yaml
 
 # Resume a dead run from its last checkpoint (new session, linked to the dead one)
 uv run my-coding-agent --resume <session_id>
@@ -97,8 +97,8 @@ Local model time is the run's real cost, so a transient LLM failure must not thr
 
 | Option | Default | Description |
 |---|---|---|
-| `--prompt`, `-p` | default commit-and-push task | Task for the agent |
-| `--interactive`, `-i` | `False` | Read the task prompt interactively (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel) |
+| `--prompt`, `-p` | prompts interactively | Task for the agent; without it the agent reads the task interactively (Esc then Enter, or Meta/Alt+Enter to submit; Ctrl+C to cancel) |
+| `--config` | — | Path to a declarative YAML run config file (LLM connection, task, inline checks — see `examples/*.yaml`); runs non-interactively through the eval-run engine and exits `0` on pass, `1` on fail, `2` on invalid config |
 | `--max-steps` | `50` | Maximum pipeline step iterations |
 | `--resume` | — | Resume a dead session from its last checkpoint (`--resume <session_id>`); starts a new session linked back to the dead one |
 | `--resume-last` | `False` | Resume the most recently checkpointed session |
@@ -247,44 +247,11 @@ The **Traces** tab visualises sessions with an interactive pipeline DAG. The UI 
 
 ## Evals
 
-Run the agent against a fixed, named set of tasks and get back a repeatable, scored result — instead of "I tried it and it looked good".
+Run the agent against a task with declared pass/fail checks and get back a repeatable, scored result — instead of "I tried it and it looked good". A run is defined by a [declarative YAML run config](#declarative-yaml-run-config) (task, connection, inline checks) and executed with `uv run my-coding-agent --config <run.yaml>`.
 
-An eval **case** is a plain JSON file: a task prompt, a scorer ref, and the scorer's expected/threshold data.
+Each check is scored by a scorer (`evals.scoring.register_scorer` is the extension point). Three ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output); `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number; and `judge`, the rubric-based LLM judge — it grades the output against a declared rubric (criteria, score scale, per-criterion anchors), declared either inline in the config or loaded from a rubric JSON file by path, never a free-form "is this good?" prompt. A versioned, self-describing result record — run identity (agent/model version, config path/hash, timestamp), per-check scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`. The full verdict — per-check pass/fail, score, and rationale/detail — prints to the terminal at run end (not just the summary pass-rate line), and each score also carries the session id of the agent run that produced it, so it's traceable back to the run's evidence rather than only its aggregate result.
 
-```json
-{
-  "id": "hello_world",
-  "task": "Say exactly the word 'pong' and nothing else.",
-  "scorer": "exact_match",
-  "expected": { "contains": "pong" }
-}
-```
-
-Point the runner at a directory of your own case files (`--cases <dir>`; the default is `.my_coding_agent/evals/cases/`). No example cases ship committed, so the bare invocation exits `1` with "No eval cases found" until you add case files to the default directory:
-
-```bash
-my-coding-agent-eval --cases path/to/case/dir
-my-coding-agent-eval               # reads .my_coding_agent/evals/cases/; exits 1 while it's empty
-```
-
-Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores it with the case's scorer (`evals.scoring.register_scorer` is the extension point for scorers). Three ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output); `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number; and `judge`, the rubric-based LLM judge — it grades the output against a declared rubric (criteria, score scale, per-criterion anchors), declared either inline in the case/config or loaded from a rubric JSON file by path, never a free-form "is this good?" prompt. A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`. The full verdict — per-check pass/fail, score, and rationale/detail — prints to the terminal at run end (not just the summary pass-rate line), and each score also carries the session id of the agent run that produced it, so it's traceable back to the run's evidence rather than only its aggregate result.
-
-Every score names the session id of the agent run that produced it (`EvalScore.session_id`, additive — older records without it load with `None`). For a run whose session directory survives past the run (the real-cwd paths: `run_evaluation` and config-driven runs; the case runner's temp-workspace sessions are torn down before the result is written and are exempt by design), a `verdict.json` — `{run_id, case_id, passed, metrics, detail, result_path}` — is written into `.my_coding_agent/<session_id>/` alongside the trace, so a verdict is reachable starting from only a session id without scanning every result record. It's a plain sibling file; `events.jsonl`/`session_data.json` are never touched, and the write is fault-tolerant (a failure logs a warning and never fails the run).
-
-### Datasets
-
-A **dataset** groups cases into a named, versioned collection, so a result records exactly which cases (and which version of that set) it ran against — a static "golden set" stops meaning anything once it's memorised, and a dataset's version lets a later comparison tell whether two runs are even comparable. Datasets live under `.my_coding_agent/evals/datasets/<dataset_id>/`. Nothing ships committed there, so you create your own from case ids that reference `*.json` files under your cases directory:
-
-```python
-from my_coding_agent.evals.datasets import create_dataset, add_case, retire_case, run_dataset, load_dataset
-
-create_dataset("smoke", ["hello_world"])    # ids of *.json case files under .my_coding_agent/evals/cases/
-add_case("smoke", "another_case")       # bumps to version 2
-retire_case("smoke", "hello_world")     # bumps to version 3; version 1/2 still loadable
-
-dataset = load_dataset("smoke")         # latest version by default
-result = run_dataset(dataset)           # result.dataset == "smoke@v3"
-```
+Every score names the session id of the agent run that produced it (`EvalScore.session_id`, additive — older records without it load with `None`). Because a config-driven run executes in the real working directory, its session directory survives past the run, so a `verdict.json` — `{run_id, case_id, passed, metrics, detail, result_path}` — is written into `.my_coding_agent/<session_id>/` alongside the trace, so a verdict is reachable starting from only a session id without scanning every result record. It's a plain sibling file; `events.jsonl`/`session_data.json` are never touched, and the write is fault-tolerant (a failure logs a warning and never fails the run).
 
 ### Comparing runs and gating CI
 
@@ -295,9 +262,7 @@ my-coding-agent-eval compare <baseline_run_id> <candidate_run_id>
 my-coding-agent-eval compare <baseline_run_id> <candidate_run_id> --floor pass_rate=0.9
 ```
 
-Each argument is either a run id under `.my_coding_agent/evals/` or a path to a result directory. The comparison reports per-metric deltas *and* which individual cases flipped pass↔fail, so a flat aggregate can't hide a subset regression. It refuses to compare two runs stamped with different dataset id/version (`--allow-cross-version` downgrades this to a loud warning instead). A configurable `--floor METRIC=VALUE` (repeatable) and the default "no previously-passing case regressed" rule turn the comparison into a verdict; the command exits `0` on pass and non-zero on a regression — the same exit-code pattern as `my-coding-agent-webui --check` — always naming the violated floor or regressed case rather than failing silently.
-
-`add_failure_case` turns a recorded run failure into a new regression case file and adds it to a dataset in one step. Every mutation appends a new version rather than rewriting history, so `load_dataset("smoke", version=1)` still recovers the original membership.
+Each argument is either a run id under `.my_coding_agent/evals/` or a path to a result directory. The comparison reports per-metric deltas *and* which individual checks flipped pass↔fail, so a flat aggregate can't hide a subset regression. It refuses to compare two runs stamped with a different `dataset` value — for config-driven runs this is `config:<path>`, so comparing results from two different config files is refused by default (`--allow-cross-version` downgrades this to a loud warning instead). A configurable `--floor METRIC=VALUE` (repeatable) and the default "no previously-passing check regressed" rule turn the comparison into a verdict; the command exits `0` on pass and non-zero on a regression — the same exit-code pattern as `my-coding-agent-webui --check` — always naming the violated floor or regressed check rather than failing silently.
 
 ### Declarative YAML run config
 
@@ -357,8 +322,8 @@ Both forms validate through the same rules and produce the same scoring behavior
 A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml), and [`examples/eval_run_cve_subagents.yaml`](examples/eval_run_cve_subagents.yaml) / [`examples/eval_run_cve_subagents_rubric_path.yaml`](examples/eval_run_cve_subagents_rubric_path.yaml) show the inline and path forms of a `judge` check side by side:
 
 ```bash
-my-coding-agent-eval run --config examples/eval_run_config.yaml
-my-coding-agent-eval run --config path/to/your/run.yaml
+uv run my-coding-agent --config examples/eval_run_config.yaml
+uv run my-coding-agent --config path/to/your/run.yaml
 ```
 
 The run executes in the real working directory (unlike the isolated-workspace case runner): its session lands under `.my_coding_agent/`, visible in the **Traces** tab. A validation failure (malformed YAML, unknown key, missing field, unknown evaluator, or a raw API key) prints every problem found and exits `2` without starting an agent run; a scored run exits `0` on pass, `1` on fail. The written result record (`.my_coding_agent/evals/<run_id>/result.json`) carries the config file's path and a content hash, so it stays traceable to the exact configuration version that produced it.

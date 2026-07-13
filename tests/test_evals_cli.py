@@ -2,55 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
-import yaml
 from click.testing import CliRunner
 
 from my_coding_agent.evals.cli import main
 from my_coding_agent.evals.results import build_run_result, write_run_result
 from my_coding_agent.evals.schema import EvalScore
-from my_coding_agent.pipeline.nodes.agent import AgentNode
-
-
-def _write_case(path, **fields):
-    path.write_text(json.dumps(fields))
-
-
-def test_cli_runs_example_set_end_to_end_and_exits_zero(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-
-    def fake_execute(self, max_steps=50):
-        self.failure_error = None
-        return [{"role": "assistant", "content": "pong"}]
-
-    mocker.patch.object(AgentNode, "execute", fake_execute)
-
-    case_dir = tmp_path / "cases"
-    case_dir.mkdir()
-    _write_case(
-        case_dir / "hello_world.json",
-        id="hello_world",
-        task="say pong",
-        scorer="exact_match",
-        expected={"contains": "pong"},
-    )
-
-    result = CliRunner().invoke(main, ["--cases", str(case_dir)])
-
-    assert result.exit_code == 0, result.output
-    assert "pass rate 100%" in result.output
-    assert (tmp_path / ".my_coding_agent" / "evals").exists()
-
-
-def test_cli_exits_nonzero_when_no_cases_found(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    empty_dir = tmp_path / "empty"
-    empty_dir.mkdir()
-
-    result = CliRunner().invoke(main, ["--cases", str(empty_dir)])
-
-    assert result.exit_code == 1
 
 
 def test_compare_exits_zero_on_clean_pair(tmp_path, monkeypatch):
@@ -110,45 +66,6 @@ def test_compare_by_run_id_under_default_results_root(tmp_path, monkeypatch):
     result = CliRunner().invoke(main, ["compare", baseline.run_id, candidate.run_id])
 
     assert result.exit_code == 0, result.output
-
-
-def test_run_config_cmd_exits_zero_on_pass(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-
-    def fake_execute(self, max_steps=50):
-        self.failure_error = None
-        return [{"role": "assistant", "content": "pong"}]
-
-    mocker.patch.object(AgentNode, "execute", fake_execute)
-
-    config_path = tmp_path / "run.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "run": {"task": "say pong"},
-                "evaluation": {
-                    "checks": [{"evaluator": "exact_match", "expected": "pong"}]
-                },
-            }
-        )
-    )
-
-    result = CliRunner().invoke(main, ["run", "--config", str(config_path)])
-
-    assert result.exit_code == 0, result.output
-    assert "verdict pass" in result.output
-
-
-def test_run_config_cmd_exits_two_on_invalid_config(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    config_path = tmp_path / "run.yaml"
-    config_path.write_text(yaml.safe_dump({"bogus": {}}))
-
-    result = CliRunner().invoke(main, ["run", "--config", str(config_path)])
-
-    assert result.exit_code == 2
-    assert "Invalid config" in result.output
-    assert not (tmp_path / ".my_coding_agent").exists()
 
 
 def test_compare_refuses_cross_version_by_default(tmp_path, monkeypatch):

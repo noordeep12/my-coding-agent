@@ -1,4 +1,9 @@
-"""``my-coding-agent-eval`` console entrypoint."""
+"""``my-coding-agent-eval`` console entrypoint.
+
+Runs are produced via ``uv run my-coding-agent --config <run.yaml>`` (see
+``cli.py``'s ``--config`` flag); this entrypoint only gates on the results
+two of those runs left behind.
+"""
 
 from __future__ import annotations
 
@@ -7,79 +12,18 @@ from pathlib import Path
 
 import click
 
-from .cases import load_case_set
 from .compare import (
     DatasetVersionMismatchError,
     ThresholdConfig,
     compare_runs,
     evaluate_verdict,
 )
-from .reporting import render_verdict
-from .results import RESULTS_ROOT, build_run_result, load_run_result, write_run_result
-from .run_config_file import ConfigValidationError, execute_from_config
-from .runner import run_case_set
-
-_DEFAULT_CASE_DIR = Path(".my_coding_agent") / "evals" / "cases"
+from .results import RESULTS_ROOT, load_run_result
 
 
-@click.group(invoke_without_command=True)
-@click.option(
-    "--cases",
-    "case_dir",
-    default=str(_DEFAULT_CASE_DIR),
-    show_default=True,
-    help="Directory containing one case per *.json file.",
-)
-@click.pass_context
-def main(ctx: click.Context, case_dir: str) -> None:
-    """Run a case set against the agent and write a scored result record."""
-    if ctx.invoked_subcommand is not None:
-        return
-    cases = load_case_set(Path(case_dir))
-    if not cases:
-        click.secho(f"No eval cases found under {case_dir}", fg="yellow", err=True)
-        sys.exit(1)
-
-    scores, aggregate_metrics = run_case_set(cases)
-    result = build_run_result(
-        dataset=case_dir, scores=scores, aggregate_metrics=aggregate_metrics
-    )
-    run_dir = write_run_result(result)
-
-    render_verdict(result)
-    click.echo(f"Result written to {run_dir}/result.json")
-    pass_rate = aggregate_metrics.get("pass_rate", 0.0)
-    sys.exit(0 if pass_rate == 1.0 else 1)
-
-
-@main.command("run")
-@click.option(
-    "--config",
-    "config_path",
-    required=True,
-    type=click.Path(),
-    help="Path to a declarative YAML run config file.",
-)
-def run_config_cmd(config_path: str) -> None:
-    """Load, validate, and execute a YAML run config end to end.
-
-    Runs entirely with no webui process or HTTP call. A validation failure
-    exits 2 with an actionable report and starts no agent run; a scored run
-    exits 0 on pass, 1 on fail.
-    """
-    path = Path(config_path)
-    try:
-        result, verdict = execute_from_config(path)
-    except ConfigValidationError as exc:
-        click.secho(f"Invalid config {path}:", fg="red", err=True)
-        for problem in exc.problems:
-            click.echo(f"  - {problem}", err=True)
-        sys.exit(2)
-
-    click.echo(f"Run {result.run_id}: verdict {verdict}")
-    render_verdict(result)
-    click.echo(f"Result written to {RESULTS_ROOT / result.run_id}/result.json")
-    sys.exit(0 if verdict == "pass" else 1)
+@click.group()
+def main() -> None:
+    """Gate eval runs on a pass/fail verdict."""
 
 
 def _resolve_run_dir(run: str) -> Path:

@@ -36,6 +36,12 @@ from my_coding_agent.engine.checkpoint import (
 )
 from my_coding_agent.engine.tool_execution import policy
 from my_coding_agent.engine.tool_registry import discover_skills
+from my_coding_agent.evals.reporting import render_verdict
+from my_coding_agent.evals.results import RESULTS_ROOT
+from my_coding_agent.evals.run_config_file import (
+    ConfigValidationError,
+    execute_from_config,
+)
 
 # ``use_skill`` is registered conditionally — only when skills are discovered —
 # so tool schemas stay byte-identical to today for a skill-free run (D5). It is
@@ -151,15 +157,22 @@ def _read_interactive_prompt() -> str:
     "--prompt",
     "-p",
     default=None,
+    show_default="prompts interactively in the terminal",
     metavar="TEXT",
-    help="Task for the agent.",
+    help="Task for the agent. Without this, the agent prompts interactively.",
 )
 @click.option(
-    "--interactive",
-    "-i",
-    is_flag=True,
-    default=False,
-    help="Read the task prompt interactively.",
+    "--config",
+    "config_path",
+    default=None,
+    show_default="none — run a normal agent session instead",
+    type=click.Path(),
+    metavar="PATH",
+    help=(
+        "Path to a declarative YAML run config file (LLM connection, task, "
+        "inline checks — see examples/*.yaml). Runs non-interactively through "
+        "the eval-run engine and exits 0 on pass, 1 on fail, 2 on invalid config."
+    ),
 )
 @click.option(
     "--max-steps",
@@ -172,6 +185,7 @@ def _read_interactive_prompt() -> str:
     "--resume",
     "resume_id",
     default=None,
+    show_default="none",
     metavar="SESSION_ID",
     help="Resume a dead session from its last checkpoint (new linked session).",
 )
@@ -179,12 +193,14 @@ def _read_interactive_prompt() -> str:
     "--resume-last",
     is_flag=True,
     default=False,
+    show_default=True,
     help="Resume the most recently checkpointed session.",
 )
 @click.option(
     "--no-safety-gate",
     is_flag=True,
     default=False,
+    show_default=True,
     help=(
         "Disable the dangerous-command refusal gate for this run "
         "(same effect as MCA_DISABLE_DANGEROUS_COMMAND_GATE=1). See SECURITY.md."
@@ -194,6 +210,7 @@ def _read_interactive_prompt() -> str:
     "--no-egress-filter",
     is_flag=True,
     default=False,
+    show_default=True,
     help=(
         "Disable the network egress filter for this run (same effect as "
         "MCA_DISABLE_EGRESS_FILTER=1). See SECURITY.md."
@@ -203,6 +220,7 @@ def _read_interactive_prompt() -> str:
     "--no-exfil-guard",
     is_flag=True,
     default=False,
+    show_default=True,
     help=(
         "Disable the secret-exfiltration guard for this run "
         "(same effect as MCA_DISABLE_EXFIL_GUARD=1). See SECURITY.md."
@@ -213,6 +231,7 @@ def _read_interactive_prompt() -> str:
     "use_sandbox",
     is_flag=True,
     default=False,
+    show_default=True,
     help=(
         "Run every bash subprocess inside an OS-level sandbox (macOS Seatbelt): "
         "writes confined to the workspace + temp allowlist, network denied by "
@@ -222,7 +241,7 @@ def _read_interactive_prompt() -> str:
 @click.version_option(version=__version__, prog_name="my-coding-agent")
 def main(
     prompt: str | None,
-    interactive: bool,
+    config_path: str | None,
     max_steps: int,
     resume_id: str | None,
     resume_last: bool,
@@ -233,11 +252,15 @@ def main(
 ) -> None:
     """Run the coding-agent pipeline.
 
+    With no arguments this always starts an interactive terminal session
+    (multi-line prompt, history, Esc-Enter to submit) — see \b--prompt to
+    skip it and \b--config to run a declarative YAML config instead.
+
     \b
     Examples:
       uv run my-coding-agent
       uv run my-coding-agent -p "write tests for llm.py"
-      uv run my-coding-agent -i
+      uv run my-coding-agent --config examples/eval_run_config.yaml
       uv run my-coding-agent --resume 3f9a1c2b4d5e
       uv run my-coding-agent --resume-last
     """
@@ -294,26 +317,55 @@ def main(
                 err=True,
             )
 
+    if config_path:
+        if resume_id or resume_last:
+            raise click.UsageError(
+                "--config cannot be combined with --resume/--resume-last."
+            )
+        _run_from_config(config_path)
+        return
+
     if resume_id or resume_last:
         agent = _build_resumed_agent(resume_id, resume_last)
     else:
-        agent = _build_fresh_agent(prompt, interactive)
+        agent = _build_fresh_agent(prompt)
 
     agent.execute(max_steps=max_steps)
     _exit_on_failure(agent)
 
 
-def _build_fresh_agent(prompt: str | None, interactive: bool) -> AgentNode:
-    """Construct a new run's agent from the prompt (interactive/flag/default)."""
-    if interactive:
+def _run_from_config(config_path: str) -> None:
+    """Load, validate, and execute a declarative YAML run config, then exit.
+
+    Mirrors the (now removed) ``my-coding-agent-eval run --config`` subcommand:
+    a validation failure exits 2 with every problem named, before any agent
+    run or session directory is created; a scored run exits 0 on pass, 1 on
+    fail.
+    """
+    path = Path(config_path)
+    try:
+        result, verdict = execute_from_config(path)
+    except ConfigValidationError as exc:
+        click.secho(f"Invalid config {path}:", fg="red", err=True)
+        for problem in exc.problems:
+            click.echo(f"  - {problem}", err=True)
+        sys.exit(2)
+
+    click.echo(f"Run {result.run_id}: verdict {verdict}")
+    render_verdict(result)
+    click.echo(f"Result written to {RESULTS_ROOT / result.run_id}/result.json")
+    sys.exit(0 if verdict == "pass" else 1)
+
+
+def _build_fresh_agent(prompt: str | None) -> AgentNode:
+    """Construct a new run's agent from --prompt, or the interactive UI by default."""
+    if prompt:
+        user_prompt = prompt
+    else:
         user_prompt = _read_interactive_prompt()
         if not user_prompt:
             click.secho("No prompt entered — using default.", fg="yellow", err=True)
             user_prompt = _DEFAULT_PROMPT
-    elif prompt:
-        user_prompt = prompt
-    else:
-        user_prompt = _DEFAULT_PROMPT
 
     # Discover skills once at session start (before the first LLM call). The
     # index is placed into the opening user message by AgentNode; the system
