@@ -462,3 +462,52 @@ def test_judge_scorer_malformed_rubric_fails_clearly(mocker, tmp_path):
     score = scorer.score(case, _run_result("a"))
     assert score.passed is False
     assert "not valid JSON" in score.detail["reason"]
+
+
+# --- inline rubric ----------------------------------------------------------
+
+
+def test_judge_scorer_inline_rubric_matches_path_form(mocker, tmp_path):
+    rubric_data = _well_formed_rubric_data()
+    rubric_path = _write_rubric(tmp_path, rubric_data)
+    response = _judge_json_response({"correctness": 5, "tone": 5}, overall_score=4.0)
+
+    path_scorer = JudgeScorer(llm=_fake_llm(mocker, response))
+    path_case = EvalCase(
+        id="c1",
+        task="2+2?",
+        scorer="judge",
+        expected={"rubric": str(rubric_path), "pass_threshold": 3.5},
+    )
+    path_score = path_scorer.score(path_case, _run_result("4"))
+
+    inline_scorer = JudgeScorer(llm=_fake_llm(mocker, response))
+    inline_case = EvalCase(
+        id="c1",
+        task="2+2?",
+        scorer="judge",
+        expected={"rubric": rubric_data, "pass_threshold": 3.5},
+    )
+    inline_score = inline_scorer.score(inline_case, _run_result("4"))
+
+    assert inline_score.passed == path_score.passed
+    assert inline_score.metrics == path_score.metrics
+    assert inline_score.detail == path_score.detail
+
+
+def test_judge_scorer_malformed_inline_rubric_fails_clearly(mocker):
+    scorer = JudgeScorer(llm=mocker.Mock())
+    data = _well_formed_rubric_data()
+    del data["scale"]
+    case = EvalCase(
+        id="c1",
+        task="q",
+        scorer="judge",
+        expected={"rubric": data, "pass_threshold": 3},
+    )
+
+    score = scorer.score(case, _run_result("a"))
+
+    assert score.passed is False
+    assert "missing required field" in score.detail["reason"]
+    scorer._llm.chat_completion.assert_not_called()

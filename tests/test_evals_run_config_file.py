@@ -233,6 +233,111 @@ def test_execute_from_config_session_carries_standard_trace_files(
     assert trace.nodes
 
 
+# -- inline judge rubric --------------------------------------------------
+
+
+def _inline_rubric_config(**overrides):
+    data = _full_config(
+        evaluation={
+            "checks": [
+                {
+                    "name": "quality",
+                    "evaluator": "judge",
+                    "expected": {
+                        "rubric": {
+                            "name": "helpfulness",
+                            "scale": {"min": 1, "max": 5},
+                            "criteria": [
+                                {
+                                    "name": "correctness",
+                                    "description": "Is the answer correct?",
+                                    "anchors": {
+                                        "1": "completely wrong",
+                                        "5": "fully correct",
+                                    },
+                                }
+                            ],
+                        },
+                        "pass_threshold": 3,
+                    },
+                }
+            ]
+        }
+    )
+    data.update(overrides)
+    return data
+
+
+def test_inline_rubric_judge_config_validates_with_no_rubric_file_on_disk(tmp_path):
+    path = _write_config(tmp_path, _inline_rubric_config())
+    loaded = rcf.load_config_file(path)
+
+    assert loaded.checks[0].evaluator == "judge"
+    assert not list(tmp_path.glob("*.json"))
+
+
+def test_path_form_rubric_config_still_validates(tmp_path):
+    rubric_path = tmp_path / "rubric.json"
+    rubric_path.write_text(
+        '{"name": "helpfulness", "scale": {"min": 1, "max": 5}, '
+        '"criteria": [{"name": "correctness", "description": "d", '
+        '"anchors": {"1": "bad", "5": "good"}}]}'
+    )
+    data = _full_config(
+        evaluation={
+            "checks": [
+                {
+                    "name": "quality",
+                    "evaluator": "judge",
+                    "expected": {"rubric": str(rubric_path), "pass_threshold": 3},
+                }
+            ]
+        }
+    )
+    path = _write_config(tmp_path, data)
+
+    loaded = rcf.load_config_file(path)
+
+    assert loaded.checks[0].evaluator == "judge"
+
+
+def test_execute_from_config_scores_inline_rubric_judge_check(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.chdir(tmp_path)
+
+    def fake_execute(self, max_steps=50):
+        self.failure_error = None
+        return [{"role": "assistant", "content": "4"}]
+
+    mocker.patch.object(AgentNode, "execute", fake_execute)
+    judge_response = _Resp(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": (
+                            '{"criteria": {"correctness": {"score": 5, '
+                            '"rationale": "correct"}}, "overall_score": 5, '
+                            '"overall_rationale": "good"}'
+                        ),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    )
+    mocker.patch.object(LLM, "chat_completion", return_value=judge_response)
+
+    path = _write_config(tmp_path, _inline_rubric_config())
+    result, verdict = rcf.execute_from_config(path)
+
+    assert verdict == "pass"
+    assert result.scores[0].passed is True
+    assert not list(tmp_path.glob("*.json"))
+
+
 def test_execute_from_config_scores_carry_session_id_and_write_verdict(
     tmp_path, monkeypatch, mocker
 ):
