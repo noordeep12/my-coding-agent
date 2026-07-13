@@ -9,7 +9,6 @@ import logging
 import pytest
 
 from my_coding_agent.engine.llm import LLM
-from my_coding_agent.engine.routing import ToolRouter
 from my_coding_agent.engine.tool_execution import ToolExecutor
 
 
@@ -54,18 +53,6 @@ def bare_llm(silent_logger):
     llm = LLM()
     llm.logger = silent_logger
     return llm
-
-
-@pytest.fixture
-def bare_router(bare_llm, silent_logger):
-    """A ToolRouter wrapping a bare LLM client, both with silent loggers.
-
-    Network-free: phase-2 routing calls ``client.chat_completion``, which tests
-    patch directly on ``bare_llm`` so no request reaches a real server.
-    """
-    router = ToolRouter(bare_llm)
-    router.logger = silent_logger
-    return router
 
 
 @pytest.fixture

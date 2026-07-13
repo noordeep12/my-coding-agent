@@ -184,10 +184,6 @@ def test_resumed_agent_emits_no_second_skill_index_event(monkeypatch, tmp_path, 
 
 
 def _stub_execute(agent, mocker):
-    mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
-        return_value=([], "empty"),
-    )
     mocker.patch("my_coding_agent.pipeline.nodes.agent.print_banner")
     mocker.patch("my_coding_agent.pipeline.nodes.agent.print_run_summary")
     agent.llm.context_window = 1000

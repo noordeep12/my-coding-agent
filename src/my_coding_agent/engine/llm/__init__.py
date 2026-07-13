@@ -2,9 +2,9 @@
 
 Defines ``LLM``, the pure client that owns the ``httpx`` session, calls the
 OpenAI-compatible ``/chat/completions`` endpoint with retries, records token
-usage per call, and resolves the model's context window lazily. Tool routing and
-tool execution live in their own collaborators (``routing.ToolRouter`` and
-``tool_execution.ToolExecutor``), which hold an ``LLM`` as their client.
+usage per call, and resolves the model's context window lazily. Tool execution
+lives in its own collaborator (``tool_execution.ToolExecutor``), which holds an
+``LLM`` as its client.
 """
 
 import json
@@ -47,9 +47,9 @@ class LLM:
     Own the ``httpx`` session and issue chat-completion requests, recording every
     call's token usage in ``self.llm_calls`` tagged by ``kind``. Construction
     performs no network I/O: the model's context window is probed lazily on first
-    access to ``context_window``. Tool routing and tool execution are provided by
-    the ``routing.ToolRouter`` and ``tool_execution.ToolExecutor`` collaborators,
-    which hold an ``LLM`` instance as their client.
+    access to ``context_window``. Tool execution is provided by the
+    ``tool_execution.ToolExecutor`` collaborator, which holds an ``LLM`` instance
+    as its client.
     """
 
     # 128k fallback used when the server is unreachable or omits a context length.

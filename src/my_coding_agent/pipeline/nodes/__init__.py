@@ -6,7 +6,6 @@ from .context_summarizer import ContextSummarizerNode
 from .finalize_step import FinalizeStepNode
 from .llm_call import LLMCallNode
 from .tool_dispatch import ToolDispatchNode
-from .tool_routing import ToolRoutingNode
 
 __all__ = [
     "AnomalyDetectNode",
@@ -15,5 +14,4 @@ __all__ = [
     "FinalizeStepNode",
     "LLMCallNode",
     "ToolDispatchNode",
-    "ToolRoutingNode",
 ]

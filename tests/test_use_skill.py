@@ -1,6 +1,5 @@
-"""Tests for the ``use_skill`` tool: lazy load, dedup, error, offload, routing."""
+"""Tests for the ``use_skill`` tool: lazy load, dedup, error, offload."""
 
-from my_coding_agent.engine.routing import _BASELINE_TOOLS, ToolRouter
 from my_coding_agent.engine.tool_execution.concurrency import is_parallel_safe
 from my_coding_agent.engine.tool_registry import ARTIFACT_THRESHOLD
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
@@ -11,10 +10,6 @@ def _reg(skills, loaded=None):
     return ToolsRegistry(
         skills=skills, loaded_skills=loaded if loaded is not None else set()
     )
-
-
-def _tool_def(name, tags=None):
-    return {"type": "function", "function": {"name": name}, "tags": tags or []}
 
 
 # ── lazy load / dedup / error ─────────────────────────────────────────────────
@@ -80,50 +75,6 @@ def test_use_skill_oversized_body_offloads():
 
 def test_use_skill_not_parallel_safe():
     assert is_parallel_safe("use_skill", {"name": "a"}) is False
-
-
-# ── routing baseline ──────────────────────────────────────────────────────────
-
-
-class _NoLLM:
-    def chat_completion(self, *a, **k):  # pragma: no cover - never called here
-        raise AssertionError("router should not call the LLM in these cases")
-
-
-def test_baseline_contains_use_skill_when_registered():
-    router = ToolRouter(_NoLLM())
-    tools = [
-        _tool_def("bash"),
-        _tool_def("read_file"),
-        _tool_def("read_tool_artifact"),
-        _tool_def("use_skill"),
-        _tool_def("delegate", tags=["delegate"]),
-    ]
-    # A keyword match on a non-baseline tool (delegate) still keeps the whole
-    # baseline — including use_skill — in the selection (tool-routing).
-    selected, phase = router.route_tools("please delegate this", tools)
-    names = {t["function"]["name"] for t in selected}
-    assert "use_skill" in names
-    assert "delegate" in names
-
-
-def test_baseline_excludes_use_skill_when_absent():
-    # With no use_skill in the toolset, the effective baseline is exactly today's.
-    router = ToolRouter(_NoLLM())
-    tools = [
-        _tool_def("bash"),
-        _tool_def("read_file"),
-        _tool_def("read_tool_artifact"),
-        _tool_def("read_article", tags=["web"]),
-    ]
-    selected, _ = router.route_tools("fetch a web page", tools)
-    names = {t["function"]["name"] for t in selected}
-    assert "use_skill" not in names
-    assert {"bash", "read_file", "read_tool_artifact"} <= names
-
-
-def test_baseline_constant_includes_use_skill():
-    assert "use_skill" in _BASELINE_TOOLS
 
 
 # ── conditional registration: tool schemas byte-identical when no skills ───────

@@ -1,8 +1,7 @@
 """Tests for the pure, network-free collaborator and client methods.
 
 These cover argument aliasing/stripping and raw tool-call parsing (on the
-``ToolExecutor`` via the ``bare_executor`` fixture), the zero-cost (phase-1)
-paths of ``ToolRouter.route_tools`` (via ``bare_router``), and the client's
+``ToolExecutor`` via the ``bare_executor`` fixture), and the client's
 ``_request_with_retry`` (on ``bare_llm``). All fixtures are network-free.
 """
 
@@ -10,15 +9,7 @@ import httpx
 import pytest
 
 from my_coding_agent.engine.llm import _HTTP_RETRIES
-from my_coding_agent.engine.routing import _BASELINE_TOOLS
 from my_coding_agent.engine.tool_execution import args as arg_prep
-
-# --- helpers -----------------------------------------------------------------
-
-
-def _tool_def(name, tags=None):
-    return {"function": {"name": name}, "tags": tags or []}
-
 
 # --- apply_arg_aliases -------------------------------------------------------
 
@@ -160,106 +151,3 @@ def test_request_with_retry_does_not_retry_non_transient(bare_llm, mocker):
     with pytest.raises(httpx.HTTPStatusError):
         bare_llm._request_with_retry("GET", "http://x/models")
     sleep.assert_not_called()
-
-
-# --- route_tools (phase-1, no LLM call) --------------------------------------
-
-
-def test_route_tools_empty_list_returns_empty(bare_router):
-    selected, phase = bare_router.route_tools("anything", [])
-    assert selected == []
-    assert phase == "empty"
-
-
-def test_route_tools_only_baseline_returns_all(bare_router):
-    tools = [_tool_def(n) for n in _BASELINE_TOOLS]
-    selected, phase = bare_router.route_tools("hello", tools)
-    assert selected == tools
-    assert phase == "no_nonbaseline"
-
-
-def test_route_tools_keyword_match_selects_baseline_plus_matched(bare_router):
-    tools = [
-        _tool_def("bash"),
-        _tool_def("read_file"),
-        _tool_def("read_tool_artifact"),
-        _tool_def("read_article", tags=["web", "url"]),
-    ]
-    selected, phase = bare_router.route_tools("please fetch this url", tools)
-    names = {t["function"]["name"] for t in selected}
-    assert "read_article" in names
-    # Effective baseline is _BASELINE_TOOLS intersected with the provided tools:
-    # use_skill is baseline only when registered (absent here), so it is not
-    # expected in the selection (tool-routing).
-    baseline_in_tools = _BASELINE_TOOLS & {t["function"]["name"] for t in tools}
-    assert baseline_in_tools <= names
-    assert phase == "phase1_keyword"
-
-
-def test_route_tools_baseline_tag_match_skips_phase2(bare_router):
-    tools = [
-        _tool_def("bash", tags=["shell", "run"]),
-        _tool_def("read_file"),
-        _tool_def("read_tool_artifact"),
-        _tool_def("read_article", tags=["web"]),
-    ]
-    # "run" matches a baseline tag but no non-baseline tag -> returns all tools,
-    # never reaching the phase-2 LLM call.
-    selected, phase = bare_router.route_tools("run the tests", tools)
-    assert selected == tools
-    assert phase == "phase1_baseline"
-
-
-# --- word-boundary tag matching -----------------------------------------------
-
-
-def test_route_tools_substring_inside_word_does_not_match(bare_router, mocker):
-    # No tag match anywhere sends routing to the phase-2 LLM call, so stub it to
-    # return no tools -- otherwise a missing LLM server (e.g. CI) makes the call
-    # fail and fall back to *all* tools, leaking read_article regardless of the
-    # word-boundary behaviour under test.
-    chat = mocker.patch.object(bare_router.client, "chat_completion")
-    chat.return_value = mocker.Mock(
-        json=lambda: {"choices": [{"message": {"role": "assistant", "content": "[]"}}]}
-    )
-    tools = [_tool_def("read_article", tags=["file"])]
-    selected, phase = bare_router.route_tools("check the profile", tools)
-    names = {t["function"]["name"] for t in selected}
-    assert "read_article" not in names
-    # No match anywhere, cold start (no previous selection) -> phase-2 fallback.
-    assert phase == "phase2_llm"
-
-
-def test_route_tools_whole_word_matches(bare_router):
-    tools = [_tool_def("read_article", tags=["file"])]
-    selected, phase = bare_router.route_tools("write the file", tools)
-    names = {t["function"]["name"] for t in selected}
-    assert "read_article" in names
-    assert phase == "phase1_keyword"
-
-
-# --- cold-start vs mid-run phase-2 gating -------------------------------------
-
-
-def test_route_tools_mid_run_no_match_makes_no_llm_call(bare_router, mocker):
-    chat = mocker.patch.object(bare_router.client, "chat_completion")
-    tools = [_tool_def("read_article", tags=["web"])]
-    selected, phase = bare_router.route_tools(
-        "unrelated text", tools, has_previous_selection=True
-    )
-    assert selected is None
-    assert phase == "carry_forward"
-    chat.assert_not_called()
-
-
-def test_route_tools_first_routing_no_match_uses_phase2(bare_router, mocker):
-    chat = mocker.patch.object(bare_router.client, "chat_completion")
-    chat.return_value = mocker.Mock(
-        json=lambda: {"choices": [{"message": {"role": "assistant", "content": "[]"}}]}
-    )
-    tools = [_tool_def("read_article", tags=["web"])]
-    selected, phase = bare_router.route_tools(
-        "unrelated text", tools, has_previous_selection=False
-    )
-    assert phase == "phase2_llm"
-    chat.assert_called_once()

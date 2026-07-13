@@ -28,11 +28,6 @@ from my_coding_agent.pipeline.context import RunContext
 from my_coding_agent.pipeline.nodes.agent import AgentNode as Agent
 from my_coding_agent.pipeline.nodes.context_guard import ContextGuardNode
 from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
-from my_coding_agent.pipeline.nodes.tool_routing import (
-    ROUTING_EXCERPT_CHARS,
-    ROUTING_SIGNAL_MAX_CHARS,
-    _routing_signal,
-)
 
 # --- helpers -----------------------------------------------------------------
 
@@ -105,92 +100,6 @@ class _Resp:
 
     def json(self):
         return self._payload
-
-
-# --- _routing_signal (now in pipeline.nodes.tool_routing) --------------------
-
-
-def test_routing_signal_bootstraps_from_last_user_message_only():
-    messages = [
-        {"role": "user", "content": "old"},
-        {"role": "user", "content": "first task"},
-    ]
-    assert _routing_signal(messages) == "first task"
-
-
-def test_routing_signal_empty_when_no_messages():
-    assert _routing_signal([]) == ""
-
-
-def test_routing_signal_task_text_leaves_signal_once_assistant_exists():
-    messages = [
-        {"role": "user", "content": "first task"},
-        {"role": "assistant", "content": "doing it"},
-    ]
-    signal = _routing_signal(messages)
-    assert signal == "doing it"
-    assert "first task" not in signal
-
-
-def test_routing_signal_uses_most_recent_assistant_message():
-    messages = [
-        {"role": "user", "content": "task"},
-        {"role": "assistant", "content": "old assistant"},
-        {"role": "assistant", "content": "new assistant"},
-    ]
-    assert _routing_signal(messages) == "new assistant"
-
-
-def test_routing_signal_skips_none_content():
-    messages = [
-        {"role": "user", "content": None},
-        {"role": "assistant", "content": None},
-    ]
-    assert _routing_signal(messages) == ""
-
-
-def test_routing_signal_tool_call_only_turn_contributes_names():
-    messages = [
-        {"role": "user", "content": "first task"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"function": {"name": "bash"}}],
-        },
-    ]
-    assert _routing_signal(messages) == "bash"
-
-
-def test_routing_signal_changes_with_new_tool_results():
-    step1 = [
-        {"role": "user", "content": "first task"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"function": {"name": "bash"}}],
-        },
-    ]
-    step2 = step1 + [
-        {"role": "tool", "name": "bash", "content": "output here"},
-    ]
-    assert _routing_signal(step1) != _routing_signal(step2)
-    assert "output here" in _routing_signal(step2)
-
-
-def test_routing_signal_caps_oversized_tool_result():
-    long_content = "x" * (ROUTING_EXCERPT_CHARS + 500)
-    messages = [
-        {"role": "user", "content": "task"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"function": {"name": "bash"}}],
-        },
-        {"role": "tool", "name": "bash", "content": long_content},
-    ]
-    signal = _routing_signal(messages)
-    assert len(signal) <= ROUTING_SIGNAL_MAX_CHARS
-    assert "x" * (ROUTING_EXCERPT_CHARS + 1) not in signal
 
 
 # --- FinalizeStepNode (previously _track_step_usage on Agent) ---------------
@@ -518,12 +427,6 @@ def test_finalize_clean_stop_on_final_step_skips_synthesis(mocker):
 
 def _stub_run_internals(agent, mocker):
     """Neutralize the I/O-heavy parts of run() so the loop logic can be tested."""
-    # ToolRouter is now instantiated per step inside ToolRoutingNode; patch at the
-    # class level so every instance's route_tools passes all tools through.
-    mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
-        return_value=([], "empty"),
-    )
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
     # The per-step checkpoint write (run-resilience D3) touches disk; neutralize

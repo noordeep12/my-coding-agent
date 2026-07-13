@@ -11,7 +11,6 @@ src/my_coding_agent/
 │   ├── __init__.py              ← Public surface: AgentNode (re-export, see pipeline/nodes/agent.py), LLM, ToolRegistry, tool
 │   ├── checkpoint.py            ← Per-step resume checkpoint: atomic write/load of checkpoint.json (run-resilience D3)
 │   ├── schema.py                ← Engine event type constants (SESSION_START, LLM_CALL, etc.)
-│   ├── routing.py               ← ToolRouter: two-phase tool selection
 │   ├── llm/                     ← LLM HTTP client
 │   │   ├── __init__.py          ← LLM class, OMLX_* constants
 │   │   ├── errors.py            ← Classified chat-completion failures: transport / http-status / malformed-body (run-resilience D1)
@@ -54,7 +53,7 @@ src/my_coding_agent/
 │   ├── context.py               ← RunContext dataclass: explicit data contract between nodes
 │   ├── node.py                  ← Node protocol + BaseNode ABC
 │   ├── dag.py                   ← Pipeline: ordered node list + step-loop execution engine
-│   ├── schema.py                ← Pipeline typed contracts (ROUTER constant + ContextHandoff)
+│   ├── schema.py                ← Pipeline typed contracts (ContextHandoff)
 │   ├── handoff.py               ← ContextHandoff builders: save_handoff() + handoff_to_user_message()
 │   └── nodes/                   ← One BaseNode subclass per module (one node per file)
 │       ├── __init__.py          ← Re-export facade (one import per node class)
@@ -63,7 +62,6 @@ src/my_coding_agent/
 │       │                          and drives this pipeline (issue #203)
 │       ├── context_guard.py     ← ContextGuardNode: budget check + handoff trigger; inlines supersession helpers (find_retirements() Cases A/B/C, issue #121)
 │       ├── context_summarizer.py ← ContextSummarizerNode: triggered full-conversation summarization (report/handoff)
-│       ├── tool_routing.py      ← ToolRoutingNode: retained but unwired (issue #114) — see below
 │       ├── llm_call.py          ← LLMCallNode: chat_completion + append assistant message
 │       ├── tool_dispatch.py     ← ToolDispatchNode: ToolExecutor.run() per step
 │       ├── anomaly_detect.py    ← AnomalyDetectNode: detects same-class tool-failure streaks, detection-only; inlines error_signature(), trailing_streak(), STREAK_THRESHOLD
@@ -128,11 +126,9 @@ The pure HTTP client. Owns the `httpx` session, calls `/v1/chat/completions`, an
 - **`_request_with_retry`** — retries transient connection/timeout failures with backoff (the fast phase).
 - **Failure classification & outage recovery (run-resilience D1/D2)** — `_validate_response` classifies every completion as exactly one of *transport* (`LLMTransportError`), *http-status* (`LLMHTTPStatusError`, non-2xx), or *malformed-body* (`LLMMalformedBodyError` — non-JSON, or JSON with missing/empty `choices`); a failed response never becomes a successful completion or an empty assistant turn (`llm_calls` is not appended, no `llm_call` event is emitted). `_post_chat_with_recovery` wraps the POST in a two-phase loop: the fast transport retries, then — for retryable classes (transport, HTTP 5xx/429) — a **patient bounded wait** (capped exponential backoff) that keeps probing until the server answers or `MCA_LLM_OUTAGE_TOLERANCE_S` (default 300s) is exhausted. Non-retryable classes (other 4xx) fail immediately without consuming the window. Each wait/recovery/unrecoverable-failure is logged (WARNING/ERROR) and recorded as an additive `llm_wait`/`llm_recovery`/`llm_failure` event. Classified error types live in `engine/llm/errors.py`; `LLMMalformedBodyError` subclasses the pre-existing `APIResponseError` for backward compatibility.
 
-### `ToolRouter` (`engine/routing.py`) — retained, unwired (issue #114)
+### Tool routing — removed (issue #204, was retained-but-unwired since #114)
 
-Holds the LLM client and answers, per call, which tools match a signal via **`route_tools(message, all_tools, has_previous_selection=False)`**, returning `(selected_or_None, phase)`. Phase 1 is a zero-cost, whole-word (`\b`-bounded, case-insensitive) match on each tool's `tags` — a substring like `"file"` no longer matches inside `"profile"`. Phase 2 (one LLM call) fires only on a cold start (`has_previous_selection=False`) with no tag match anywhere; a mid-run no-match instead returns `(None, "carry_forward")` so the caller reuses its last selection without an extra LLM call. Baseline tools (`bash`, `read_file`, `read_tool_artifact`) are always included. `ToolRouter` is stateless per call and does no recording — event emission is the caller's decision (see `ToolRoutingNode` below).
-
-**As of #114, `ToolRoutingNode` no longer runs in `build_default_pipeline`** — every step offers the full `ctx.all_tools` to the LLM instead of a routed subset, so the offered toolset is stable and predictable across steps (fixing missing-tool improvisation, non-deterministic runs, and prefix-cache churn from a per-step-changing tool list, at the cost of more schema tokens per call). `engine/routing.py` and `pipeline/nodes/tool_routing.py`, along with their unit tests, stay in the tree — importable and green, just not wired into the live pipeline — so the behavior can be reintroduced later. The `router`/`tool_router` event types and the reader's `_build_router_node` also stay, so archived sessions recorded before this change keep rendering their router nodes unchanged; new sessions simply emit none. `pipeline/__init__.py` does not re-export `ToolRouter`, keeping the `engine` → `pipeline` dependency one-way per the layered-dependency rule.
+`ToolRouter` (`engine/routing.py`) and `ToolRoutingNode` (`pipeline/nodes/tool_routing.py`) have been deleted. As of #114, every step already offered the full `ctx.all_tools` to the LLM instead of a routed subset, so the offered toolset is stable and predictable across steps (fixing missing-tool improvisation, non-deterministic runs, and prefix-cache churn from a per-step-changing tool list, at the cost of more schema tokens per call); the routing code stayed importable-but-unwired for a time in case the behavior needed reintroducing, then was removed outright as dead weight. Live runs are unaffected — nothing called it. The `router`/`tool_router` event types and the reader's `_build_router_node` stay, so archived sessions recorded before #114 keep rendering their router nodes unchanged; new sessions simply emit none. The prior implementation remains available via git history if the behavior is ever needed again.
 
 ### `ToolExecutor` (`engine/tool_execution/` package)
 
@@ -162,13 +158,13 @@ Before writing that per-stream file, `_offload_stream` checks the offload-bound 
 
 The node-based DAG execution engine. `pipeline/` only knows how to build and execute a DAG — it has no knowledge of LLM client internals or session management.
 
-**`RunContext` (`context.py`)** — the explicit data contract that flows through the pipeline. Holds immutable run config (session id, max steps, LLM client, recorder, all tools) and mutable state fields (messages, step_num, last_prompt_tokens, tool_records, tool_artifacts, handoff_records, plus the skill snapshot and the run's `loaded_skills` set — issue #19). Control signals (`signal`, `stop_reason`) are written by nodes and read by `Pipeline.execute`. `routed_tools` stays on the dataclass (defaulting to `[]`) solely so the retained-but-unwired `ToolRoutingNode` (#114) still has somewhere to write its selection under type-checking — no live node reads it, since `LLMCallNode`/`ToolDispatchNode` both consult `ctx.all_tools`.
+**`RunContext` (`context.py`)** — the explicit data contract that flows through the pipeline. Holds immutable run config (session id, max steps, LLM client, recorder, all tools) and mutable state fields (messages, step_num, last_prompt_tokens, tool_records, tool_artifacts, handoff_records, plus the skill snapshot and the run's `loaded_skills` set — issue #19). Control signals (`signal`, `stop_reason`) are written by nodes and read by `Pipeline.execute`. `LLMCallNode`/`ToolDispatchNode` both consult `ctx.all_tools` directly (per #114) — no per-step routed subset exists.
 
 **`Node` protocol + `BaseNode` (`node.py`)** — a `Node` is any callable with a `name: str` and a `run(ctx: RunContext) -> None` method. Nodes read and write `ctx` in place.
 
 **`Pipeline` (`dag.py`)** — takes an ordered list of `Node` objects. `run_step` executes every node in order for one step, short-circuiting when any node sets a non-`CONTINUE` signal. `execute` wraps `run_step` in the outer step loop.
 
-**The five default nodes** (instantiated by `build_default_pipeline()`; `ToolRoutingNode` was removed from this list by issue #114 — see `ToolRouter` above):
+**The five default nodes** (instantiated by `build_default_pipeline()`; tool routing was removed from the pipeline by issue #114 and the routing code itself deleted by issue #204 — see above):
 
 | Node | Stage | What it does |
 |---|---|---|
@@ -230,7 +226,7 @@ The `@tool` decorator converts any `ToolRegistry` method into an OpenAI-compatib
 
 User-authored procedural knowledge reaches the model without editing Python source. A *skill* is a directory with a `SKILL.md` (minimal `name`/`description` frontmatter split by a ~20-line hand-rolled parser — no YAML dependency — plus a free-Markdown body). `discover_skills()` scans `<cwd>/.my_coding_agent/skills/*/SKILL.md` (project) then `~/.my_coding_agent/skills/*/SKILL.md` (user) **once** at session start, project shadowing a same-named user skill, returning a name-sorted snapshot; a malformed skill is skipped with one warning, never a failed run. `render_skill_index()` turns the snapshot into a compact index (fixed header naming `use_skill` and stating the precedence contract — skills guide tool usage but never override safety rules — then one `- name: description` line per skill) bounded by the fixed char caps in `tool_execution/schema.py` with two deterministic degradation tiers (even description truncation → names-only); it never exceeds the total cap and uses no LLM or ranking.
 
-**Placement is on the opening user message, never the system prompt** (so the #75 prefix-cache invariant holds trivially): `AgentNode` appends the index block after the task text of the first user message at construction (`_place_skill_index`), and emits the `skill_index` *offered* event at session start. When the snapshot is empty it appends nothing — the opening message and tool schemas stay byte-identical to before. The discovered-snapshot and the run's `loaded_skills` set ride on `RunContext` (the set shared by reference into each per-message `ToolRegistry` so `use_skill` dedup persists across steps). On a context reset the continuation carries the same snapshot and a copy of the loaded-set, re-injecting each loaded skill's full body after the index so knowledge survives the handoff; `delegate` passes the parent's snapshot to the child (no disk re-scan) but the child keeps its own empty loaded-set. `use_skill` joins the router's baseline (`engine/routing.py`) so the loading path is never withheld — but the baseline is intersected with the real toolset, so it is absent when no skills are registered.
+**Placement is on the opening user message, never the system prompt** (so the #75 prefix-cache invariant holds trivially): `AgentNode` appends the index block after the task text of the first user message at construction (`_place_skill_index`), and emits the `skill_index` *offered* event at session start. When the snapshot is empty it appends nothing — the opening message and tool schemas stay byte-identical to before. The discovered-snapshot and the run's `loaded_skills` set ride on `RunContext` (the set shared by reference into each per-message `ToolRegistry` so `use_skill` dedup persists across steps). On a context reset the continuation carries the same snapshot and a copy of the loaded-set, re-injecting each loaded skill's full body after the index so knowledge survives the handoff; `delegate` passes the parent's snapshot to the child (no disk re-scan) but the child keeps its own empty loaded-set. `use_skill` is registered conditionally — only when skills are discovered (`cli.py`'s `_build_tools`) — so it is absent when no skills are registered.
 
 ### `observability/` — Passive Event Capture
 
@@ -285,7 +281,7 @@ Every module and sub-module owns a `schema.py` for its typed contracts and shape
 | Module | `schema.py` contents |
 |---|---|
 | `engine/schema.py` | Session/LLM/tool/handoff/report event type constants |
-| `engine/llm/schema.py` | LLM call kind constants (`CALL_KIND_*`, sole source of truth — consumed by `agent.py`, `routing.py`, and every `pipeline/nodes/*.py` call site instead of raw string literals), usage field names |
+| `engine/llm/schema.py` | LLM call kind constants (`CALL_KIND_*`, sole source of truth — consumed by `agent.py` and every `pipeline/nodes/*.py` call site instead of raw string literals), usage field names |
 | `engine/tool_execution/schema.py` | Canonical tool-result envelope shapes (builders live in `envelope.py`), plus every size/threshold constant that decides artifact offloading (`ARTIFACT_THRESHOLD`, `MAX_TOOL_OUTPUT_CHARS`, `PAGE_FETCH_MAX_CHARS`, `PREVIEW_TOKEN_BUDGET`/`PREVIEW_MAX_CHARS`) and the skill-index budget caps (`SKILL_INDEX_PER_ENTRY_MAX_CHARS`, `SKILL_INDEX_TOTAL_MAX_CHARS`, issue #19) — a leaf module (no internal imports) so both `tool_execution` and `tool_registry` read it without a cycle |
 | `engine/tool_execution/concurrency.py` | The read-only independence gate for concurrent dispatch (issue #65): `is_parallel_safe(func_name, args)` (conservative, errs toward sequential), `is_read_only_command` (allow-listed `bash` pipelines with no write/chaining/substitution metachars), and `max_tool_concurrency()` (bounded worker ceiling from `MCA_TOOL_MAX_CONCURRENCY`, default 4, `1` disables). Leaf module (stdlib only) |
 | `engine/tool_registry/schema.py` | OpenAI tool definition JSON key names |

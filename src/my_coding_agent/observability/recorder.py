@@ -28,7 +28,6 @@ from .sampler import get_sampler
 SESSION_START = "session_start"
 LLM_CALL = "llm_call"
 TOOL_CALL = "tool_call"
-ROUTER = "router"
 HANDOFF = "handoff"
 REPORT = "report"
 SESSION_END = "session_end"
@@ -413,20 +412,6 @@ class Recorder:
     def note_delegate_child(self, child_session_id: str) -> None:
         """Record the subagent id ``delegate`` just spawned (see ``after_tool``)."""
         self._pending_delegate_child = child_session_id
-
-    # ── tool routing ───────────────────────────────────────────────────────────
-    def record_router(self, signal: str, selected: list[str], phase: str) -> None:
-        """Record the ToolRouter's selected tool subset for a step."""
-        self._emit(
-            {
-                "type": ROUTER,
-                "started_at": _now(),
-                "signal": signal[:500],
-                "selected": selected,
-                "phase": phase,
-                "used_llm": phase == "phase2_llm",
-            }
-        )
 
     # ── handoff ────────────────────────────────────────────────────────────────
     def record_handoff(
