@@ -11,7 +11,7 @@ import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import html2text
 import httpx
@@ -32,7 +32,9 @@ from ..schema import (
     REPORT_SOURCE_VERBATIM,
 )
 from ..tool_execution.schema import (
-    ARTIFACT_THRESHOLD,
+    ARTIFACT_THRESHOLD as ARTIFACT_THRESHOLD,
+)
+from ..tool_execution.schema import (
     EXTRACTION_INCOMPLETE_MARKER,
     EXTRACTION_OUTPUT_MAX_CHARS,
     EXTRACTION_OUTPUT_TOKEN_BUDGET,
@@ -168,8 +170,8 @@ class ToolRegistry:
 
     def __init__(
         self,
-        artifacts: dict | None = None,
-        tools: list | None = None,
+        artifacts: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         base_dir: str | None = None,
         llm: "LLM | None" = None,
         skills: "dict[str, Skill] | None" = None,
@@ -222,7 +224,7 @@ class ToolRegistry:
 
     def bash(
         self, command: str, timeout: int = 60, stdin: str | None = None
-    ) -> "str | tuple[None, dict]":
+    ) -> "str | tuple[None, dict[str, Any]]":
         """Run a shell command and return stdout, stderr, exit_code, and ok as JSON.
         Use for running tests, installing packages, git operations, or any shell task.
         The 'ok' field is true when exit_code is 0.
@@ -578,7 +580,7 @@ class ToolRegistry:
             return None, False
         return _THINK_RE.sub("", content).strip(), cut
 
-    def use_skill(self, name: str) -> "str | tuple[None, dict]":
+    def use_skill(self, name: str) -> "str | tuple[None, dict[str, Any]]":
         """Load a skill's full instructions by name into the conversation.
 
         A skill bundles procedural knowledge for a specific task. The available
@@ -729,7 +731,7 @@ class ToolRegistry:
             parent_node.add_child_usage(agent._usage_summary(report_source=source))
         return report
 
-    def read_file(self, file_path: str) -> str | tuple[None, dict]:
+    def read_file(self, file_path: str) -> str | tuple[None, dict[str, Any]]:
         """Read and return the full contents of a file at the given file_path.
         Use to inspect source code, configs, or any text file before editing.
         Large files are offloaded to the artifact store with a bounded preview
@@ -773,7 +775,7 @@ class ToolRegistry:
             return f"Error writing {file_path}: {e}"
 
     @staticmethod
-    def fetch_web(url: str, timeout: float = 15.0) -> str | tuple[None, dict]:
+    def fetch_web(url: str, timeout: float = 15.0) -> str | tuple[None, dict[str, Any]]:
         """Fetch any text URL and return its content.
 
         HTML responses (``text/html``, ``application/xhtml+xml``) are converted
@@ -829,7 +831,7 @@ class ToolRegistry:
                 text = resp.text
                 transform = "none"
 
-            metadata: dict = provenance.mark_untrusted(
+            metadata: dict[str, Any] = provenance.mark_untrusted(
                 {
                     "content_type": media_type or "unknown",
                     "transform": transform,

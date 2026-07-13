@@ -8,11 +8,12 @@ that operates on it lives here.
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from .schema import ContextHandoff
 
 
-def handoff_to_user_message(handoff: ContextHandoff) -> dict:
+def handoff_to_user_message(handoff: ContextHandoff) -> dict[str, Any]:
     """Return a user message that seeds the continuation agent."""
     return {
         "role": "user",

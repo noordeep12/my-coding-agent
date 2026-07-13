@@ -329,6 +329,10 @@ Handoffs are saved under `.my_coding_agent/handoffs/`.
 
 ---
 
+## Type Checking (issue #213)
+
+`[tool.mypy]` in `pyproject.toml` sets `strict = true` as the enforcement floor (CONTRIBUTE.md §48). No first-party module carries a `[[tool.mypy.overrides]]` weakening; `uv run mypy src` runs clean at that setting. `no_implicit_reexport` requires facade `__init__.py` packages to re-export via `__all__` or `from x import y as y` — a small number of intermediate modules (e.g. `tool_registry/registry.py`, `tool_execution/output.py`) that pass a constant through to their package's `__init__.py` use the `as`-form so the re-export chain stays explicit end to end.
+
 ## Configuration
 
 | Variable | Default | Description |

@@ -21,6 +21,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -164,7 +165,7 @@ def is_blocked(host: str, config: EgressConfig | None = None) -> EgressBlock | N
     return None
 
 
-def evaluate(func_name: str, args: dict) -> EgressBlock | None:
+def evaluate(func_name: str, args: dict[str, Any]) -> EgressBlock | None:
     """Return an :class:`EgressBlock` when this call's destination is blocked.
 
     Only ``fetch_web`` is evaluated today (interface deliberately takes

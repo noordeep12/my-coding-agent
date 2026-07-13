@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from .context import RunContext
 from .node import Node
@@ -35,7 +36,7 @@ class Pipeline:
             if ctx.signal != "CONTINUE":
                 return
 
-    def execute(self, ctx: RunContext) -> list[dict]:
+    def execute(self, ctx: RunContext) -> list[dict[str, Any]]:
         """Drive the step loop until a terminal signal or max_steps."""
         ctx.signal = "CONTINUE"
         while ctx.step_num < ctx.max_steps and ctx.signal == "CONTINUE":

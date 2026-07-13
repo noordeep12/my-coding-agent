@@ -14,6 +14,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 from colorama import Fore, Style  # type: ignore[import-untyped]
 from rich.console import Console
@@ -50,7 +51,7 @@ def _git_branch() -> str:
 def print_banner(  # noqa: C901
     label: str,
     model: str,
-    tools: list,
+    tools: list[dict[str, Any]],
     context_window: int | None = None,
     n_messages: int = 0,
     context_reset_threshold: float = 0.75,
@@ -156,7 +157,7 @@ def print_banner(  # noqa: C901
         inner = f"  {LABEL}{lbl}{R}: {VALUE}{val}{R}" + " " * max(pad, 0)
         return BORDER + "║" + inner + BORDER + "║" + R
 
-    def tool_row(t: dict) -> str:
+    def tool_row(t: dict[str, Any]) -> str:
         name = t["function"]["name"]
         params = ", ".join(t["function"]["parameters"]["properties"].keys())
         sig = f"{name}({params})"
@@ -255,7 +256,7 @@ def _tool_call_rows(
     s: _SummaryStyle,
     index: int,
     name: str,
-    args: dict,
+    args: dict[str, Any],
     ok: bool,
     status: str = "",
     artifact: bool = False,
@@ -341,7 +342,9 @@ def _markdown_rows(s: _SummaryStyle, md_text: str) -> list[str]:
     return rows or [s.empty_row()]
 
 
-def _token_chart_rows(s: _SummaryStyle, llm_calls: list | None) -> list[str]:
+def _token_chart_rows(
+    s: _SummaryStyle, llm_calls: list[dict[str, Any]] | None
+) -> list[str]:
     """Render the per-main-call token chart (and harness-event annotation)."""
     W, R, BORDER = s.W, s.R, s.BORDER
     usage = llm_calls or []
@@ -390,7 +393,7 @@ def _token_chart_rows(s: _SummaryStyle, llm_calls: list | None) -> list[str]:
         rows.append(BORDER + "║  " + line + " " * max(pad, 0) + "  " + BORDER + "║" + R)
 
     if internal_calls:
-        by_kind: dict = defaultdict(list)
+        by_kind: dict[str, Any] = defaultdict(list)
         for c in internal_calls:
             by_kind[c.get("kind", "internal")].append(str(c["call"]))
         parts = [
@@ -409,7 +412,7 @@ def _token_chart_rows(s: _SummaryStyle, llm_calls: list | None) -> list[str]:
 
 
 def _handoff_rows(
-    s: _SummaryStyle, index: int, h: dict, context_window: int | None
+    s: _SummaryStyle, index: int, h: dict[str, Any], context_window: int | None
 ) -> list[str]:
     """Render one handoff event as box rows."""
     W, R, BORDER, VALUE, WARN = s.W, s.R, s.BORDER, s.VALUE, s.WARN
@@ -461,7 +464,7 @@ def _handoff_rows(
     return rows
 
 
-def _tool_calls_section(s: _SummaryStyle, records: list) -> list[str]:
+def _tool_calls_section(s: _SummaryStyle, records: list[dict[str, Any]]) -> list[str]:
     """Box rows for the TOOL CALLS detail list."""
     if not records:
         return []
@@ -483,7 +486,7 @@ def _tool_calls_section(s: _SummaryStyle, records: list) -> list[str]:
 
 
 def _context_resets_section(
-    s: _SummaryStyle, handoffs: list, context_window: int | None
+    s: _SummaryStyle, handoffs: list[dict[str, Any]], context_window: int | None
 ) -> list[str]:
     """Box rows for the CONTEXT RESETS section."""
     if not handoffs:
@@ -507,7 +510,9 @@ def _context_resets_section(
     return lines
 
 
-def _resource_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]:
+def _resource_rollup_section(
+    s: _SummaryStyle, rollup: dict[str, Any] | None
+) -> list[str]:
     """Box rows for the run's machine-wide resource rollup (peaks/averages, bytes).
 
     Returns no rows when *rollup* is absent (capture unavailable), so runs
@@ -546,7 +551,9 @@ def _resource_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]
     return lines
 
 
-def _subagent_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]:
+def _subagent_rollup_section(
+    s: _SummaryStyle, rollup: dict[str, Any] | None
+) -> list[str]:
     """Box rows for task-level cost when delegations occurred: own vs rolled-up
     totals plus one line per direct subagent (session id, tokens, elapsed).
 
@@ -593,7 +600,7 @@ def _subagent_rollup_section(s: _SummaryStyle, rollup: dict | None) -> list[str]
     return lines
 
 
-def _tool_count_label(records: list) -> str:
+def _tool_count_label(records: list[dict[str, Any]]) -> str:
     """Summarize tool outcomes as e.g. ``3 (2 ok, 1 failed)`` or ``0``."""
     if not records:
         return "0"
@@ -617,18 +624,18 @@ def print_run_summary(
     total_tokens: int,
     context_window: int | None = None,
     elapsed_seconds: float = 0.0,
-    tool_records: list | None = None,
-    handoff_records: list | None = None,
+    tool_records: list[dict[str, Any]] | None = None,
+    handoff_records: list[dict[str, Any]] | None = None,
     agent_name: str = "Agent",
     last_message: str = "",
     last_prompt_tokens: int = 0,
-    llm_calls: list | None = None,
+    llm_calls: list[dict[str, Any]] | None = None,
     model: str = "",
     session_id: str = "",
     started_at: str = "",
-    tools: list | None = None,
-    rollup: dict | None = None,
-    resource_rollup: dict | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    rollup: dict[str, Any] | None = None,
+    resource_rollup: dict[str, Any] | None = None,
 ) -> None:
     """Render the end-of-run summary box to stderr.
 

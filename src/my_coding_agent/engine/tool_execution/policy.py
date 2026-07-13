@@ -22,6 +22,7 @@ import re
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 # Opt-out switch (off by default): set to any value other than ""/"0"/"false"
 # to disable the gate for the process. Read at call time (not import time) so
@@ -361,7 +362,7 @@ RULES: tuple[Rule, ...] = (
 )
 
 
-def evaluate(func_name: str, args: dict) -> Refusal | None:
+def evaluate(func_name: str, args: dict[str, Any]) -> Refusal | None:
     """Return a :class:`Refusal` when this call matches a dangerous rule.
 
     Only ``bash`` calls are evaluated; every other tool returns ``None``

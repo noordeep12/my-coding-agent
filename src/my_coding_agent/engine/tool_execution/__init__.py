@@ -269,7 +269,7 @@ class ToolExecutor:
         self.tool_calls = message.get("tool_calls", []) or []
         self.tool_messages: list[dict[str, Any]] = []
         self.tool_records: list[dict[str, Any]] = []
-        self.tool_artifacts: dict = {}
+        self.tool_artifacts: dict[str, Any] = {}
         self.llm = llm
         # Current pipeline step number, carried only to attribute a refusal
         # event (record_refusal) to the step it happened in; defaults to 0 for
@@ -388,8 +388,10 @@ class ToolExecutor:
             self._append_result(item.tool_call_id, content, status, record)
 
     def _invoke_timed(
-        self, tool_call_id: str, func_name: str, args: dict
-    ) -> tuple[Any, dict | None, float, float, str, list[tuple[HookSpec, HookResult]]]:
+        self, tool_call_id: str, func_name: str, args: dict[str, Any]
+    ) -> tuple[
+        Any, dict[str, Any] | None, float, float, str, list[tuple[HookSpec, HookResult]]
+    ]:
         """Worker body: invoke one tool, bracketed by its own true timing.
 
         Returns ``(raw, failure, start_mono, end_mono, started_at, hook_firings)``
@@ -422,7 +424,7 @@ class ToolExecutor:
         self.tool_records.append(error_record(name, {}, item.tool_call_id, item.error))
 
     def _append_result(
-        self, tool_call_id: str, content: str, status: str, record: dict
+        self, tool_call_id: str, content: str, status: str, record: dict[str, Any]
     ) -> None:
         """Append one dispatched call's tool message and record, in call order."""
         self.tool_messages.append(
@@ -435,7 +437,7 @@ class ToolExecutor:
         )
         self.tool_records.append(record)
 
-    def _prepare_args(self, func_name: str, args: dict) -> dict:
+    def _prepare_args(self, func_name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Alias-remap args and strip unknown kwargs (no recorder side effect).
 
         The pure argument-prep half of :meth:`before_tool_call`, split out so the
@@ -447,7 +449,7 @@ class ToolExecutor:
         self.logger.tool("before %s(%s) [after alias remapping]", func_name, args)
         return args
 
-    def before_tool_call(self, func_name: str, args: dict) -> dict:
+    def before_tool_call(self, func_name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Before the call: alias-remap args, strip unknown kwargs, stamp recorder.
 
         Returns the prepared args. The recorder (if any) stamps the call's start
@@ -461,9 +463,9 @@ class ToolExecutor:
     def _pre_dispatch_gate(
         self,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         hook_firings: list[tuple[HookSpec, HookResult]] | None,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Run every no-execution gate ahead of dispatch; return the first
         failure descriptor, or ``None`` when every gate allows the call.
 
@@ -512,9 +514,9 @@ class ToolExecutor:
         self,
         tool_call_id: str,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         hook_firings: list[tuple[HookSpec, HookResult]] | None = None,
-    ) -> tuple[Any, dict | None]:
+    ) -> tuple[Any, dict[str, Any] | None]:
         """The call step only: invoke ``func_name(**args)`` against the registry.
 
         Returns ``(raw_result, failure)`` — the tool's raw return value (str or
@@ -588,7 +590,7 @@ class ToolExecutor:
         self,
         tool_call_id: str,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         refusal: policy.Refusal,
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         """Build the ``ok:false`` envelope for a policy refusal (returns ``env,
@@ -648,7 +650,7 @@ class ToolExecutor:
         self,
         tool_call_id: str,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         block: "egress.EgressBlock",
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         """Build the ``ok:false`` envelope for an egress block (returns ``env,
@@ -692,7 +694,7 @@ class ToolExecutor:
         self,
         tool_call_id: str,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         hook_name: str,
         block_reason: str | None,
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
@@ -724,7 +726,7 @@ class ToolExecutor:
         self,
         tool_call_id: str,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         category: str,
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         """Build the ``ok:false`` envelope for an exfiltration-guard block
@@ -761,7 +763,7 @@ class ToolExecutor:
         self,
         tool_call_id: str,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         reduction: provenance.Reduction,
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         """Build the ``ok:false`` envelope for a crossed capability-reduction
@@ -803,7 +805,7 @@ class ToolExecutor:
         return env, status, record
 
     def _apply_provenance(
-        self, func_name: str, args: dict, env: dict[str, Any]
+        self, func_name: str, args: dict[str, Any], env: dict[str, Any]
     ) -> None:
         """Demarcate a freshly-tagged untrusted result and update the
         freshly-cloned-repo state from a completed ``bash`` call — the two
@@ -846,7 +848,11 @@ class ToolExecutor:
             )
 
     def _build_failure_result(
-        self, tool_call_id: str, func_name: str, args: dict, failure: dict
+        self,
+        tool_call_id: str,
+        func_name: str,
+        args: dict[str, Any],
+        failure: dict[str, Any],
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         """Dispatch a ``failure`` descriptor to its envelope builder by ``reason``."""
         reason = failure["reason"]
@@ -882,7 +888,7 @@ class ToolExecutor:
         return env, status, record
 
     def _build_success_result(
-        self, tool_call_id: str, func_name: str, args: dict, raw_result: Any
+        self, tool_call_id: str, func_name: str, args: dict[str, Any], raw_result: Any
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         """Turn a successful raw tool return into (env, status, record)."""
         is_artifact = isinstance(raw_result, tuple) and len(raw_result) == 2
@@ -927,12 +933,12 @@ class ToolExecutor:
         self,
         tool_call_id: str,
         func_name: str,
-        args: dict,
+        args: dict[str, Any],
         raw_result: Any,
-        failure: dict | None,
+        failure: dict[str, Any] | None,
         timing: tuple[float, float, str] | None = None,
         hook_firings: list[tuple[HookSpec, HookResult]] | None = None,
-    ) -> tuple[str, str, dict]:
+    ) -> tuple[str, str, dict[str, Any]]:
         """Turn the tool's raw return (or failure) into (content, status, record).
 
         On failure, builds the error envelope from the ``{reason, error}``
