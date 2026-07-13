@@ -614,10 +614,13 @@ def _score_checks(
                     passed=False,
                     metrics={},
                     detail={"reason": str(exc)},
+                    session_id=run_result.session_id,
                 )
             )
             continue
-        scores.append(scorer.score(case, run_result))
+        scores.append(
+            replace(scorer.score(case, run_result), session_id=run_result.session_id)
+        )
     return scores
 
 

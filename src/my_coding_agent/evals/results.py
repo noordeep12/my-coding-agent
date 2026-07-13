@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import uuid
@@ -15,7 +16,10 @@ from .. import __version__
 from ..engine.llm import OMLX_MODEL
 from .schema import RESULT_SCHEMA_VERSION, EvalScore
 
+logger = logging.getLogger(__name__)
+
 RESULTS_ROOT = Path(".my_coding_agent") / "evals"
+SESSIONS_ROOT = Path(".my_coding_agent")
 
 
 @dataclass(frozen=True)
@@ -85,7 +89,41 @@ def write_run_result(result: EvalRunResult, root: Path = RESULTS_ROOT) -> Path:
     finally:
         if os.path.exists(tmp_path_str):
             os.remove(tmp_path_str)
+    _write_verdict_artifacts(result, target)
     return run_dir
+
+
+def _write_verdict_artifacts(result: EvalRunResult, result_path: Path) -> None:
+    """Write a per-session ``verdict.json`` for each score naming a session.
+
+    Only sessions still present on disk under ``.my_coding_agent/<session_id>/``
+    get an artifact — the case-runner's temp-workspace sessions are torn down
+    before the result is written and are exempt by design. A write failure
+    (permissions, full disk, missing parent) logs a warning and never fails
+    the run; the result record above remains the authoritative source.
+    """
+    for score in result.scores:
+        if score.session_id is None:
+            continue
+        session_dir = SESSIONS_ROOT / score.session_id
+        if not session_dir.is_dir():
+            continue
+        verdict = {
+            "run_id": result.run_id,
+            "case_id": score.case_id,
+            "passed": score.passed,
+            "metrics": score.metrics,
+            "detail": score.detail,
+            "result_path": str(result_path),
+        }
+        try:
+            (session_dir / "verdict.json").write_text(json.dumps(verdict, indent=2))
+        except OSError as exc:
+            logger.warning(
+                "verdict artifact write failed for session %s: %s",
+                score.session_id,
+                exc,
+            )
 
 
 def load_run_result(run_dir: Path) -> EvalRunResult:

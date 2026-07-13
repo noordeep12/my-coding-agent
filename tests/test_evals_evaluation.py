@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from my_coding_agent.engine.agent import AgentNode
@@ -204,6 +207,49 @@ def test_run_evaluation_scores_every_check(tmp_path, monkeypatch, mocker):
     assert updated.last_run is not None
     assert updated.last_run.run_id == result.run_id
     assert updated.last_run.verdict == "pass"
+
+
+def test_run_evaluation_stamps_session_id_and_verdict_is_discoverable_from_it(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.chdir(tmp_path)
+    dirs = _dirs(tmp_path)
+    run_config = _make_run_config(tmp_path)
+    eval_config = _make_eval_config(tmp_path, checks=1)
+    evaluation = ev.create_evaluation(
+        {
+            "name": "eval1",
+            "run_config_id": run_config.id,
+            "eval_config_id": eval_config.id,
+        },
+        base_dir=dirs["base_dir"],
+        run_configs_dir=dirs["run_configs_dir"],
+        eval_configs_dir=dirs["eval_configs_dir"],
+    )
+
+    def fake_execute(self, max_steps=50):
+        self.failure_error = None
+        return [{"role": "assistant", "content": "pong"}]
+
+    mocker.patch.object(AgentNode, "execute", fake_execute)
+
+    result = ev.run_evaluation(
+        evaluation,
+        run_configs_dir=dirs["run_configs_dir"],
+        eval_configs_dir=dirs["eval_configs_dir"],
+        evaluations_dir=dirs["base_dir"],
+    )
+
+    session_id = result.scores[0].session_id
+    assert session_id is not None
+
+    # Starting from only the session id: resolve pass/fail + rationale + record path.
+    verdict_path = tmp_path / ".my_coding_agent" / session_id / "verdict.json"
+    verdict = json.loads(verdict_path.read_text())
+    assert verdict["run_id"] == result.run_id
+    assert verdict["passed"] == result.scores[0].passed
+    assert verdict["detail"] == result.scores[0].detail
+    assert Path(verdict["result_path"]).exists()
 
 
 def test_run_evaluation_with_no_checks_surfaces_nothing_to_score(

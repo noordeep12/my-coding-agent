@@ -14,6 +14,7 @@ from .compare import (
     compare_runs,
     evaluate_verdict,
 )
+from .reporting import render_verdict
 from .results import RESULTS_ROOT, build_run_result, load_run_result, write_run_result
 from .run_config_file import ConfigValidationError, execute_from_config
 from .runner import run_case_set
@@ -45,12 +46,9 @@ def main(ctx: click.Context, case_dir: str) -> None:
     )
     run_dir = write_run_result(result)
 
-    pass_rate = aggregate_metrics.get("pass_rate", 0.0)
-    click.echo(f"Run {result.run_id}: {len(scores)} cases, pass rate {pass_rate:.0%}")
-    for score in scores:
-        status = "PASS" if score.passed else "FAIL"
-        click.echo(f"  {status}  {score.case_id}")
+    render_verdict(result)
     click.echo(f"Result written to {run_dir}/result.json")
+    pass_rate = aggregate_metrics.get("pass_rate", 0.0)
     sys.exit(0 if pass_rate == 1.0 else 1)
 
 

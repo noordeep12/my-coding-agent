@@ -81,3 +81,17 @@ def test_empty_case_set_has_zero_pass_rate():
 
     assert scores == []
     assert aggregate["pass_rate"] == 0.0
+
+
+def test_score_carries_the_run_s_session_id(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+
+    def fake_execute(self, max_steps=50):
+        self.failure_error = None
+        return [{"role": "assistant", "content": "pong"}]
+
+    mocker.patch.object(AgentNode, "execute", fake_execute)
+
+    scores, _ = run_case_set([_case("c1", "pong")])
+
+    assert scores[0].session_id is not None
