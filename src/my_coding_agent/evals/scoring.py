@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from ..utils.exceptions import MyCodingAgentError
 from .schema import EvalCase, EvalScore
 
 
-class UnknownScorerError(Exception):
+class UnknownScorerError(MyCodingAgentError):
     """Raised when a case references a scorer ref not in the registry."""
 
     def __init__(self, scorer_ref: str) -> None:

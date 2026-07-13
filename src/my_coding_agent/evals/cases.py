@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from ..utils.exceptions import MyCodingAgentError
 from .schema import EvalCase
 
 logger = logging.getLogger(__name__)
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 _REQUIRED_KEYS = ("id", "task", "scorer", "expected")
 
 
-class CaseNotFoundError(Exception):
+class CaseNotFoundError(MyCodingAgentError):
     """Raised when a case id has no file under the cases directory."""
 
 

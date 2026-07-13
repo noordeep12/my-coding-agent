@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..utils.exceptions import MyCodingAgentError
 from .results import EvalRunResult
 
 
-class DatasetVersionMismatchError(Exception):
+class DatasetVersionMismatchError(MyCodingAgentError):
     """Raised when two runs did not execute the same dataset id+version."""
 
     def __init__(self, baseline_dataset: str, candidate_dataset: str) -> None:

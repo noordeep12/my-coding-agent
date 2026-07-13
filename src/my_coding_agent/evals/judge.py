@@ -22,6 +22,7 @@ from typing import Any
 
 from ..engine.llm import LLM
 from ..engine.llm.schema import CALL_KIND_JUDGE
+from ..utils.exceptions import MyCodingAgentError
 from ..utils.parsing import extract_finish_reason, extract_message
 from .schema import EvalCase, EvalScore
 from .scoring import RunResult, register_scorer
@@ -34,11 +35,11 @@ _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 DEFAULT_JUDGE_MAX_TOKENS = 800
 
 
-class RubricError(Exception):
+class RubricError(MyCodingAgentError):
     """A rubric artifact is missing, malformed, or fails validation."""
 
 
-class JudgeError(Exception):
+class JudgeError(MyCodingAgentError):
     """The judge's response could not be parsed into a structured verdict."""
 
 
