@@ -212,8 +212,49 @@ Bad engineering is hiding complexity without control.
 * Keep **core logic pure**, without IO, side effects, or external systems.
 * Limit nesting depth (usually 3–4 levels max).
 * Schemas live with the **domain they belong to**, not in a global `schemas/` folder, and should use typed models (Pydantic/dataclasses/type hints) as the single source of truth.
-* Avoid “dump” modules like `utils/` or `helpers/` growing into unrelated code.
+* A small, domain-local `utils.py` inside a package is fine for non-business helpers (response normalization, formatting). Avoid a global `utils/` or `helpers/` dump growing into unrelated code.
 * **Never use `setup.py` for new projects.** All config lives in `pyproject.toml`.
+
+#### Ideal package structure
+
+Every domain package follows the same template, so the codebase is
+consistent, straightforward, and free of surprises. Not every domain needs
+every file — omit what a domain doesn't have, never add speculatively.
+
+```
+src/my_coding_agent/
+├── <domain>/                  # one package per domain (engine, evals, webui, …)
+│   ├── __init__.py            # public surface only — re-export the public API
+│   ├── schema.py              # typed contracts: dataclasses, constants, type aliases
+│   ├── exceptions.py          # domain exceptions inheriting MyCodingAgentError
+│   ├── <feature>.py           # domain logic, one module per responsibility
+│   │                          #   (runner.py, scoring.py — not a catch-all service.py)
+│   ├── cli.py                 # entry surface if the domain has a CLI
+│   │                          #   (thin: parse args → call domain function → render)
+│   ├── server.py              # entry surface if the domain serves HTTP (thin handlers)
+│   ├── store.py               # persistence adapter if the domain owns state (SQLite)
+│   ├── utils.py               # optional: domain-local, non-business helpers
+│   └── <subdomain>/           # nested package when the domain grows
+│       ├── __init__.py        #   same template applies recursively
+│       └── schema.py
+├── utils/                     # generic cross-domain helpers only (lowest layer)
+└── __init__.py
+
+tests/
+└── test_<domain>_<aspect>.py  # flat suite, named for the domain and behavior under test
+```
+
+Rules of thumb:
+- A domain package owns everything about its domain: contracts, exceptions,
+  logic, entry surfaces. New code goes into the domain it belongs to, not
+  into a shared catch-all.
+- Entry-surface modules (`cli.py`, `server.py`) stay thin — parse, validate,
+  call the domain function, render/serialize. Logic never lives there.
+- When a domain outgrows flat modules, split into subdomain packages
+  (as `engine/llm/` and `engine/tool_execution/` do), each carrying its own
+  `schema.py`.
+- Existing packages are not restructured retroactively to match; the
+  template governs new domains and new modules.
 
 #### Layered dependency order
 
@@ -224,6 +265,29 @@ generic helpers → passive capture → execution/domain → orchestration
 ```
 
 Lower layers never import higher layers. If a layer must reference a higher layer at runtime, the import must be **lazy** (inside the function body, not at module level). Never suppress the linter warning without fixing the underlying coupling.
+
+#### Cross-domain imports
+
+When one domain package needs another, prefer keeping the **source module name
+visible at the call site** — import the module (aliased if needed) rather than
+bare symbols:
+
+```python
+# Good — origin is obvious at every call site
+from my_coding_agent.evals import scoring as evals_scoring
+from ..viewer import reader as viewer_reader
+
+scorer = evals_scoring.resolve_scorer(scorer_ref)
+sessions = viewer_reader.list_sessions(root)
+
+# Avoid — at the call site, load_session reads like a local helper
+from ..viewer.reader import load_session
+```
+
+Within a single domain package, importing bare symbols from sibling modules is
+fine — this rule targets cross-domain boundaries, where knowing *which* domain
+a function belongs to matters for reasoning about coupling. Apply it to new
+code; do not churn existing imports solely to conform.
 
 #### `schema.py` per module
 
@@ -246,7 +310,7 @@ Observability code (recorders, event writers, metrics collectors) must only rece
 | `uv` | Package management | `uv add`, `uv run` |
 | `ruff` | Lint + format | `ruff check src && ruff format src` |
 | `mypy` | Type checking | `mypy src` |
-| `pytest` | Testing | `pytest --cov=my_library` |
+| `pytest` | Testing | `pytest --cov=my_coding_agent` |
 | `bandit` | Security analysis | `bandit -r src/ -ll` |
 | `pip-audit` | Dependency CVEs | `pip-audit` |
 
@@ -349,9 +413,10 @@ _internal_helper(), _cache
 ### 29. Error Handling Standards
 
 Define a library-specific base exception. Give errors context and hints.
+This project's base lives in `utils/exceptions.py`:
 
 ```python
-class MyLibError(Exception):
+class MyCodingAgentError(Exception):
     """Base exception — catch this to handle all library errors."""
     def __init__(self, message: str, *, hint: str | None = None):
         super().__init__(message)
@@ -367,6 +432,24 @@ raise ValidationError(
 - Fail-fast: validate inputs at entry points, not deep in the call chain.
 - Never expose internal tracebacks or secrets in error messages.
 - Handle errors close to the source; propagate only when the caller can act on it.
+
+#### Domain exceptions live in their domain
+
+Only truly cross-cutting errors (e.g. `PathTraversalError`) belong beside the
+base in `utils/exceptions.py`. Domain-specific exceptions are defined in the
+package that raises them and inherit the base, as `engine/llm/errors.py` and
+`engine/checkpoint.py` already do:
+
+```python
+# engine/llm/errors.py
+class LLMCallError(MyCodingAgentError): ...
+class LLMTransportError(LLMCallError): ...
+```
+
+This keeps a module's failure modes discoverable next to its logic, and lets
+callers catch either the narrow domain error or the project-wide base. New
+domain exceptions must inherit `MyCodingAgentError`; standalone `Exception`
+subclasses in domain packages are a red flag.
 
 ---
 
@@ -409,9 +492,9 @@ def test_api_call(mocker):
 
 ---
 
-### 31. Logging Standards (Library Code)
+### 31. Logging Standards
 
-Library code must **never configure logging** — that is the application's job.
+Library-layer code must **never configure logging** — that is the application's job.
 
 ```python
 # Every module
@@ -425,10 +508,19 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 # Use logger, never print()
 logger.debug("Processing %d items", len(items))
 
-# NEVER in library code
+# NEVER in library-layer code
 logging.basicConfig(...)   # configures root logger — breaks caller's logging
 print("debug info")        # uncontrollable output
 ```
+
+#### Application layer may configure logging
+
+The rules above apply to library-layer packages (`engine/`, `pipeline/`,
+`evals/`, `observability/`, `viewer/` internals). Application entry points —
+the CLI commands (`pipeline/examples/simple.py`, `evals/cli.py`) and the HTTP
+servers (`webui/server.py`, `viewer/server.py`) — own logging configuration
+and set it up **once, at startup**, using the shared helpers in
+`utils/logging_core.py`. Never configure logging as an import side effect.
 
 ---
 
@@ -504,23 +596,36 @@ Algorithm improvements first → data structure improvements → implementation 
 
 ---
 
-### 35. Deprecation Pattern
+### 35. HTTP API & Storage Conventions
 
-```python
-import warnings
+The web UI and viewer expose JSON APIs over stdlib `http.server`, and the web
+UI persists state in SQLite (`webui/store.py`). Keep both surfaces consistent.
 
-def old_function():
-    """Deprecated: Use new_function() instead."""
-    warnings.warn(
-        "old_function() is deprecated and will be removed in 2.0.0. "
-        "Use new_function() instead.",
-        DeprecationWarning,
-        stacklevel=2,          # points warning at caller, not this line
-    )
-    return new_function()
-```
+#### REST route conventions
 
-Follow semantic versioning: deprecate in a MINOR release, remove in the next MAJOR.
+- Name resources as **nouns**: `/api/sessions`, `/api/evaluations/<id>` — not
+  `/api/get-sessions`.
+- Use the **same path-variable name for the same concept** in every route:
+  always `session_id`, never `sid` in one handler and `id` in another.
+- Route handlers stay thin: parse and validate the request, call the domain
+  function, serialize the response. Business logic lives in the domain
+  package, never in the HTTP handler.
+
+#### SQLite naming conventions
+
+- `lower_snake_case` for all tables and columns.
+- **Singular** table names for new tables (`eval_run`, not `eval_runs`).
+  Existing tables (`items`) are grandfathered — do not rename retroactively.
+- Group related tables with a domain prefix: `eval_run`, `eval_case`.
+- `_at` suffix for datetime columns (`created_at`), `_date` suffix for dates.
+
+#### SQL-first data shaping
+
+- Push filtering, ordering, and aggregation into the SQL query; do not fetch
+  all rows and post-process in Python loops.
+- Build typed schema objects (dataclasses from the module's `schema.py`) from
+  query results **at the boundary** — internals never pass raw `sqlite3.Row`
+  objects around.
 
 ---
 
@@ -796,13 +901,17 @@ High coverage percentage does not guarantee quality tests. You can execute code 
 - Dead code detected by coverage tools should be removed, not excluded.
 
 ```toml
+# This project's actual configuration (pyproject.toml)
 [tool.pytest.ini_options]
-addopts = "--cov=my_library --cov-branch --cov-fail-under=85"
+addopts = "--cov=my_coding_agent --cov-branch --cov-report=term-missing --cov-fail-under=85"
 
 [tool.coverage.run]
 branch = true
-source = ["src/my_library"]
-omit = ["src/my_library/_vendor/*"]
+source = ["src/my_coding_agent"]
+
+[tool.coverage.report]
+show_missing = true
+omit = ["*/schema.py", "*/examples/simple.py"]
 ```
 
 #### Multi-Environment Testing with Tox
@@ -867,35 +976,7 @@ Never optimize speculatively. Never rely on intuition about which code is slow.
 
 ---
 
-### 45. Versioning and Release Discipline
-
-#### Semantic Versioning Commitment
-
-SemVer is a **binding commitment** to users. Incorrect versioning erodes trust and breaks downstream applications.
-
-| Change type | Version bump |
-|-------------|-------------|
-| Breaking API change | MAJOR (1.x.x → 2.0.0) |
-| New backward-compatible feature | MINOR (1.1.x → 1.2.0) |
-| Bug fix, no API change | PATCH (1.1.1 → 1.1.2) |
-
-- `0.y.z` signals unstable API — breaking changes are expected until `1.0.0`.
-- Pre-release labels (`-alpha.1`, `-beta.2`, `-rc.1`) are ignored by pip unless explicitly requested.
-
-#### Dependency Security at Release Time
-
-Run `pip-audit` before every release — don't ship with known vulnerable dependencies.
-
-```bash
-pip-audit                    # check direct and transitive deps
-pip-audit --fix              # auto-update to patched versions
-```
-
-If you knowingly defer a vulnerability, **document it** with justification and a scheduled review date.
-
----
-
-### 46. pyproject.toml: Why It Replaced setup.py
+### 45. pyproject.toml: Why It Replaced setup.py
 
 `setup.py` ran arbitrary Python code during installation — a security risk and a source of fragile bootstrapping bugs. `pyproject.toml` is declarative (states *what* the project needs, not *how* to build it), which is:
 
@@ -910,7 +991,7 @@ Key PEPs behind modern packaging:
 
 ---
 
-### 47. Commit Standards
+### 46. Commit Standards
 
 Every commit must answer four questions so any reader — future-self, collaborators,
 AI agents, CI tooling — can understand it in isolation without tracing code.
@@ -945,4 +1026,3 @@ this convention. Enable it locally:
 ```bash
 git config commit.template .gitmessage
 ```
-
