@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..utils.exceptions import MyCodingAgentError
 from .schema import EvalCase, EvalScore
@@ -123,7 +123,7 @@ _REQUIRED_EXPECTED_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
-def validate_expected(scorer_ref: str, expected: dict) -> list[str]:
+def validate_expected(scorer_ref: str, expected: dict[str, Any]) -> list[str]:
     """Check ``expected`` against the selected scorer's known shape.
 
     Returns a list of human-readable problems (empty if valid). Only checks

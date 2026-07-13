@@ -70,7 +70,7 @@ def _strip_args_section(docstring: str) -> str:
     return cleaned.strip()
 
 
-def function_to_json(func: Callable[..., Any]) -> dict:
+def function_to_json(func: Callable[..., Any]) -> dict[str, Any]:
     """Convert a Python function into an OpenAI-compatible tool definition dict."""
     type_map = {
         str: "string",
@@ -101,7 +101,7 @@ def function_to_json(func: Callable[..., Any]) -> dict:
         if param.name in ("self", "cls"):
             continue
         param_type = type_map.get(param.annotation, "string")
-        entry: dict = {"type": param_type}
+        entry: dict[str, Any] = {"type": param_type}
         if param.name in param_descriptions:
             entry["description"] = param_descriptions[param.name]
         parameters[param.name] = entry
@@ -126,6 +126,6 @@ def function_to_json(func: Callable[..., Any]) -> dict:
     }
 
 
-def tool(func: Callable[..., Any]) -> dict:
+def tool(func: Callable[..., Any]) -> dict[str, Any]:
     """Decorator/converter: turn a Python function into an LLM tool definition."""
     return function_to_json(func)

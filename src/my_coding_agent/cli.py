@@ -13,6 +13,7 @@ import platform
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
 from prompt_toolkit import PromptSession
@@ -35,7 +36,7 @@ from my_coding_agent.engine.checkpoint import (
     load_checkpoint,
 )
 from my_coding_agent.engine.tool_execution import policy
-from my_coding_agent.engine.tool_registry import discover_skills
+from my_coding_agent.engine.tool_registry import Skill, discover_skills
 from my_coding_agent.evals.reporting import render_verdict
 from my_coding_agent.evals.results import RESULTS_ROOT
 from my_coding_agent.evals.run_config_file import (
@@ -98,7 +99,7 @@ def _system_prompt() -> str:
 _HISTORY_FILE = Path.home() / ".my_coding_agent_history"
 
 
-def _all_tools() -> list:
+def _all_tools() -> list[dict[str, Any]]:
     names = [
         name
         for name, _ in inspect.getmembers(ToolRegistry, predicate=inspect.isfunction)
@@ -107,7 +108,7 @@ def _all_tools() -> list:
     return [tool(getattr(ToolRegistry, name)) for name in names]
 
 
-def _build_tools(skills: dict) -> list:
+def _build_tools(skills: dict[str, Skill]) -> list[dict[str, Any]]:
     """Return the run's toolset: the standard tools, plus ``use_skill`` iff skills
     were discovered. With no skills the result is byte-identical to today (D5).
     """
@@ -130,7 +131,7 @@ def _read_interactive_prompt() -> str:
     def _submit_esc_enter(event: KeyPressEvent) -> None:
         event.current_buffer.validate_and_handle()
 
-    session: PromptSession = PromptSession(
+    session: PromptSession[str] = PromptSession(
         history=FileHistory(str(_HISTORY_FILE)),
         key_bindings=kb,
         multiline=True,

@@ -83,7 +83,7 @@ class ColoredFormatter(logging.Formatter):
 
 
 # ── Dynamic stderr handler (follows sys.stderr after it is replaced) ───────────
-class DynamicStderrHandler(logging.StreamHandler):
+class DynamicStderrHandler(logging.StreamHandler[TextIO]):
     """StreamHandler that writes to the current sys.stderr, not a captured ref."""
 
     def __init__(self) -> None:

@@ -127,7 +127,7 @@ class AgentNode(BaseNode):
         # MCA_HOOKS_CONFIG) yields an empty registry, so a hook-free run's
         # session bookkeeping is byte-identical to before this seam existed.
         self.hooks = Hooks.load()
-        self.tool_artifacts: dict = {}
+        self.tool_artifacts: dict[str, Any] = {}
         self.label = label
         self.messages = messages or []
         self.tools = tools or []
@@ -138,8 +138,8 @@ class AgentNode(BaseNode):
         self._session_log_handler = attach_session_log(_log_path)
         self.step_num = 0
         self.stop_reason = "max_steps"
-        self.tool_records: list = []
-        self.handoff_records: list = []
+        self.tool_records: list[dict[str, Any]] = []
+        self.handoff_records: list[dict[str, Any]] = []
         self.elapsed_seconds: float = 0.0
         self.last_prompt_tokens: int = 0
         self.needs_handback = needs_handback

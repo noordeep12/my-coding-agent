@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Any
 
 from .schema import (
     CATEGORY_CLOUD_CREDENTIALS,
@@ -110,7 +111,7 @@ def scan_payload(data: str) -> str | None:
 _EGRESS_TOOLS = ("fetch_web",)
 
 
-def evaluate(func_name: str, args: dict) -> str | None:
+def evaluate(func_name: str, args: dict[str, Any]) -> str | None:
     """Return the matched sensitivity category when ``args`` would leak a
     secret through ``func_name``'s outbound payload, or ``None``.
 

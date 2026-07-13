@@ -10,8 +10,12 @@ from ...utils import get_logger
 from .lang import looks_like_json
 from .schema import (
     EXTRACTION_OUTPUT_TOKEN_BUDGET,
-    MAX_TOOL_OUTPUT_CHARS,
-    PREVIEW_MAX_CHARS,
+)
+from .schema import (
+    MAX_TOOL_OUTPUT_CHARS as MAX_TOOL_OUTPUT_CHARS,
+)
+from .schema import (
+    PREVIEW_MAX_CHARS as PREVIEW_MAX_CHARS,
 )
 
 logger = get_logger(__name__)

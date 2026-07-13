@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from typing import Any
 
 # Bounded worker pool for a parallel group. Kept small on purpose: the parallel
 # path only ever runs I/O-bound read-only work (subprocess reads, file reads,
@@ -111,7 +112,7 @@ def is_read_only_command(command: str) -> bool:
     return True
 
 
-def is_parallel_safe(func_name: str, args: dict) -> bool:
+def is_parallel_safe(func_name: str, args: dict[str, Any]) -> bool:
     """Return ``True`` when this exact tool call may overlap other read-only calls.
 
     ``read_file`` and ``fetch_web`` are read-only for any argument set; ``bash``

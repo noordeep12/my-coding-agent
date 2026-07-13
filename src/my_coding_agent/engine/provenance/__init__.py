@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextvars
 import re
+from typing import Any
 
 from .schema import DEMARCATION_CLOSE, DEMARCATION_OPEN, TRUSTED, UNTRUSTED, Reduction
 
@@ -46,7 +47,7 @@ _freshly_cloned: contextvars.ContextVar[bool] = contextvars.ContextVar(
 )
 
 
-def mark_untrusted(metadata: dict) -> dict:
+def mark_untrusted(metadata: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of ``metadata`` with the untrusted-provenance marker set."""
     tagged = dict(metadata or {})
     tagged["provenance"] = UNTRUSTED
@@ -101,7 +102,7 @@ _INSTALL_BUILD_RE = re.compile(
 )
 
 
-def check_reduction(func_name: str, args: dict) -> Reduction | None:
+def check_reduction(func_name: str, args: dict[str, Any]) -> Reduction | None:
     """Return a :class:`Reduction` when this call is subject to the
     clone-and-build capability reduction, else ``None``.
 

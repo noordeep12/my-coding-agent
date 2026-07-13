@@ -6,6 +6,7 @@ state. Each takes the executor's logger so log output stays attributed to it.
 
 import inspect
 import json
+from typing import Any
 
 from ...utils import get_logger
 from ..llm import parsing as llm_parsing
@@ -36,8 +37,8 @@ _ARG_ALIASES: dict[str, dict[str, str]] = {
 
 
 def parse_tool_call(
-    tool_call: dict,
-) -> tuple[str, str | None, dict | None, str | None]:
+    tool_call: dict[str, Any],
+) -> tuple[str, str | None, dict[str, Any] | None, str | None]:
     """Parse and validate a raw tool_call dict from the LLM response.
 
     Returns (tool_call_id, func_name, args, error). error is None on success;
@@ -94,7 +95,7 @@ def parse_tool_call(
     return tool_call_id, func_name, args, None
 
 
-def apply_arg_aliases(func_name: str, args: dict) -> dict:
+def apply_arg_aliases(func_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Remap known wrong parameter names to their correct names for func_name."""
     for wrong, correct in _ARG_ALIASES.get(func_name, {}).items():
         if wrong in args and correct not in args:
@@ -105,7 +106,7 @@ def apply_arg_aliases(func_name: str, args: dict) -> dict:
     return args
 
 
-def strip_unknown_args(func_name: str, args: dict) -> dict:
+def strip_unknown_args(func_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Drop kwargs not in the tool's signature, logging each dropped arg.
 
     This prevents TypeError from hallucinated parameters (e.g. file_path on bash)

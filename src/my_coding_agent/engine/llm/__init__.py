@@ -87,7 +87,8 @@ class LLM:
         )
         # Optional observability recorder; set by Agent. None → no capture.
         self._recorder: Any = None
-        self.llm_calls: list[dict] = []  # one entry per chat_completion call, in order
+        # one entry per chat_completion call, in order
+        self.llm_calls: list[dict[str, Any]] = []
 
     def setup_session(self) -> None:
         """Create the httpx client and apply auth headers and the timeout.
@@ -182,7 +183,7 @@ class LLM:
             return DEFAULT_OUTAGE_TOLERANCE_S
 
     @staticmethod
-    def _validate_response(resp: Response) -> dict:
+    def _validate_response(resp: Response) -> dict[str, Any]:
         """Classify a chat-completion response, returning parsed JSON on success.
 
         Raises a classified error (never returns a failed response as success):
@@ -202,7 +203,7 @@ class LLM:
                 "other 4xx indicate a malformed request or auth problem.",
             )
         try:
-            data: dict = resp.json()
+            data: dict[str, Any] = resp.json()
         except Exception as exc:
             raise LLMMalformedBodyError(
                 f"API returned non-JSON response (HTTP {status}): {exc}. "
@@ -220,8 +221,8 @@ class LLM:
         return data
 
     def _post_chat_with_recovery(
-        self, body: dict, kind: str, call_num: int
-    ) -> tuple[Response, dict]:
+        self, body: dict[str, Any], kind: str, call_num: int
+    ) -> tuple[Response, dict[str, Any]]:
         """POST one chat completion, absorbing a transient outage (D2).
 
         Two-phase recovery: the fast transport retries inside
@@ -419,7 +420,11 @@ class LLM:
             ),
         )
 
-        body: dict = {"model": self.model, "messages": messages, "tools": tools or []}
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools or [],
+        }
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
         _started_at = datetime.now().astimezone().isoformat(timespec="milliseconds")

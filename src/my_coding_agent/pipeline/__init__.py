@@ -48,7 +48,7 @@ def __getattr__(name: str) -> Any:
 
 
 def build_default_pipeline(
-    spawn_fn: Callable[[], list[dict]] | None = None,
+    spawn_fn: Callable[[], list[dict[str, Any]]] | None = None,
     checkpoint_fn: Callable[[RunContext], None] | None = None,
 ) -> Pipeline:
     """Return a Pipeline with the standard 5-node agentic loop.

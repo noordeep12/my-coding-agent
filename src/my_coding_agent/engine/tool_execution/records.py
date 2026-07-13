@@ -11,7 +11,7 @@ from typing import Any
 
 def error_record(
     func_name: str,
-    args: dict,
+    args: dict[str, Any],
     tool_call_id: str,
     error: str,
     status: str = "error",
@@ -31,7 +31,7 @@ def error_record(
 
 def call_record(
     func_name: str,
-    args: dict,
+    args: dict[str, Any],
     tool_call_id: str,
     env: dict[str, Any],
     is_artifact: bool,
