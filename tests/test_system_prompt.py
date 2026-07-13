@@ -3,7 +3,7 @@
 import re
 
 from my_coding_agent.engine.tool_registry import ToolRegistry as ToolsRegistry
-from my_coding_agent.pipeline.examples.simple import _all_tools, _system_prompt
+from my_coding_agent.cli import _all_tools, _system_prompt
 
 _TIMESTAMP_RE = re.compile(r"^Current date and time: .+$")
 

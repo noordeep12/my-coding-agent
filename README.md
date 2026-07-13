@@ -54,10 +54,10 @@ The `my-coding-agent` console script is declared in `pyproject.toml`:
 
 ```toml
 [project.scripts]
-my-coding-agent = "my_coding_agent.pipeline.examples.simple:main"
+my-coding-agent = "my_coding_agent.cli:main"
 ```
 
-It points to `main()` in `src/my_coding_agent/pipeline/examples/simple.py`. To change the default command, edit that mapping (and run `uv sync` to refresh the script); to change the default behaviour, edit the Click options on `main()`.
+It points to `main()` in `src/my_coding_agent/cli.py`. To change the default command, edit that mapping (and run `uv sync` to refresh the script); to change the default behaviour, edit the Click options on `main()`.
 
 ## CLI Usage
 

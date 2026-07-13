@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-my-coding-agent = "my_coding_agent.pipeline.examples.simple:main"
+my-coding-agent = "my_coding_agent.cli:main"
 my-coding-agent-webui = "my_coding_agent.webui.server:_cli"
 my-coding-agent-eval = "my_coding_agent.evals.cli:main"
 
@@ -94,5 +94,4 @@ source = ["src/my_coding_agent"]
 show_missing = true
 omit = [
     "*/schema.py",
-    "*/examples/simple.py",
 ]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simple coding-agent pipeline entry point.
+"""The `my-coding-agent` console-script entry point.
 
 Run::
 

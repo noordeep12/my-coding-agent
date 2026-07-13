@@ -13,7 +13,7 @@ from click.testing import CliRunner
 
 from my_coding_agent.engine.checkpoint import Checkpoint, save_checkpoint
 from my_coding_agent.engine.llm.errors import LLMTransportError
-from my_coding_agent.pipeline.examples import simple
+from my_coding_agent import cli
 
 
 @pytest.fixture
@@ -33,9 +33,9 @@ def _write_checkpoint(session_id="deadbeef1234", step=4):
 
 
 def test_resume_invalid_id_refuses_and_touches_nothing(runner, mocker):
-    built = mocker.patch.object(simple.AgentNode, "from_checkpoint")
+    built = mocker.patch.object(cli.AgentNode, "from_checkpoint")
     with runner.isolated_filesystem():
-        result = runner.invoke(simple.main, ["--resume", "no-such-session"])
+        result = runner.invoke(cli.main, ["--resume", "no-such-session"])
         assert result.exit_code == 2
         assert "Cannot resume" in result.output
         # Nothing built, nothing created.
@@ -44,9 +44,9 @@ def test_resume_invalid_id_refuses_and_touches_nothing(runner, mocker):
 
 
 def test_resume_last_with_no_checkpoints_refuses(runner, mocker):
-    built = mocker.patch.object(simple.AgentNode, "from_checkpoint")
+    built = mocker.patch.object(cli.AgentNode, "from_checkpoint")
     with runner.isolated_filesystem():
-        result = runner.invoke(simple.main, ["--resume-last"])
+        result = runner.invoke(cli.main, ["--resume-last"])
         assert result.exit_code == 2
         assert "No resumable session" in result.output
         built.assert_not_called()
@@ -56,12 +56,12 @@ def test_resume_loads_checkpoint_and_runs(runner, mocker):
     fake_agent = mocker.Mock()
     fake_agent.failure_error = None
     from_cp = mocker.patch.object(
-        simple.AgentNode, "from_checkpoint", return_value=fake_agent
+        cli.AgentNode, "from_checkpoint", return_value=fake_agent
     )
     with runner.isolated_filesystem():
         cp = _write_checkpoint()
         result = runner.invoke(
-            simple.main, ["--resume", "deadbeef1234", "--max-steps", "7"]
+            cli.main, ["--resume", "deadbeef1234", "--max-steps", "7"]
         )
         assert result.exit_code == 0
         # The right checkpoint was loaded and handed to from_checkpoint.
@@ -78,7 +78,7 @@ def test_resume_last_selects_newest(runner, mocker):
     fake_agent = mocker.Mock()
     fake_agent.failure_error = None
     from_cp = mocker.patch.object(
-        simple.AgentNode, "from_checkpoint", return_value=fake_agent
+        cli.AgentNode, "from_checkpoint", return_value=fake_agent
     )
     with runner.isolated_filesystem():
         _write_checkpoint(session_id="older", step=1)
@@ -89,7 +89,7 @@ def test_resume_last_selects_newest(runner, mocker):
             (now - 100, now - 100),
         )
         os.utime(Path(".my_coding_agent") / "newer" / "checkpoint.json", (now, now))
-        result = runner.invoke(simple.main, ["--resume-last"])
+        result = runner.invoke(cli.main, ["--resume-last"])
         assert result.exit_code == 0
         assert from_cp.call_args.args[0].session_id == "newer"
 
@@ -99,10 +99,10 @@ def test_run_failure_exits_nonzero_with_resume_hint(runner, mocker):
     fake_agent.session_id = "abc123"
     fake_agent.failure_session_id = None
     fake_agent.failure_error = LLMTransportError("down")
-    mocker.patch.object(simple, "AgentNode")
-    mocker.patch.object(simple, "_build_fresh_agent", return_value=fake_agent)
+    mocker.patch.object(cli, "AgentNode")
+    mocker.patch.object(cli, "_build_fresh_agent", return_value=fake_agent)
     with runner.isolated_filesystem():
-        result = runner.invoke(simple.main, ["--prompt", "do a thing"])
+        result = runner.invoke(cli.main, ["--prompt", "do a thing"])
         assert result.exit_code == 1
         assert "--resume abc123" in result.output
         assert "unrecoverable LLM failure" in result.output
@@ -111,8 +111,8 @@ def test_run_failure_exits_nonzero_with_resume_hint(runner, mocker):
 def test_healthy_run_exits_zero(runner, mocker):
     fake_agent = mocker.Mock()
     fake_agent.failure_error = None
-    mocker.patch.object(simple, "_build_fresh_agent", return_value=fake_agent)
+    mocker.patch.object(cli, "_build_fresh_agent", return_value=fake_agent)
     with runner.isolated_filesystem():
-        result = runner.invoke(simple.main, ["--prompt", "do a thing"])
+        result = runner.invoke(cli.main, ["--prompt", "do a thing"])
         assert result.exit_code == 0
         fake_agent.execute.assert_called_once()

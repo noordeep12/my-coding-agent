@@ -130,14 +130,14 @@ def test_baseline_constant_includes_use_skill():
 
 
 def test_tool_schemas_byte_identical_without_skills():
-    from my_coding_agent.pipeline.examples.simple import _all_tools, _build_tools
+    from my_coding_agent.cli import _all_tools, _build_tools
 
     assert _build_tools({}) == _all_tools()
     assert "use_skill" not in {t["function"]["name"] for t in _build_tools({})}
 
 
 def test_use_skill_registered_only_with_skills():
-    from my_coding_agent.pipeline.examples.simple import _build_tools
+    from my_coding_agent.cli import _build_tools
 
     tools = _build_tools({"a": Skill("a", "does a")})
     assert "use_skill" in {t["function"]["name"] for t in tools}
@@ -146,7 +146,7 @@ def test_use_skill_registered_only_with_skills():
 def test_system_prompt_unaffected_by_skills():
     # Skills never touch the system prompt (#75 invariant). _system_prompt takes
     # no skill input, so it is identical regardless of what is on disk.
-    from my_coding_agent.pipeline.examples.simple import _system_prompt
+    from my_coding_agent.cli import _system_prompt
 
     prompt = _system_prompt()
     assert "use_skill" not in prompt
