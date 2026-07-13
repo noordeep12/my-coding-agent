@@ -4,7 +4,8 @@
 import re
 import sys
 
-subject = open(sys.argv[1]).readline().rstrip("\n")
+with open(sys.argv[1]) as f:
+    subject = f.readline().rstrip("\n")
 pattern = r"^(feat|fix|refactor|docs|test|chore|perf|ci)(\([a-z0-9/_-]+\))?: .+"
 if not re.match(pattern, subject):
     print("Commit subject does not follow Conventional Commits format.")

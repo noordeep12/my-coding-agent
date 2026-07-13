@@ -16,8 +16,9 @@ SRC_PREFIX = "src/"
 
 
 def staged_files() -> list[str]:
+    """Return staged file paths (added/copied/modified/renamed) for this commit."""
     result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],  # noqa: S607 -- relies on `git` from PATH, standard dev tooling
         capture_output=True,
         text=True,
         check=True,
@@ -26,6 +27,7 @@ def staged_files() -> list[str]:
 
 
 def main() -> int:
+    """Exit non-zero if src/ changed in this commit but no docs were updated."""
     files = staged_files()
 
     src_changed = any(f.startswith(SRC_PREFIX) for f in files)
