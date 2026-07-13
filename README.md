@@ -103,6 +103,8 @@ Local model time is the run's real cost, so a transient LLM failure must not thr
 | `--resume` | — | Resume a dead session from its last checkpoint (`--resume <session_id>`); starts a new session linked back to the dead one |
 | `--resume-last` | `False` | Resume the most recently checkpointed session |
 | `--no-safety-gate` | `False` | Disable the dangerous-command refusal gate for this run |
+| `--no-egress-filter` | `False` | Disable the network egress filter for this run (same effect as `MCA_DISABLE_EGRESS_FILTER=1`); see [`SECURITY.md`](SECURITY.md) |
+| `--no-exfil-guard` | `False` | Disable the secret-exfiltration guard for this run (same effect as `MCA_DISABLE_EXFIL_GUARD=1`); see [`SECURITY.md`](SECURITY.md) |
 | `--sandbox` | `False` | Run every `bash` subprocess inside an OS-level sandbox (macOS Seatbelt); see [Sandboxing](#sandboxing) |
 
 ## Configuration
@@ -259,23 +261,23 @@ An eval **case** is a plain JSON file: a task prompt, a scorer ref, and the scor
 }
 ```
 
-Run a case set (defaults to the bundled example under `.my_coding_agent/evals/cases/`):
+Point the runner at a directory of your own case files (`--cases <dir>`; the default is `.my_coding_agent/evals/cases/`). No example cases ship committed (the repo's former bundled examples were removed when the web UI's [Evaluations tab](#evaluations-tab) moved to its own Evaluation records), so the bare invocation exits `1` with "No eval cases found" until you add case files to the default directory:
 
 ```bash
-my-coding-agent-eval
 my-coding-agent-eval --cases path/to/case/dir
+my-coding-agent-eval               # reads .my_coding_agent/evals/cases/; exits 1 while it's empty
 ```
 
-Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores it with the case's scorer (`evals.scoring.register_scorer` is the extension point for scorers). Two ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output), and `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number. A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`.
+Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores it with the case's scorer (`evals.scoring.register_scorer` is the extension point for scorers). Three ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output); `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number; and `judge`, the rubric-based LLM judge — it grades the output against a declared disk-loaded rubric (criteria, score scale, per-criterion anchors), never a free-form "is this good?" prompt. A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`.
 
 ### Datasets
 
-A **dataset** groups cases into a named, versioned collection, so a result records exactly which cases (and which version of that set) it ran against — a static "golden set" stops meaning anything once it's memorised, and a dataset's version lets a later comparison tell whether two runs are even comparable. Datasets live under `.my_coding_agent/evals/datasets/<dataset_id>/`; a bundled `example` dataset (wrapping the `hello_world` example case) ships committed.
+A **dataset** groups cases into a named, versioned collection, so a result records exactly which cases (and which version of that set) it ran against — a static "golden set" stops meaning anything once it's memorised, and a dataset's version lets a later comparison tell whether two runs are even comparable. Datasets live under `.my_coding_agent/evals/datasets/<dataset_id>/`. Nothing ships committed there — the former bundled `example` dataset (and the example cases it wrapped) was removed when the web UI's [Evaluations tab](#evaluations-tab) moved to its own Evaluation records — so you create your own from case ids that reference `*.json` files under your cases directory:
 
 ```python
 from my_coding_agent.evals.datasets import create_dataset, add_case, retire_case, run_dataset, load_dataset
 
-create_dataset("smoke", ["hello_world"])
+create_dataset("smoke", ["hello_world"])    # ids of *.json case files under .my_coding_agent/evals/cases/
 add_case("smoke", "another_case")       # bumps to version 2
 retire_case("smoke", "hello_world")     # bumps to version 3; version 1/2 still loadable
 
@@ -296,18 +298,20 @@ Each argument is either a run id under `.my_coding_agent/evals/` or a path to a 
 
 `add_failure_case` turns a recorded run failure into a new regression case file and adds it to a dataset in one step. Every mutation appends a new version rather than rewriting history, so `load_dataset("smoke", version=1)` still recovers the original membership.
 
-### Eval Dashboard
+### Evaluations tab
 
-The **Evals** tab of the [Web UI](#web-ui) (`my-coding-agent-webui`) serves a read-only dashboard over persisted eval results. It never runs or mutates an eval; it only renders result records already written under `.my_coding_agent/evals/`.
+The **Evals** tab of the [Web UI](#web-ui) (`my-coding-agent-webui`) serves a single two-pane **Evaluations** page for creating, configuring, and running evaluations end to end — not a read-only dashboard. The unit it lists and runs is an **Evaluation**, which binds two reusable configs:
 
-- **Overview** — headline metrics for the latest run plus a trend of the score across runs over time
-- **Run history** — a browsable list of past runs (id, dataset, model, verdict, headline score)
-- **Single-run breakdown** — one run's aggregate metrics and its case list, drillable
-- **Per-case failure drill-down** — for a failed case, its task, expected vs. actual, and the per-check/per-dimension detail behind the score
-- **Datasets** — every dataset and its current version
-- **Compare** — a two-run comparison view; currently a labeled "not yet available" placeholder pending the eval-run-comparison module
+- **RunConfig** — *how the agent runs*: model/provider, system prompt and user-prompt template, sampling parameters, tool settings
+- **EvalConfig** — *what the output is judged against*: an ordered tree of **Rules**, each holding **Checks** (a named assertion with a method — e.g. `equals`, `contains`, `rubric` — an input, and an expected value), scored through the same scorer registry as the CLI runner
 
-Result records written before the dashboard existed still render — missing fields are simply omitted, not treated as errors.
+The page:
+
+- **Left pane** — the Evaluation list (name, summary, linked Run/Eval Config, last-run id, pass/fail status), a **Create Eval** button, and a per-row **⋯** menu: **Details** (read-only view), **Configure** (edit), **Run**, **Delete**
+- **Right pane** — the configuration panel for the selected or new Evaluation (pick an existing RunConfig/EvalConfig or define a new one inline), or the **Last-Run drill-down**: verdict, timestamp, and each Check's pass/fail with the detail behind its score
+- **Running** — a run executes on a server-side background thread; the page shows a staged progress modal and polls the run id until it finishes, so the rest of the interface stays responsive. Unlike the CLI runner's throwaway temp workspaces, an interface-launched run executes in the real working directory: its session lands under `.my_coding_agent/` (visible in the **Traces** tab), and a Check's relative paths (e.g. a judge rubric) resolve against the project root
+
+Evaluations and their configs persist as plain JSON under `.my_coding_agent/evals/{evaluations,run_configs,eval_configs}/`; run results are written through the same result store as the CLI runner (`.my_coding_agent/evals/<run_id>/result.json`). A fresh checkout starts with an empty list — use **Create Eval**.
 
 ### Admin
 
