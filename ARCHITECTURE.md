@@ -7,9 +7,8 @@
 ```
 src/my_coding_agent/
 │
-├── engine/                      ← Owns execution: LLM client, tools, and AgentNode
-│   ├── __init__.py              ← Public surface: AgentNode, LLM, ToolRegistry, tool
-│   ├── agent.py                 ← AgentNode: session bookkeeping + pipeline runner (main entry)
+├── engine/                      ← Owns execution primitives: LLM client, tools
+│   ├── __init__.py              ← Public surface: AgentNode (re-export, see pipeline/nodes/agent.py), LLM, ToolRegistry, tool
 │   ├── checkpoint.py            ← Per-step resume checkpoint: atomic write/load of checkpoint.json (run-resilience D3)
 │   ├── schema.py                ← Engine event type constants (SESSION_START, LLM_CALL, etc.)
 │   ├── routing.py               ← ToolRouter: two-phase tool selection
@@ -51,14 +50,17 @@ src/my_coding_agent/
 │       └── schema.py            ← SandboxScope/HostCapability dataclasses + ENV_VAR
 │
 ├── pipeline/                    ← Pure DAG building and execution
-│   ├── __init__.py              ← Public surface: RunContext, Pipeline, build_default_pipeline
+│   ├── __init__.py              ← Public surface: RunContext, Pipeline, build_default_pipeline, AgentNode (re-export)
 │   ├── context.py               ← RunContext dataclass: explicit data contract between nodes
 │   ├── node.py                  ← Node protocol + BaseNode ABC
 │   ├── dag.py                   ← Pipeline: ordered node list + step-loop execution engine
 │   ├── schema.py                ← Pipeline typed contracts (ROUTER constant + ContextHandoff)
 │   ├── handoff.py               ← ContextHandoff builders: save_handoff() + handoff_to_user_message()
-│   └── nodes/                   ← One module per pipeline stage (one node per file)
+│   └── nodes/                   ← One BaseNode subclass per module (one node per file)
 │       ├── __init__.py          ← Re-export facade (one import per node class)
+│       ├── agent.py             ← AgentNode(BaseNode): the composable run-loop orchestrator node — session
+│       │                          bookkeeping + pipeline runner (main entry); co-located here since it builds
+│       │                          and drives this pipeline (issue #203)
 │       ├── context_guard.py     ← ContextGuardNode: budget check + handoff trigger; inlines supersession helpers (find_retirements() Cases A/B/C, issue #121)
 │       ├── context_summarizer.py ← ContextSummarizerNode: triggered full-conversation summarization (report/handoff)
 │       ├── tool_routing.py      ← ToolRoutingNode: retained but unwired (issue #114) — see below
@@ -113,9 +115,9 @@ src/my_coding_agent/
 
 ## Core Layers
 
-### `engine/` — Execution Owner
+### `engine/` — Execution Primitives
 
-The engine package owns all execution concerns: the LLM HTTP client, tool dispatch, tool definitions, and the top-level `AgentNode` that drives the agentic loop.
+The engine package owns execution primitives: the LLM HTTP client, tool dispatch, and tool definitions. The top-level `AgentNode` that drives the agentic loop lives in `pipeline/nodes/agent.py` (see below), co-located with the pipeline it builds and drives; `engine/__init__.py` re-exports `AgentNode` (lazily, to avoid a load cycle) so existing `from my_coding_agent.engine import AgentNode`-style imports keep resolving.
 
 ### `LLM` (`engine/llm/`)
 
@@ -178,7 +180,7 @@ The node-based DAG execution engine. `pipeline/` only knows how to build and exe
 
 **Tool-result supersession (issue #121).** Before its budget check, `ContextGuardNode` runs a deterministic, no-LLM pass (`find_retirements`, inlined in `pipeline/nodes/context_guard.py`) that retires tool results provably made obsolete by a later one, over `ctx.tool_records`/`ctx.messages`: Case A — a `read_tool_artifact` extract carrying the incompleteness marker for artifact X, superseded once a later successful call reads the same X; Case B — an earlier result's full text is a contiguous substring of a later result's text (window-side mirror of the #92 dedup rule); Case C — an older invocation of a byte-identical `(name, args)` call, superseded by its newest successful invocation. Retirement replaces the tool message's content with a one-line stub (same role/`tool_call_id`, naming the tool, the superseding call, and the on-disk artifact path when one exists) as a **new message object**, never an in-place mutation or a delete — so the recorder's identity check for that step's prefix fails and falls back to a full snapshot (fidelity over size, same invariant `_encode_messages` already guarantees), and checkpoint/resume and the sum-check are unaffected since neither inspects message content. A size floor (`SUPERSESSION_SIZE_FLOOR_CHARS`, `engine/tool_execution/schema.py`) skips trivial retirements that wouldn't outweigh the KV-cache churn a replacement causes, and `MCA_SUPERSESSION=0` disables the pass entirely, restoring today's append-only behavior byte-for-byte. Each retirement records one passive `supersession` event (`Recorder.record_supersession`) — auditable per session, ignored by readers that predate the event type.
 
-### `AgentNode` (`engine/agent.py`)
+### `AgentNode` (`pipeline/nodes/agent.py`)
 
 The top-level entry point. Holds an `LLM` client via composition (`self.llm`) — not a subclass. `__init__` builds the client, assigns a session id, attaches the session log, and initializes run stats.
 
@@ -303,7 +305,7 @@ Every module and sub-module owns a `schema.py` for its typed contracts and shape
 ```
 CLI (Click)
   │
-  └── AgentNode (engine/agent.py)
+  └── AgentNode (pipeline/nodes/agent.py)
         System prompt: stable core (identity, tool-usage/safety rules, envelope
           contract, environment facts) + trailing timestamp — no tool docs, no
           repo state (tools reach the model only via the structured schema)
@@ -426,7 +428,7 @@ isolated-`tempfile.TemporaryDirectory`/`os.chdir` pattern for dataset cases,
 `run_evaluation` runs in the process's actual current working directory —
 deliberately not isolated. Two things broke under isolation and drove this
 choice: `AgentNode`'s session directory always resolves off `Path.cwd()`
-(`engine/agent.py`), so a chdir'd-into-a-tempdir run wrote its session
+(`pipeline/nodes/agent.py`), so a chdir'd-into-a-tempdir run wrote its session
 there and lost it when the tempdir was cleaned up, meaning an Evaluation's
 run never appeared in the Traces tab; and `_score_checks` ran before the
 chdir was undone, so a judge Check's relative rubric path
