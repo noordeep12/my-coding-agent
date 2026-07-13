@@ -203,7 +203,7 @@ def test_unhandled_write_method_on_eval_config_route_404(server):
     assert json.loads(body) == {"error": "not found"}
 
 
-# ── /api/session/{id} ────────────────────────────────────────────────────────
+# ── /api/sessions/{id} ───────────────────────────────────────────────────────
 
 
 def _write_session_events(base_dir, session_id):
@@ -241,7 +241,7 @@ def _write_session_events(base_dir, session_id):
 def test_session_api_returns_loaded_session(server):
     port, base = server
     _write_session_events(base, "abcd1234abcd")
-    status, body = _get(port, "/api/session/abcd1234abcd")
+    status, body = _get(port, "/api/sessions/abcd1234abcd")
     assert status == 200
     data = json.loads(body)
     assert data["session_id"] == "abcd1234abcd"
@@ -249,7 +249,7 @@ def test_session_api_returns_loaded_session(server):
 
 def test_session_api_rejects_malformed_session_id(server):
     port, _ = server
-    status, body = _get(port, "/api/session/NOT-A-SID")
+    status, body = _get(port, "/api/sessions/NOT-A-SID")
     assert status == 400
     assert json.loads(body) == {"error": "invalid session id"}
 
@@ -263,9 +263,15 @@ def test_session_api_loader_failure_500(server, monkeypatch):
 
     monkeypatch.setattr("my_coding_agent.webui.server.load_session", boom)
     port, _ = server
-    status, body = _get(port, "/api/session/aaaabbbbcccc")
+    status, body = _get(port, "/api/sessions/aaaabbbbcccc")
     assert status == 500
     assert json.loads(body) == {"error": "corrupt trace"}
+
+
+def test_singular_session_path_not_served(server):
+    port, _ = server
+    status, body = _get(port, "/api/session/abcd1234abcd")
+    assert status == 404
 
 
 # ── run_server lifecycle ─────────────────────────────────────────────────────

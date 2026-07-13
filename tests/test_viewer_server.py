@@ -198,20 +198,25 @@ class TestRoutes:
     def test_session_invalid_id_400(self, server):
         port, _ = server
         # Non-hex characters in session ID → 400 (regex rejects before path join)
-        status, body = _get(port, "/api/session/not-a-hex-id!")
+        status, body = _get(port, "/api/sessions/not-a-hex-id!")
         assert status == 400
 
     def test_session_valid_id_missing_dir(self, server):
         port, tmp_path = server
         # valid hex ID but no directory → load_session falls back, returns 200
-        status, body = _get(port, "/api/session/aabbccdd1234abcd")
+        status, body = _get(port, "/api/sessions/aabbccdd1234abcd")
         # either 200 (fallback session) or 500 (exception); must not be 400/404
         assert status in (200, 500)
 
     def test_session_uppercase_id_rejected(self, server):
         port, _ = server
-        status, body = _get(port, "/api/session/AABBCCDD1234ABCD")
+        status, body = _get(port, "/api/sessions/AABBCCDD1234ABCD")
         assert status == 400
+
+    def test_singular_session_path_not_served(self, server):
+        port, _ = server
+        status, body = _get(port, "/api/session/aabbccdd1234abcd")
+        assert status == 404
 
     def test_sessions_with_data(self, server, tmp_path):
         port, base = server
