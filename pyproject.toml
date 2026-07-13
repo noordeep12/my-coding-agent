@@ -67,7 +67,9 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 # server.py embeds HTML/CSS/JS templates as string literals;
 # wrapping their markup lines to 88 cols would harm readability, not help it.
-"src/my_coding_agent/viewer/server.py" = ["E501"]
+# The same templates deliberately use typographic characters (›, −) in the
+# rendered UI, which RUF001 otherwise flags as ambiguous.
+"src/my_coding_agent/viewer/server.py" = ["E501", "RUF001"]
 # Missing-docstring rules (D101/D102/D103/D107) are tracked debt: initial volume
 # (~1039 findings) is unmanageable within one mechanical lint-conformance PR.
 # D2xx/D3xx/D4xx docstring format rules stay enforced. See issue #222.

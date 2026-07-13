@@ -311,7 +311,7 @@ def test_invoke_tool_artifact_tuple_is_previewed(bare_executor, mocker):
             {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
         ),
     )
-    env, status, record = _invoke(
+    env, _status, record = _invoke(
         bare_executor, "c1", "bash", {"command": "x"}, ToolsRegistry()
     )
     assert "[Preview:" in env["output"]

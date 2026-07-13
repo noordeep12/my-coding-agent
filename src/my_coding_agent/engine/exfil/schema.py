@@ -16,7 +16,7 @@ CATEGORY_SSH_KEY = "ssh_key"
 CATEGORY_CLOUD_CREDENTIALS = "cloud_credentials"
 CATEGORY_NETRC = "netrc"
 CATEGORY_KEY_FILE = "key_file"
-# noqa: S105 below -- these are exfil category labels, not credentials.
+# The two ruff S105 suppressions below are exfil category labels, not credentials.
 CATEGORY_SECRET_NAMED_PATH = (
     "secret_named_path"  # pragma: allowlist secret # noqa: S105
 )

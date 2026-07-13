@@ -3,6 +3,7 @@ and calibration against human labels.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -122,7 +123,7 @@ def test_load_rubric_inverted_scale_errors(tmp_path):
     data = _well_formed_rubric_data()
     data["scale"] = {"min": 5, "max": 1}
     path = _write_rubric(tmp_path, data)
-    with pytest.raises(RubricError, match="scale.min"):
+    with pytest.raises(RubricError, match=re.escape("scale.min")):
         load_rubric(path)
 
 

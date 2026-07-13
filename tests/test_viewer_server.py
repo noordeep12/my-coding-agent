@@ -89,7 +89,7 @@ class TestRoutes:
 
     def test_root_contains_embedded_html(self, server):
         port, _ = server
-        status, body = _get(port, "/")
+        _status, body = _get(port, "/")
         assert EMBEDDED_HTML[:50].encode() in body
 
     def test_tree_group_renders_its_own_ctx_state_summary(self, server):
@@ -100,7 +100,7 @@ class TestRoutes:
         tool_call nodes such as bash.
         """
         port, _ = server
-        status, body = _get(port, "/")
+        _status, body = _get(port, "/")
         html = body.decode()
         tree_group_src = html[
             html.index("function TreeGroup") : html.index("function TreeLeaf")
@@ -116,7 +116,7 @@ class TestRoutes:
         (added content is already visible in the node's own output).
         """
         port, _ = server
-        status, body = _get(port, "/")
+        _status, body = _get(port, "/")
         html = body.decode()
         assert "function RetirementModal" in html
         assert "retire-before" in html
@@ -139,7 +139,7 @@ class TestRoutes:
         newline-in-command signal, and plain single-line calls stay unbadged.
         """
         port, _ = server
-        status, body = _get(port, "/")
+        _status, body = _get(port, "/")
         html = body.decode()
         detect_src = html[
             html.index("function isMultilineBashCall") : html.index(
@@ -160,7 +160,7 @@ class TestRoutes:
         at a glance (D3: unknown, never a guessed path, when source is absent).
         """
         port, _ = server
-        status, body = _get(port, "/")
+        _status, body = _get(port, "/")
         html = body.decode()
         node_badges_src = html[
             html.index("function nodeBadges") : html.index("const treeBadges")
@@ -176,7 +176,7 @@ class TestRoutes:
         count when the session's analytics carry one (issue #124).
         """
         port, _ = server
-        status, body = _get(port, "/")
+        _status, body = _get(port, "/")
         html = body.decode()
         assert "refusal-tag" in html
         assert "node.refusal_flag" in html
@@ -184,7 +184,7 @@ class TestRoutes:
 
     def test_refusal_detail_block_renders_reason_and_reference_links(self, server):
         port, _ = server
-        status, body = _get(port, "/")
+        _status, body = _get(port, "/")
         html = body.decode()
         detail_src = html[
             html.index("function RefusalDetail") : html.index("function ToolResult")
@@ -202,30 +202,30 @@ class TestRoutes:
 
     def test_unknown_route_404(self, server):
         port, _ = server
-        status, body = _get(port, "/api/nope")
+        status, _body = _get(port, "/api/nope")
         assert status == 404
 
     def test_session_invalid_id_400(self, server):
         port, _ = server
         # Non-hex characters in session ID → 400 (regex rejects before path join)
-        status, body = _get(port, "/api/sessions/not-a-hex-id!")
+        status, _body = _get(port, "/api/sessions/not-a-hex-id!")
         assert status == 400
 
     def test_session_valid_id_missing_dir(self, server):
-        port, tmp_path = server
+        port, _tmp_path = server
         # valid hex ID but no directory → load_session falls back, returns 200
-        status, body = _get(port, "/api/sessions/aabbccdd1234abcd")
+        status, _body = _get(port, "/api/sessions/aabbccdd1234abcd")
         # either 200 (fallback session) or 500 (exception); must not be 400/404
         assert status in (200, 500)
 
     def test_session_uppercase_id_rejected(self, server):
         port, _ = server
-        status, body = _get(port, "/api/sessions/AABBCCDD1234ABCD")
+        status, _body = _get(port, "/api/sessions/AABBCCDD1234ABCD")
         assert status == 400
 
     def test_singular_session_path_not_served(self, server):
         port, _ = server
-        status, body = _get(port, "/api/session/aabbccdd1234abcd")
+        status, _body = _get(port, "/api/session/aabbccdd1234abcd")
         assert status == 404
 
     def test_sessions_with_data(self, server, tmp_path):

@@ -146,7 +146,7 @@ def _read_interactive_prompt() -> str:
     )
     click.echo("─" * 60)
     try:
-        text: str = session.prompt("❯ ")
+        text: str = session.prompt("❯ ")  # noqa: RUF001 -- deliberate prompt glyph
     except (EOFError, KeyboardInterrupt):
         text = ""
     click.echo("─" * 60)

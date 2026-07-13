@@ -43,7 +43,7 @@ class TestRecordExfil:
         assert "-----BEGIN" not in raw_line
 
     def test_no_events_when_guard_never_triggers(self, tmp_path):
-        rec, path = _make_recorder(tmp_path)
+        _rec, path = _make_recorder(tmp_path)
         # A run where the guard never fires writes no file at all (no
         # record_exfil call made) — session directory stays untouched.
         assert not path.exists()

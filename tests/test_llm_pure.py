@@ -69,7 +69,7 @@ def test_parse_tool_call_valid():
 
 def test_parse_tool_call_missing_type():
     tc = {"id": "c2", "function": {"name": "bash"}}
-    tid, name, args, err = arg_prep.parse_tool_call(tc)
+    _tid, name, _args, err = arg_prep.parse_tool_call(tc)
     assert name is None
     assert "missing 'type'" in err
 
@@ -94,7 +94,7 @@ def test_parse_tool_call_malformed_json_args():
         "type": "function",
         "function": {"name": "bash", "arguments": "{not json}"},
     }
-    tid, name, args, err = arg_prep.parse_tool_call(tc)
+    _tid, name, args, err = arg_prep.parse_tool_call(tc)
     assert name == "bash"  # name preserved for record creation
     assert args is None
     assert "could not parse" in err

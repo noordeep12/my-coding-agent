@@ -1363,8 +1363,9 @@ class TestLlmToolDefinitions:
         ]
         session = self._load(tmp_path, sid, events)
         nodes = self._llm_nodes(session)
-        assert nodes[-1].inputs["messages"] == m1 + [
-            {"role": "assistant", "content": "a1"}
+        assert nodes[-1].inputs["messages"] == [
+            *m1,
+            {"role": "assistant", "content": "a1"},
         ]
 
 
@@ -1401,7 +1402,7 @@ class TestResolveMessageDeltas:
             ),
         ]
         _resolve_message_deltas(events)
-        assert events[1]["messages"] == m1 + [{"role": "assistant", "content": "a1"}]
+        assert events[1]["messages"] == [*m1, {"role": "assistant", "content": "a1"}]
 
     def test_chained_deltas_resolve(self):
         m1 = [{"role": "user", "content": "hi"}]
@@ -1472,7 +1473,7 @@ class TestResolveMessageDeltas:
         path.write_text("\n".join(lines) + "\n" + truncated, encoding="utf-8")
         parsed = _read_events(path)
         assert len(parsed) == 2
-        assert parsed[1]["messages"] == m1 + [{"role": "assistant", "content": "a1"}]
+        assert parsed[1]["messages"] == [*m1, {"role": "assistant", "content": "a1"}]
 
 
 class TestCappedLlmCallBadge:

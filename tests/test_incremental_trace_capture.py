@@ -40,11 +40,11 @@ class TestRoundTripFidelity:
         _record_main_call(rec, 1, m1)
         recorded_inputs.append(m1)
 
-        m2 = m1 + [{"role": "assistant", "content": "a1"}]
+        m2 = [*m1, {"role": "assistant", "content": "a1"}]
         _record_main_call(rec, 2, m2)
         recorded_inputs.append(m2)
 
-        m3 = m2 + [{"role": "user", "content": "u2"}]
+        m3 = [*m2, {"role": "user", "content": "u2"}]
         _record_main_call(rec, 3, m3)
         recorded_inputs.append(m3)
 
@@ -53,7 +53,7 @@ class TestRoundTripFidelity:
         _record_main_call(rec, 4, m4)
         recorded_inputs.append(m4)
 
-        m5 = m4 + [{"role": "assistant", "content": "a4"}]
+        m5 = [*m4, {"role": "assistant", "content": "a4"}]
         _record_main_call(rec, 5, m5)
         recorded_inputs.append(m5)
 
@@ -99,8 +99,12 @@ class TestSizeGrowthBound:
             rec, path = _make_recorder(tmp_path, name)
             messages: list[dict] = []
             for call in range(1, n + 1):
-                messages = messages + [
-                    {"role": "user" if call % 2 else "assistant", "content": f"m{call}"}
+                messages = [
+                    *messages,
+                    {
+                        "role": "user" if call % 2 else "assistant",
+                        "content": f"m{call}",
+                    },
                 ]
                 _record_main_call(rec, call, messages)
             return path.stat().st_size

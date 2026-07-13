@@ -300,7 +300,7 @@ class TestRecordLlmCallMessageDeltas:
         rec, path = _make_recorder(tmp_path)
         m1 = [{"role": "user", "content": "hi"}]
         self._call(rec, kind="main", call=1, messages=m1)
-        m2 = m1 + [{"role": "assistant", "content": "hello"}]
+        m2 = [*m1, {"role": "assistant", "content": "hello"}]
         self._call(rec, kind="main", call=2, messages=m2)
         ev = _read_events(path)[-1]
         assert ev["messages"] is None
@@ -312,9 +312,9 @@ class TestRecordLlmCallMessageDeltas:
         rec, path = _make_recorder(tmp_path)
         m1 = [{"role": "user", "content": "hi"}]
         self._call(rec, kind="main", call=1, messages=m1)
-        m2 = m1 + [{"role": "assistant", "content": "a1"}]
+        m2 = [*m1, {"role": "assistant", "content": "a1"}]
         self._call(rec, kind="main", call=2, messages=m2)
-        m3 = m2 + [{"role": "user", "content": "u2"}]
+        m3 = [*m2, {"role": "user", "content": "u2"}]
         self._call(rec, kind="main", call=3, messages=m3)
         ev = _read_events(path)[-1]
         assert ev["messages_base_call"] == 2
@@ -392,7 +392,7 @@ class TestRecordLlmCallMessageDeltas:
         self._call(rec, kind="main", call=1, messages=main1)
         router1 = [{"role": "user", "content": "route"}]
         self._call(rec, kind="tool_router", call=2, messages=router1)
-        main2 = main1 + [{"role": "assistant", "content": "a1"}]
+        main2 = [*main1, {"role": "assistant", "content": "a1"}]
         self._call(rec, kind="main", call=3, messages=main2)
         events = _read_events(path)
         router_ev = events[1]
