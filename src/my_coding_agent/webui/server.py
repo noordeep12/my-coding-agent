@@ -278,7 +278,7 @@ class _WebUIHandler(BaseHTTPRequestHandler):
             return self._handle_evaluation_api("GET")
         if path.startswith("/api/evals/"):
             return handle_eval_api_route(self, path, self.base_dir.resolve() / "evals")
-        match = re.fullmatch(r"/api/session/([^/]+)", path)
+        match = re.fullmatch(r"/api/sessions/([^/]+)", path)
         if match:
             self._handle_session(match.group(1))
             return True

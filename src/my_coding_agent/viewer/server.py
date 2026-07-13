@@ -455,7 +455,7 @@ function App(){
     const found = initialSid && s.some(x=>x.session_id===initialSid);
     setSid(found ? initialSid : s[0].session_id);
   }); },[]);
-  useEffect(()=>{ if(!sid) return; setData(null); setSel(null); getJSON('/api/session/'+sid).then(setData); },[sid]);
+  useEffect(()=>{ if(!sid) return; setData(null); setSel(null); getJSON('/api/sessions/'+sid).then(setData); },[sid]);
   // Notify an embedding shell of the current selection so it can persist it.
   useEffect(()=>{
     if(!sid) return;
@@ -1204,7 +1204,7 @@ class _TraceHandler(BaseHTTPRequestHandler):
         Routes:
             ``/``                        → embedded HTML viewer
             ``/api/sessions``            → session index JSON
-            ``/api/session/{session_id}``→ full trace JSON
+            ``/api/sessions/{session_id}``→ full trace JSON
             ``/evals``                   → embedded eval dashboard UI
             ``/api/evals/...``           → eval dashboard JSON (see evals_server.py)
         """
@@ -1220,7 +1220,7 @@ class _TraceHandler(BaseHTTPRequestHandler):
             if not handle_eval_api_route(self, path, self.base_dir.resolve() / "evals"):
                 self._send_json({"error": "not found"}, status=404)
         else:
-            match = re.fullmatch(r"/api/session/([^/]+)", path)
+            match = re.fullmatch(r"/api/sessions/([^/]+)", path)
             if match:
                 self._handle_session(match.group(1))
             else:
