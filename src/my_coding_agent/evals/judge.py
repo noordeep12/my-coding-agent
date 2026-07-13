@@ -95,6 +95,28 @@ def load_rubric(path: Path) -> Rubric:
     return _rubric_from_dict(data, source=str(path))
 
 
+def resolve_rubric(rubric_ref: Any, *, case_id: str = "") -> Rubric:
+    """Resolve a rubric from either an inline mapping or a filesystem path.
+
+    Args:
+        rubric_ref: Either a mapping of the rubric's ``name``/``scale``/
+            ``criteria`` shape (inline), or a path/str pointing at a rubric
+            JSON file.
+        case_id: The eval case's id, used only to label validation errors
+            for an inline rubric.
+
+    Returns:
+        The parsed, validated ``Rubric``.
+
+    Raises:
+        RubricError: The mapping or file fails structural validation. Never
+            falls back to a free-form judge.
+    """
+    if isinstance(rubric_ref, dict):
+        return _rubric_from_dict(rubric_ref, source=f"inline:{case_id}")
+    return load_rubric(Path(rubric_ref))
+
+
 def _rubric_from_dict(data: dict[str, Any], *, source: str) -> Rubric:
     try:
         name = data["name"]
@@ -487,7 +509,9 @@ class JudgeScorer:
     """Adapts the rubric judge to the eval harness's ``Scorer`` contract.
 
     ``case.expected`` must carry:
-        - ``rubric``: path to the rubric JSON artifact.
+        - ``rubric``: either a path to the rubric JSON artifact, or an inline
+          mapping of the same ``name``/``scale``/``criteria`` shape. Both
+          forms validate through the same rules.
         - ``pass_threshold``: minimum ``overall_score`` to pass the case.
 
     ``case.expected`` may optionally carry:
@@ -533,7 +557,7 @@ class JudgeScorer:
         max_tokens = int(case.expected.get("max_tokens", DEFAULT_JUDGE_MAX_TOKENS))
 
         try:
-            rubric = load_rubric(Path(rubric_ref))
+            rubric = resolve_rubric(rubric_ref, case_id=case.id)
             verdict = score_with_judge(
                 self._llm,
                 rubric,
