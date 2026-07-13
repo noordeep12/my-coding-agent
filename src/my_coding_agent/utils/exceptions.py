@@ -1,5 +1,12 @@
 """Custom exception hierarchy for my-coding-agent."""
 
+__all__ = [
+    "MyCodingAgentError",
+    "PathTraversalError",
+    "ToolDefinitionError",  # noqa: F822 — resolved lazily via __getattr__ below
+    "APIResponseError",  # noqa: F822 — resolved lazily via __getattr__ below
+]
+
 
 class MyCodingAgentError(Exception):
     """Base exception — catch this to handle all library errors."""
@@ -13,9 +20,17 @@ class PathTraversalError(MyCodingAgentError, ValueError):
     """Raise when a resolved path escapes the workspace base directory."""
 
 
-class ToolDefinitionError(MyCodingAgentError, ValueError):
-    """Raise when a function cannot be converted into a tool definition."""
+# ToolDefinitionError and APIResponseError relocated to their raising domains
+# (engine/tool_registry and engine/llm respectively, per CONTRIBUTE.md §29), both
+# of which import MyCodingAgentError from this module. Resolving the re-export
+# lazily (PEP 562) avoids the circular import an eager import would create.
+def __getattr__(name: str) -> type[MyCodingAgentError]:
+    if name == "ToolDefinitionError":
+        from ..engine.tool_registry.exceptions import ToolDefinitionError
 
+        return ToolDefinitionError
+    if name == "APIResponseError":
+        from ..engine.llm.errors import APIResponseError
 
-class APIResponseError(MyCodingAgentError, ValueError):
-    """Raise when the LLM API returns a response that cannot be parsed."""
+        return APIResponseError
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

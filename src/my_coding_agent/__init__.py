@@ -1,9 +1,7 @@
 """Public API for my-coding-agent."""
 
 import logging
-import warnings
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
 
 from .engine import DEFAULT_MAX_STEPS, LLM, AgentNode, ToolRegistry, tool
 from .pipeline.schema import ContextHandoff
@@ -13,17 +11,6 @@ from .utils.exceptions import (
     PathTraversalError,
     ToolDefinitionError,
 )
-
-
-def Agent(*args: Any, **kwargs: Any) -> "AgentNode":
-    """Construct an AgentNode. Deprecated: use AgentNode directly (removed v0.2.0)."""
-    warnings.warn(
-        "Agent is deprecated and will be removed in v0.2.0. Use AgentNode instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return AgentNode(*args, **kwargs)
-
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -37,7 +24,6 @@ __all__ = [
     "LLM",
     "AgentNode",
     "DEFAULT_MAX_STEPS",
-    "Agent",
     "ContextHandoff",
     "tool",
     "ToolRegistry",
