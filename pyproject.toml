@@ -82,7 +82,17 @@ convention = "google"
 # security concern (bandit S101 flags "assert" broadly; not applicable in tests).
 # S108: "/tmp/..." strings here are dummy tool-call args/fixture data, never
 # paths this test suite actually writes to.
-"tests/**/*.py" = ["D101", "D102", "D103", "D107", "D205", "D415", "S101", "S108"]
+# ARG001/ARG002/ARG005: unused-argument findings here are almost entirely test
+# doubles that intentionally mirror a real method's signature -- pytest fixture
+# parameters (renaming breaks fixture injection, which pytest resolves by exact
+# parameter name) and monkeypatched stand-ins for ToolsRegistry methods (whose
+# names are inspected at runtime by engine/tool_execution/args.py's arg-name
+# validation; renaming one silently broke test_run_success during discovery,
+# with no lint signal). Renaming for lint conformance is not safe here.
+"tests/**/*.py" = [
+    "D101", "D102", "D103", "D107", "D205", "D415", "S101", "S108",
+    "ARG001", "ARG002", "ARG005",
+]
 
 [tool.mypy]
 python_version = "3.12"
