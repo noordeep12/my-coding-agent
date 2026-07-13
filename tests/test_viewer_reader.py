@@ -444,7 +444,8 @@ class TestPreChangeTimestampCompatibility:
     format (second precision, no timezone offset, emit-time stamp) without
     error — it treats ``started_at``/``ended_at`` as opaque strings, so no
     special-casing is required, but this is a regression guard on that
-    invariant."""
+    invariant.
+    """
 
     def test_old_format_naive_second_precision_trace_loads(self, tmp_path):
         sid = "aabbccdd1234"
@@ -756,7 +757,8 @@ class TestLoadSession:
         """A later main llm_call whose real message snapshot shows a shrunken
         tool role (issue #121: a superseded tool result replaced by a short
         stub) reports that shrinkage as `removed`/`removed_by_role`, the same
-        way a context-reset handoff already reports its compaction."""
+        way a context-reset handoff already reports its compaction.
+        """
         sid = "aabbccdd1234"
         sdir = tmp_path / sid
         sdir.mkdir()
@@ -927,7 +929,8 @@ class TestSubagentNesting:
 
     def test_subagent_root_nests_under_the_delegate_tool_call(self, tmp_path):
         """The child session's root must be re-parented to the exact `delegate`
-        tool_call node — real parent/child linkage, not just depth/order."""
+        tool_call node — real parent/child linkage, not just depth/order.
+        """
         parent, child, session = self._setup(tmp_path)
         delegate_node_id = f"{parent}::step1::tool::1"
         assert session.nodes[delegate_node_id].attributes["name"] == "delegate"
@@ -947,7 +950,8 @@ class TestSubagentNesting:
 class TestAnalyticsAllKindsAcrossTree:
     """Analytics totals cover every call kind across parent + embedded children
     (session-cost-attribution D5) — including a subagent's report call, which
-    the pre-change reader counted nowhere."""
+    the pre-change reader counted nowhere.
+    """
 
     def _setup(self, tmp_path):
         parent, child = "parent000001", "child0000002"
@@ -1011,7 +1015,8 @@ class TestAnalyticsAllKindsAcrossTree:
 class TestAnalyticsBackwardCompat:
     """Pre-change traces (no rollup fields) and crash-truncated traces (no
     session_end / no session_data) still load, with analytics computed purely
-    from event rows (D6)."""
+    from event rows (D6).
+    """
 
     def test_pre_change_trace_loads_with_analytics(self, tmp_path):
         sid = "aabbccdd1234"
@@ -1050,7 +1055,8 @@ class TestAnalyticsBackwardCompat:
 class TestArtifactQueryNesting:
     """A read_tool_artifact call's internal artifact_query extraction call must
     nest under that exact tool_call node (recorder's `child_llm_calls` link),
-    the same mechanism TestSubagentNesting exercises for delegate."""
+    the same mechanism TestSubagentNesting exercises for delegate.
+    """
 
     def _events(self, sid: str) -> list:
         return [
@@ -1205,7 +1211,8 @@ class TestReportNode:
 
     def test_pre_provenance_report_event_surfaces_unknown_source(self, tmp_path):
         """A report event recorded before provenance existed (no ``source``
-        key) still loads and is presented as unknown, never an error (D3)."""
+        key) still loads and is presented as unknown, never an error (D3).
+        """
         session = self._load_with(
             tmp_path,
             "prereport",
@@ -1225,7 +1232,8 @@ class TestReportNode:
 class TestSupersessionEventSkipped:
     """A `supersession` event (issue #121) is an unrecognized type to today's
     node builders — it must load without error, per the old-readers-skip-new-
-    event-types contract (same as an old pre-provenance report event, D3)."""
+    event-types contract (same as an old pre-provenance report event, D3).
+    """
 
     def _load_with(self, tmp_path, sid, extra):
         events = _minimal_events(sid) + extra
@@ -1468,7 +1476,8 @@ class TestResolveMessageDeltas:
 
 class TestCappedLlmCallBadge:
     """llm_call nodes derive a ``capped`` attribute from the recorded cap
-    (extract-completeness-disclosure D6)."""
+    (extract-completeness-disclosure D6).
+    """
 
     def _load(self, tmp_path, sid, events):
         sdir = tmp_path / sid

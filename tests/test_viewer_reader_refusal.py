@@ -139,7 +139,8 @@ class TestRefusalFlag:
     def test_pre_change_trace_with_no_metadata_key_renders_unflagged(self, tmp_path):
         """A tool_call event recorded before this change has no
         ``metadata.refusal`` key at all (not even absent-but-present) — the
-        reader must not error and must simply leave the node unflagged."""
+        reader must not error and must simply leave the node unflagged.
+        """
         sid = "aabbccdd3333"
         events = _session_events(sid, with_refusal=False)
         legacy_result = json.dumps({"ok": True, "stdout": "hi", "stderr": ""})

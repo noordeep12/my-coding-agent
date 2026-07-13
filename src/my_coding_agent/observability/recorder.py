@@ -57,7 +57,7 @@ current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 # The active run's Recorder, so ``delegate`` can attach the spawned child's
 # session id to the delegate tool call for an exact parent→child tree link.
-current_recorder: contextvars.ContextVar["Recorder | None"] = contextvars.ContextVar(
+current_recorder: contextvars.ContextVar[Recorder | None] = contextvars.ContextVar(
     "current_recorder", default=None
 )
 

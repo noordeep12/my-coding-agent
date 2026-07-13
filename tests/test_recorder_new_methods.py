@@ -94,7 +94,7 @@ class TestRecordTokenTracking:
             context_window=8192,
         )
         ev = _read_events(path)[-1]
-        assert "started_at" in ev and ev["started_at"]
+        assert ev.get("started_at")
 
 
 class TestRecordReport:
@@ -120,7 +120,7 @@ class TestRecordReport:
         rec.record_report(content="the report body", source=REPORT_SOURCE_VERBATIM)
         ev = _read_events(path)[-1]
         assert ev["content"] == "the report body"
-        assert "started_at" in ev and ev["started_at"]
+        assert ev.get("started_at")
 
     def test_source_is_required(self, tmp_path):
         rec, _ = _make_recorder(tmp_path)
@@ -162,7 +162,7 @@ class TestRecordFinishCheck:
         rec, path = _make_recorder(tmp_path)
         rec.record_finish_check(step=1, finish_reason="stop", signal="STOP")
         ev = _read_events(path)[-1]
-        assert "started_at" in ev and ev["started_at"]
+        assert ev.get("started_at")
 
 
 class TestRecordLlmCallTools:
@@ -218,7 +218,8 @@ class TestChildLlmCallLinking:
     artifact_query extraction) is stashed and attached to that tool's own
     tool_call event, so the viewer can nest it under the exact tool node —
     the same 'stash now, attach at after_tool' pattern as the delegate
-    child-session link (note_delegate_child)."""
+    child-session link (note_delegate_child).
+    """
 
     def _record_llm_call(self, rec, call):
         rec.record_llm_call(
@@ -273,7 +274,8 @@ class TestRecordLlmCallMessageDeltas:
     """Prefix-delta emission (design D2): consecutive calls of the same kind
     that only append messages should emit a delta, not a full snapshot;
     anything that breaks the identity-verified prefix must fall back to a
-    full snapshot."""
+    full snapshot.
+    """
 
     def _call(self, rec, *, kind, call, messages):
         rec.record_llm_call(
@@ -334,7 +336,8 @@ class TestRecordLlmCallMessageDeltas:
         """A retiring step (issue #121) replaces one message object in place
         of a mutation — the identity check for that index fails, so the whole
         step's recorded messages are a full snapshot (what the model actually
-        saw), never a delta silently missing the stub."""
+        saw), never a delta silently missing the stub.
+        """
         rec, path = _make_recorder(tmp_path)
         tool_msg = {"role": "tool", "tool_call_id": "call_1", "content": "x" * 600}
         m1 = [{"role": "user", "content": "hi"}, tool_msg]
@@ -362,7 +365,8 @@ class TestRecordLlmCallMessageDeltas:
         it), so the recorder must not keep a live reference to the caller's
         list — only a snapshot of it as of call time. Otherwise the stored
         "base" snapshot's length silently grows between calls, corrupting
-        ``messages_prefix_len`` and losing messages on reconstruction."""
+        ``messages_prefix_len`` and losing messages on reconstruction.
+        """
         rec, path = _make_recorder(tmp_path)
         live_messages = [{"role": "user", "content": "hi"}]
         self._call(rec, kind="main", call=1, messages=live_messages)

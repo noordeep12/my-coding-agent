@@ -275,7 +275,8 @@ def test_pipeline_execute_returns_messages_on_stop():
 def test_pipeline_skips_checkpoint_on_reset():
     """A RESET step is NOT checkpointed: the continuation (already run inside the
     step) owns the resumable checkpoint, so a fresh main checkpoint here would
-    get a newer mtime and mistarget --resume-last."""
+    get a newer mtime and mistarget --resume-last.
+    """
     calls = []
 
     class _ResetNode(BaseNode):

@@ -59,7 +59,8 @@ def test_read_file_relative_path_resolves_under_base(tmp_path):
 
 def test_read_file_large_file_returns_artifact_tuple(tmp_path):
     """A file over ARTIFACT_THRESHOLD is offloaded — not lossily truncated — so
-    the full content is preserved for the artifact store."""
+    the full content is preserved for the artifact store.
+    """
     reg = ToolsRegistry(base_dir=str(tmp_path))
     big = "x" * (ARTIFACT_THRESHOLD + 1)
     f = tmp_path / "big.txt"
@@ -123,7 +124,8 @@ def test_read_tool_artifact_missing():
 
 def test_read_tool_artifact_reads_session_file_cross_step(tmp_path, monkeypatch):
     """Regression for #64: a later step's registry has an empty in-memory store,
-    yet retrieval still succeeds by reading the on-disk per-artifact file."""
+    yet retrieval still succeeds by reading the on-disk per-artifact file.
+    """
     monkeypatch.chdir(tmp_path)
     art_dir = tmp_path / ".my_coding_agent" / "sessX" / "artifacts"
     art_dir.mkdir(parents=True)
@@ -149,7 +151,8 @@ def test_read_tool_artifact_missing_file_falls_back_to_error(tmp_path, monkeypat
 
 def test_read_tool_artifact_rejects_unsafe_id(tmp_path, monkeypatch):
     """A crafted id cannot traverse out of the artifacts directory; it skips the
-    file path and falls back to the in-memory store (miss → error)."""
+    file path and falls back to the in-memory store (miss → error).
+    """
     monkeypatch.chdir(tmp_path)
     token = current_session_id.set("sessX")
     try:
@@ -165,7 +168,8 @@ def test_read_tool_artifact_rejects_unsafe_id(tmp_path, monkeypatch):
 
 def test_read_tool_artifact_range_returns_exact_slice():
     """A single-line artifact larger than the offload threshold is readable in
-    exact, bounded pieces via start/length — no LLM call needed."""
+    exact, bounded pieces via start/length — no LLM call needed.
+    """
     from my_coding_agent.engine.tool_registry.registry import RANGE_MAX_CHARS
 
     body = "x" * 100 + "y" * 100 + "z" * 100
@@ -216,7 +220,8 @@ def test_read_tool_artifact_range_missing_artifact_errors():
 
 def test_read_tool_artifact_uses_llm_for_extraction(mocker):
     """With an LLM injected, read_tool_artifact makes a bounded extraction call
-    tagged with the artifact_query kind instead of falling back to a head excerpt."""
+    tagged with the artifact_query kind instead of falling back to a head excerpt.
+    """
     fake_llm = mocker.Mock()
     fake_llm.chat_completion.return_value = mocker.Mock(
         json=lambda: {"choices": [{"message": {"content": "the relevant passage"}}]}
@@ -325,7 +330,8 @@ def test_extract_chunk_trusts_explicit_stop(mocker):
 
 def test_extract_discloses_unscanned_remainder(mocker):
     """Output budget fills after the first of several chunks; the disclosure
-    must name the scanned-vs-total extent and a recovery path."""
+    must name the scanned-vs-total extent and a recovery path.
+    """
     from my_coding_agent.engine.tool_registry.registry import (
         EXTRACTION_CHUNK_MAX_CHARS,
         EXTRACTION_OUTPUT_MAX_CHARS,
@@ -353,7 +359,8 @@ def test_extract_discloses_unscanned_remainder(mocker):
 
 def test_extract_slice_disclosed_and_bounded(mocker):
     """A joined result exceeding the output budget is sliced and disclosed,
-    with content + disclosure together staying within the budget."""
+    with content + disclosure together staying within the budget.
+    """
     from my_coding_agent.engine.tool_registry.registry import (
         EXTRACTION_OUTPUT_MAX_CHARS,
     )
@@ -424,7 +431,8 @@ def test_complete_extract_unmarked(mocker):
 
 def test_read_tool_artifact_reaches_detail_near_the_end_via_chunk_scan(mocker):
     """The relevant detail lives only in the last of several chunks; the scan
-    must not stop at the first NOT FOUND — it reaches the whole stored output."""
+    must not stop at the first NOT FOUND — it reaches the whole stored output.
+    """
     from my_coding_agent.engine.tool_registry.registry import (
         EXTRACTION_CHUNK_MAX_CHARS,
     )
@@ -621,7 +629,8 @@ def test_fetch_web_generic_error(mocker):
 
 def test_fetch_web_large_page_returns_artifact_tuple(mocker):
     """A page whose converted markdown exceeds ARTIFACT_THRESHOLD is offloaded —
-    not lossily truncated — so the full text stays in the artifact store."""
+    not lossily truncated — so the full text stays in the artifact store.
+    """
     resp = _mock_resp(mocker, "<p>" + ("word " * 20000) + "</p>", "text/html")
     # ~100_000 chars, well over ARTIFACT_THRESHOLD (8_000) but under the
     # fetch-side sanity cap.
@@ -638,7 +647,8 @@ def test_fetch_web_large_page_returns_artifact_tuple(mocker):
 
 def test_fetch_web_fetch_sanity_cap_truncates_pathological_page(mocker):
     """A page far beyond the fetch-side sanity cap is truncated at the cap —
-    the cap guards a pathological page, fidelity within it is still offloaded."""
+    the cap guards a pathological page, fidelity within it is still offloaded.
+    """
     from my_coding_agent.engine.tool_registry.registry import PAGE_FETCH_MAX_CHARS
 
     resp = _mock_resp(mocker, "<p>" + ("word " * 100_000) + "</p>", "text/html")
@@ -656,7 +666,8 @@ def test_fetch_web_fetch_sanity_cap_truncates_pathological_page(mocker):
 
 def test_fetch_web_json_with_escapes_stays_parseable(mocker):
     """JSON body with backslash escapes and code blocks must round-trip through
-    json.loads — the session fbef66a33c18 failure shape."""
+    json.loads — the session fbef66a33c18 failure shape.
+    """
     payload = {
         "note": "line1\\nline2\\ttabbed",
         "snippet": "```python\nprint('hi')\n```",
@@ -1038,7 +1049,8 @@ def test_delegate_no_pipeline_report_falls_back_to_generate_report(mocker):
 def _make_fake_agent_with_real_recorder(mocker, tmp_path, **kwargs):
     """Like ``_make_fake_agent``, but wired to a real ``Recorder`` writing into
     ``tmp_path`` so a test can read back the persisted ``report`` event and
-    confirm its provenance from ``events.jsonl`` directly (no mock assertion)."""
+    confirm its provenance from ``events.jsonl`` directly (no mock assertion).
+    """
     from my_coding_agent.engine.llm.schema import CALL_KIND_REPORT
     from my_coding_agent.observability.recorder import Recorder
 
@@ -1090,7 +1102,8 @@ def test_delegate_clean_finish_end_to_end_zero_report_kind_rows(mocker, tmp_path
 
 def test_delegate_cutoff_end_to_end_one_report_kind_row(mocker, tmp_path):
     """Cutoff with a pipeline hand-back: summarizer source, exactly one
-    `report`-kind row (recorded in-pipeline before delegate() sees it)."""
+    `report`-kind row (recorded in-pipeline before delegate() sees it).
+    """
     from my_coding_agent.engine.llm.schema import CALL_KIND_REPORT
 
     fake_agent, events_path = _make_fake_agent_with_real_recorder(
@@ -1125,7 +1138,8 @@ def test_delegate_cutoff_end_to_end_one_report_kind_row(mocker, tmp_path):
 
 def test_delegate_fallback_end_to_end_one_report_kind_row_and_resave(mocker, tmp_path):
     """Fallback path: fallback source, exactly one `report`-kind row, and the
-    child record is re-saved so its persisted totals include that call."""
+    child record is re-saved so its persisted totals include that call.
+    """
     fake_agent, events_path = _make_fake_agent_with_real_recorder(
         mocker, tmp_path, stop_reason="aborted", report="fallback report"
     )
@@ -1150,7 +1164,8 @@ def test_delegate_fallback_end_to_end_one_report_kind_row_and_resave(mocker, tmp
 def test_delegate_resaves_session_data_after_generate_report(mocker):
     """D4: when generate_report() runs (out-of-pipeline), the child's session
     data is re-saved so its persisted total_usage includes the report call —
-    execute() already saved once before the report was generated."""
+    execute() already saved once before the report was generated.
+    """
     fake_agent = _make_fake_agent(
         mocker, stop_reason="aborted", report="fallback report"
     )
@@ -1175,7 +1190,8 @@ def test_delegate_skips_resave_on_clean_finish(mocker):
 
 def test_delegate_hands_usage_summary_up_to_parent_agent_node(mocker):
     """D3: the completed child's usage summary reaches the parent via
-    current_agent_node, without delegate() re-reading the child's files."""
+    current_agent_node, without delegate() re-reading the child's files.
+    """
     from my_coding_agent.observability.recorder import current_agent_node
 
     fake_agent = _make_fake_agent(mocker, stop_reason="stop", final_text="final turn")

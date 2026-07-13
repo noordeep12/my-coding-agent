@@ -109,7 +109,8 @@ def _all_tools() -> list:
 
 def _build_tools(skills: dict) -> list:
     """Return the run's toolset: the standard tools, plus ``use_skill`` iff skills
-    were discovered. With no skills the result is byte-identical to today (D5)."""
+    were discovered. With no skills the result is byte-identical to today (D5).
+    """
     tools = _all_tools()
     if skills:
         tools.append(tool(ToolRegistry.use_skill))

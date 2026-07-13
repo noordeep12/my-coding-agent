@@ -45,7 +45,7 @@ class TestSidRegex:
 # ── Live server fixture ────────────────────────────────────────────────────────
 
 
-@pytest.fixture()
+@pytest.fixture
 def server(tmp_path):
     """Spin up a real HTTP server on a random port in a background thread."""
     _TraceHandler.base_dir = tmp_path
@@ -97,7 +97,8 @@ class TestRoutes:
         which always nests its subagent session root under it) must still show
         its own ctx-window contribution ("+N tool") — TreeGroup previously
         dropped it entirely, unlike TreeLeaf which renders leaf (childless)
-        tool_call nodes such as bash."""
+        tool_call nodes such as bash.
+        """
         port, _ = server
         status, body = _get(port, "/")
         html = body.decode()
@@ -112,7 +113,8 @@ class TestRoutes:
         carries retirements, opening RetirementModal to show each retired
         message's original content next to the stub that replaced it — the
         "added" figure stays plain text, never a button, per product intent
-        (added content is already visible in the node's own output)."""
+        (added content is already visible in the node's own output).
+        """
         port, _ = server
         status, body = _get(port, "/")
         html = body.decode()
@@ -133,7 +135,8 @@ class TestRoutes:
         """Regression: bash-stdin-delivery — the multi-line badge must be
         detected from recorded args alone (non-empty `stdin`, or a newline in
         `command`), so old traces without `stdin` still badge via the
-        newline-in-command signal, and plain single-line calls stay unbadged."""
+        newline-in-command signal, and plain single-line calls stay unbadged.
+        """
         port, _ = server
         status, body = _get(port, "/")
         html = body.decode()
@@ -153,7 +156,8 @@ class TestRoutes:
 
     def test_report_provenance_badge_source(self, server):
         """The report node's badge distinguishes free/paid/unknown provenance
-        at a glance (D3: unknown, never a guessed path, when source is absent)."""
+        at a glance (D3: unknown, never a guessed path, when source is absent).
+        """
         port, _ = server
         status, body = _get(port, "/")
         html = body.decode()
@@ -168,7 +172,8 @@ class TestRoutes:
         """A refused tool_call node shows a distinct `refusal-tag` in both the
         tree row (TreeLeaf/TreeGroup) and the detail header, alongside — never
         replacing — loop/anomaly, and the stats strip renders a refusal
-        count when the session's analytics carry one (issue #124)."""
+        count when the session's analytics carry one (issue #124).
+        """
         port, _ = server
         status, body = _get(port, "/")
         html = body.decode()

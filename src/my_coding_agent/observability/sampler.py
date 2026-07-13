@@ -53,7 +53,7 @@ _IOREG_PATH = "/usr/sbin/ioreg"
 class _Sample:
     """One instantaneous reading. Plain slots class — created ~once/second."""
 
-    __slots__ = ("t", "ram_pct", "cpu_pct", "gpu_pct", "net_bytes", "disk_bytes")
+    __slots__ = ("cpu_pct", "disk_bytes", "gpu_pct", "net_bytes", "ram_pct", "t")
 
     def __init__(
         self,

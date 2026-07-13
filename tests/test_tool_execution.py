@@ -403,7 +403,8 @@ def test_executor_defaults_to_empty_toolset(bare_llm):
 
 def test_executor_forwards_llm_to_registry(bare_llm):
     """The registry must receive the executor's LLM client (design D5) so
-    read_tool_artifact can make its bounded extraction call."""
+    read_tool_artifact can make its bounded extraction call.
+    """
     executor = ToolExecutor({"tool_calls": []}, bare_llm)
     assert executor.registry._llm is bare_llm
 
@@ -533,7 +534,8 @@ def test_executor_offloads_stdout_stream_and_omits_full_output(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
     """A large stdout is written to its per-stream file at creation, and the
-    envelope carries only the bounded stdout preview under metadata.preview.stdout."""
+    envelope carries only the bounded stdout preview under metadata.preview.stdout.
+    """
     monkeypatch.chdir(tmp_path)
     body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAILMARKER"
     mocker.patch.object(
@@ -566,7 +568,8 @@ def test_executor_offloads_large_stderr_into_error(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
     """A large stderr with empty stdout is bounded in `error` and written to its
-    own .stderr.txt file — not flooded verbatim into the envelope."""
+    own .stderr.txt file — not flooded verbatim into the envelope.
+    """
     monkeypatch.chdir(tmp_path)
     err = "ERRHEAD\n" + ("e" * (PREVIEW_MAX_CHARS + 500)) + "\nERRTAIL"
     mocker.patch.object(
@@ -606,7 +609,8 @@ def test_offloaded_artifact_reports_true_verdict_to_recorder(
 ):
     """The offloaded-artifact path (result is only a bounded preview) still
     records the envelope's true `ok`/`error` verdict to the recorder — not
-    derived from the truncated preview string."""
+    derived from the truncated preview string.
+    """
     monkeypatch.chdir(tmp_path)
     err = "ERRHEAD\n" + ("e" * (PREVIEW_MAX_CHARS + 500)) + "\nERRTAIL"
     mocker.patch.object(
@@ -674,7 +678,8 @@ def test_executor_offloads_large_json_fetch_with_disclosure(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
     """A large JSON fetch_web fetch offloads losslessly and the envelope
-    discloses content_type/transform without mislabeling small bodies."""
+    discloses content_type/transform without mislabeling small bodies.
+    """
     monkeypatch.chdir(tmp_path)
     payload = {"note": "line1\\nline2", "big": "x" * (PREVIEW_MAX_CHARS + 500)}
     body = json.dumps(payload)
@@ -717,7 +722,8 @@ def test_executor_offloads_large_json_fetch_with_disclosure(
 
 def test_executor_small_verbatim_fetch_not_labeled_as_offloaded(bare_executor, mocker):
     """A small structured-tuple return (no stream over the preview budget) must
-    not carry metadata.artifact — it was never actually offloaded."""
+    not carry metadata.artifact — it was never actually offloaded.
+    """
     mocker.patch.object(
         ToolsRegistry,
         "fetch_web",
@@ -782,7 +788,8 @@ def test_write_artifact_file_returns_none_on_oserror(
 ):
     """A failed artifact write (full disk / permissions) must not abort the run:
     ``_write_artifact_file`` returns None and the offload still yields a valid
-    envelope with no on-disk copy (preview falls back to read_tool_artifact)."""
+    envelope with no on-disk copy (preview falls back to read_tool_artifact).
+    """
     monkeypatch.chdir(tmp_path)
     body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAILMARKER"
     mocker.patch.object(
@@ -881,7 +888,8 @@ def test_dedup_byte_identical_readback_creates_no_new_artifact(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
     """Reading back a stored artifact's exact content offloads to a pointer, not
-    a second file — the file count in the artifacts dir stays at one."""
+    a second file — the file count in the artifacts dir stays at one.
+    """
     monkeypatch.chdir(tmp_path)
     body = "HEAD\n" + ("x" * (PREVIEW_MAX_CHARS + 500)) + "\nTAIL"
     mocker.patch.object(
@@ -916,8 +924,9 @@ def test_dedup_byte_identical_readback_creates_no_new_artifact(
 def test_dedup_rstripped_variant_is_contained_match(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
-    """bash rstrips its own stdout, so a read-back of an artifact with trailing
-    whitespace differs by exactly that — containment must still catch it."""
+    """Bash rstrips its own stdout, so a read-back of an artifact with trailing
+    whitespace differs by exactly that — containment must still catch it.
+    """
     monkeypatch.chdir(tmp_path)
     inner = "x" * (PREVIEW_MAX_CHARS + 500)
     stored = inner + "\n\n"  # trailing whitespace as originally written
@@ -954,7 +963,8 @@ def test_dedup_contained_slice_readback_reports_offset(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
     """head-style output that is a contiguous slice of a single-line artifact
-    dedups with the correct byte offset."""
+    dedups with the correct byte offset.
+    """
     monkeypatch.chdir(tmp_path)
     prefix = "P" * 1000
     body = prefix + ("x" * (PREVIEW_MAX_CHARS + 500)) + "SUFFIX"
@@ -989,7 +999,8 @@ def test_dedup_novel_large_output_offloads_unaffected(
     bare_executor, tmp_path, monkeypatch, mocker
 ):
     """A genuinely novel large output — no match to any stored artifact — offloads
-    exactly as before, with no duplicate_of key."""
+    exactly as before, with no duplicate_of key.
+    """
     monkeypatch.chdir(tmp_path)
     first = "A" * (PREVIEW_MAX_CHARS + 500)
     second = "B" * (PREVIEW_MAX_CHARS + 500)

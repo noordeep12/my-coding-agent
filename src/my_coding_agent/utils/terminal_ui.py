@@ -282,7 +282,7 @@ def _tool_call_rows(
         badges_vis += " [truncated]"
         badges += f" {s.WARN}[truncated]{R}"
     MARGIN = 5
-    args_raw = ", ".join(f"{k}={repr(v)}" for k, v in args.items()) if args else ""
+    args_raw = ", ".join(f"{k}={v!r}" for k, v in args.items()) if args else ""
     prefix = f"{index:3}. {name}("
     suffix = ")" + badges_vis
     content_w = W - MARGIN - len(prefix) - len(suffix)

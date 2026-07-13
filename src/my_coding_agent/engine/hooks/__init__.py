@@ -24,7 +24,7 @@ from typing import Any
 from ...utils import get_logger
 from .schema import HOOK_EVENTS, HookContext, HookResult, HookSpec
 
-__all__ = ["Hooks", "HOOKS_CONFIG_ENV_VAR"]
+__all__ = ["HOOKS_CONFIG_ENV_VAR", "Hooks"]
 
 HOOKS_CONFIG_ENV_VAR = "MCA_HOOKS_CONFIG"
 

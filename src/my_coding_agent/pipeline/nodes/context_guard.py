@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, NamedTuple
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 from ...engine.llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
 from ...engine.tool_execution.schema import (
@@ -87,7 +88,8 @@ def _find_identical_call_retirements(
     tool_records: list[dict[str, Any]], consider: _Consider
 ) -> None:
     """Case C — retire every older invocation of a byte-identical ``(name,
-    args)`` call once its newest invocation succeeded."""
+    args)`` call once its newest invocation succeeded.
+    """
     by_signature: dict[str, list[dict[str, Any]]] = {}
     for record in tool_records:
         sig = f"{record.get('name')}|{_args_signature(record.get('args'))}"
@@ -112,7 +114,8 @@ def _find_incomplete_extract_retirements(
     consider: _Consider,
 ) -> None:
     """Case A — retire a marked-incomplete extract of artifact X once a later
-    successful call reads that same artifact X."""
+    successful call reads that same artifact X.
+    """
     for i, record in enumerate(tool_records):
         if record.get("name") != "read_tool_artifact":
             continue
@@ -137,7 +140,8 @@ def _find_containment_retirements(
     consider: _Consider,
 ) -> None:
     """Case B — retire an earlier successful result whose full text is a
-    contiguous substring of a later successful result's text."""
+    contiguous substring of a later successful result's text.
+    """
     successes = [r for r in tool_records if r.get("ok")]
     for i, earlier in enumerate(successes):
         earlier_id = earlier.get("tool_call_id", "")

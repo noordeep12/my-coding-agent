@@ -135,7 +135,8 @@ class TestBothDispatchPathsGated:
         ``invoke_tool`` the sequential path uses, so a dangerous command is
         refused there too — even though in practice a dangerous ``bash``
         command is never classified parallel-safe and so never actually joins
-        a concurrent group."""
+        a concurrent group.
+        """
         raw, failure, *_ = bare_executor._invoke_timed(
             "c0", "bash", {"command": "rm -rf /"}
         )
@@ -145,7 +146,8 @@ class TestBothDispatchPathsGated:
     def test_subagent_executor_inherits_the_same_gate(self, bare_llm, silent_logger):
         """A delegated subagent constructs its own ``ToolExecutor`` (issue #65),
         which funnels through the identical ``invoke_tool`` — so it is gated by
-        the same rule set with the same refusal contract, no extra wiring."""
+        the same rule set with the same refusal contract, no extra wiring.
+        """
         sub_executor = ToolExecutor({"tool_calls": []}, bare_llm)
         sub_executor.logger = silent_logger
         raw, failure = sub_executor.invoke_tool(

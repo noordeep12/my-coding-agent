@@ -55,7 +55,8 @@ _MISSING_SOURCE = "__missing_source__"
 def _report_source(events_path: Path) -> str:
     """Return the session's report event source, or a sentinel: no report
     event exists (``_NO_REPORT``), or one exists without a ``source`` key —
-    a pre-provenance trace (``_MISSING_SOURCE``)."""
+    a pre-provenance trace (``_MISSING_SOURCE``).
+    """
     if not events_path.exists():
         return _NO_REPORT
     for line in events_path.read_text(encoding="utf-8").splitlines():

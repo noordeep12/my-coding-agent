@@ -191,7 +191,8 @@ class TestReportProvenanceInvariant:
 
     def test_no_report_event_is_unaffected(self, tmp_path):
         """A session that never delegated (no report event at all) is a
-        pass/fail on arithmetic alone; the provenance invariant is silent."""
+        pass/fail on arithmetic alone; the provenance invariant is silent.
+        """
         sdir = tmp_path / "s"
         _write_session(
             sdir, "s", [_call("main")], {"main": dict(_TOKENS)}, dict(_TOKENS)

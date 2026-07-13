@@ -30,12 +30,12 @@ __all__ = [
     "ENV_VAR",
     "HostCapability",
     "SandboxScope",
-    "is_enabled",
-    "probe_host_capability",
-    "default_scope",
     "build_profile",
-    "wrap_command",
+    "default_scope",
+    "is_enabled",
     "is_likely_denial",
+    "probe_host_capability",
+    "wrap_command",
 ]
 
 

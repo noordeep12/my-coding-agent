@@ -82,7 +82,8 @@ def test_rollup_section_shows_own_vs_rolled_up_and_per_subagent_line(capsys):
 
 def test_rollup_section_distinguishes_free_and_paid_reports(capsys):
     """A clean-finish (verbatim) child is marked free; a cutoff (summarizer)
-    child is marked paid — using the report source handed up in D5."""
+    child is marked paid — using the report source handed up in D5.
+    """
     rollup = {
         "by_kind": {},
         "descendants": [

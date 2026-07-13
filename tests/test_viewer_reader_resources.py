@@ -1,6 +1,7 @@
 """Tests that the reader surfaces `resources` on TraceNode and the run-level
 rollup in analytics, and that resource-free legacy sessions still load
-(node-resource-monitoring)."""
+(node-resource-monitoring).
+"""
 
 from __future__ import annotations
 

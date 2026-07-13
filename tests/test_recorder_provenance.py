@@ -53,7 +53,8 @@ class TestRecordProvenance:
     def test_no_ingestion_run_emits_no_provenance_rows(self, tmp_path):
         """A run that never calls record_provenance leaves events.jsonl either
         absent or free of any provenance-type row — the no-ingestion
-        byte-identical guarantee at the recorder layer."""
+        byte-identical guarantee at the recorder layer.
+        """
         rec, path = _make_recorder(tmp_path)
         rec.record_token_tracking(
             step=1,
@@ -68,7 +69,8 @@ class TestRecordProvenance:
 
     def test_pre_change_trace_without_provenance_rows_still_parses(self, tmp_path):
         """A trace written before this change (no provenance rows at all)
-        parses exactly as it did before — provenance is purely additive."""
+        parses exactly as it did before — provenance is purely additive.
+        """
         sid = "aabbccdd"
         sdir = tmp_path / sid
         sdir.mkdir()

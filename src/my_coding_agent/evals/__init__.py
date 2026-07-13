@@ -1,6 +1,6 @@
 """Evals — declarative run configs, scorers, and a two-run comparison gate."""
 
-from . import judge  # noqa: F401  (import registers the "judge" scorer)
+from . import judge
 from .compare import (
     CaseFlip,
     ComparisonResult,
@@ -18,23 +18,23 @@ from .scoring import Scorer, UnknownScorerError, register_scorer, resolve_scorer
 from .trajectory import TrajectoryScorer
 
 __all__ = [
-    "EvalCase",
-    "EvalScore",
-    "EvalRunResult",
-    "Scorer",
-    "TrajectoryScorer",
-    "UnknownScorerError",
-    "build_run_result",
-    "write_run_result",
-    "load_run_result",
-    "register_scorer",
-    "resolve_scorer",
-    "judge",
     "CaseFlip",
     "ComparisonResult",
     "DatasetVersionMismatchError",
+    "EvalCase",
+    "EvalRunResult",
+    "EvalScore",
+    "Scorer",
     "ThresholdConfig",
+    "TrajectoryScorer",
+    "UnknownScorerError",
     "Verdict",
+    "build_run_result",
     "compare_runs",
     "evaluate_verdict",
+    "judge",
+    "load_run_result",
+    "register_scorer",
+    "resolve_scorer",
+    "write_run_result",
 ]

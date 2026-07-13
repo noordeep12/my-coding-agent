@@ -199,7 +199,8 @@ class AgentNode(BaseNode):
 
     def _record_sandbox_activation_if_enabled(self) -> None:
         """Emit the once-per-run sandbox_activation event when the bash sandbox
-        is on (bash-os-sandbox, issue #25); a no-op, no-event call when off."""
+        is on (bash-os-sandbox, issue #25); a no-op, no-event call when off.
+        """
         if not sandbox.is_enabled():
             return
         scope = sandbox.default_scope(Path.cwd())

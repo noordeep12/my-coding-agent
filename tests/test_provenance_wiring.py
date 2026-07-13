@@ -75,7 +75,8 @@ class TestFetchWebDemarcation:
 
     def test_no_ingestion_run_is_byte_identical(self, bare_executor, monkeypatch):
         """A tool result with no provenance marker is untouched — no demarcation,
-        no state flip, matching today's behavior exactly."""
+        no state flip, matching today's behavior exactly.
+        """
 
         def run():
             monkeypatch.setattr(ToolsRegistry, "bash", lambda self, **kw: "hello")
@@ -153,7 +154,8 @@ class TestPrefixCacheInvariant:
         ``output``/``metadata`` at the content-insertion point — never
         ``fetch_web``'s signature or docstring, so its converted tool schema
         (part of every request's ``tools`` list) stays exactly what it was
-        before this change existed."""
+        before this change existed.
+        """
         schema = function_to_json(ToolsRegistry.fetch_web)
         params = schema["function"]["parameters"]["properties"]
         assert set(params) == {"url", "timeout"}

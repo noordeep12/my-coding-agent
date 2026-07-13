@@ -75,10 +75,10 @@ if TYPE_CHECKING:
     from ..llm import LLM
 
 __all__ = [
-    "ToolExecutor",
-    "ToolRegistry",
     "MAX_TOOL_OUTPUT_CHARS",
     "TOOL_SCHEMA_VERSION",
+    "ToolExecutor",
+    "ToolRegistry",
     "build_tool_result",
     "validate_tool_result",
 ]
@@ -87,7 +87,8 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Lazily resolve ``ToolRegistry`` so it stays part of this module's public
     surface (``__all__``) without an eager import — see ``ToolExecutor.__init__``
-    for why that import must be deferred (breaks a cycle with tool_registry)."""
+    for why that import must be deferred (breaks a cycle with tool_registry).
+    """
     if name == "ToolRegistry":
         from ..tool_registry import ToolRegistry
 
@@ -189,7 +190,8 @@ def _find_duplicate(session_id: str | None, text: str) -> dict[str, Any] | None:
 
 def _build_duplicate_notice(duplicate: dict[str, Any], path: str | None) -> str:
     """Build the agent-facing pointer for a deduplicated stream — no excerpt,
-    just enough to retrieve the exact bytes deterministically."""
+    just enough to retrieve the exact bytes deterministically.
+    """
     location = f" (on disk at {path})" if path else ""
     return (
         f"[This output is already stored — it duplicates tool_call_id="

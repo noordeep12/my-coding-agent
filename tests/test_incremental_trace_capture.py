@@ -69,7 +69,8 @@ class TestRoundTripFidelity:
         appends tool results) — it is never rebound to a new list except on
         handoff. Round-tripping this exact pattern is what caught the
         reference-aliasing bug where the recorder held a live reference
-        instead of a snapshot."""
+        instead of a snapshot.
+        """
         rec, path = _make_recorder(tmp_path)
         recorded_inputs: list[list[dict]] = []
 

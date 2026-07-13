@@ -27,13 +27,13 @@ __all__ = [
     "TRUSTED",
     "UNTRUSTED",
     "Reduction",
-    "mark_untrusted",
-    "demarcate",
-    "note_untrusted_content",
-    "is_untrusted_active",
-    "note_bash_command",
-    "is_freshly_cloned",
     "check_reduction",
+    "demarcate",
+    "is_freshly_cloned",
+    "is_untrusted_active",
+    "mark_untrusted",
+    "note_bash_command",
+    "note_untrusted_content",
 ]
 
 # Set the first time this run tags a tool result untrusted; never cleared.

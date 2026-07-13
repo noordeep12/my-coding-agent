@@ -254,7 +254,8 @@ class TestZeroConfigParity:
         and dispatch behavior are identical to a run before this seam existed
         (the #124 refusal-gate characterization tests already lock this
         shape; this only re-asserts it holds with ``self.hooks`` present but
-        empty)."""
+        empty).
+        """
         monkeypatch.setattr(ToolsRegistry, "bash", lambda self, **kw: "hello")
         assert bare_executor.hooks._specs == []
         raw, failure = bare_executor.invoke_tool("c0", "bash", {"command": "echo hi"})
@@ -272,7 +273,8 @@ class TestReusabilityDemonstration:
         self, bare_executor
     ):
         """A security policy (block a sentinel command) is expressed purely as
-        a registered hook — no change to ``invoke_tool``'s own logic."""
+        a registered hook — no change to ``invoke_tool``'s own logic.
+        """
 
         def deny_sentinel(ctx):
             if ctx.args and ctx.args.get("command") == "sentinel-danger-command":

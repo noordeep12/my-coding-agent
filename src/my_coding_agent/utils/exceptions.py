@@ -1,10 +1,10 @@
 """Custom exception hierarchy for my-coding-agent."""
 
 __all__ = [
+    "APIResponseError",  # noqa: F822 — resolved lazily via __getattr__ below
     "MyCodingAgentError",
     "PathTraversalError",
     "ToolDefinitionError",  # noqa: F822 — resolved lazily via __getattr__ below
-    "APIResponseError",  # noqa: F822 — resolved lazily via __getattr__ below
 ]
 
 
