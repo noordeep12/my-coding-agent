@@ -945,7 +945,7 @@ def test_from_checkpoint_seeds_resume_state(
     monkeypatch.chdir(tmp_path)  # keep .my_coding_agent inside the tmp dir
     cp = _checkpoint(step=4)
     agent = Agent.from_checkpoint(cp, label="Main Agent (resumed)")
-    assert agent.resumed_from == "deadbeef1234"
+    assert agent.resumed_from == "deadbeef1234"  # pragma: allowlist secret
     assert agent._resume_step == 4
     assert agent._resume_prompt_tokens == 555
     assert agent.messages == cp.messages
