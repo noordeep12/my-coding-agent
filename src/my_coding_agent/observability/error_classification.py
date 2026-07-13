@@ -2,7 +2,7 @@
 
 The single source of the classification rule so a recorded `tool_call`
 event's `error_class` and the anomaly detector's failure signature
-(`pipeline/anomaly.py`) always agree — see design D2 of
+(`pipeline/nodes/anomaly_detect.py`) always agree — see design D2 of
 `tool-call-outcome-fields`.
 """
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 
 from my_coding_agent.observability.recorder import Recorder
-from my_coding_agent.pipeline.anomaly import error_signature
+from my_coding_agent.pipeline.nodes.anomaly_detect import error_signature
 
 
 def _make_recorder(tmp_path):

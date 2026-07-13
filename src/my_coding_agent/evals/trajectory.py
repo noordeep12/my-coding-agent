@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..pipeline.anomaly import STREAK_THRESHOLD, trailing_streak
+from ..pipeline.nodes.anomaly_detect import STREAK_THRESHOLD, trailing_streak
 from ..viewer.reader import load_session
 from ..viewer.schema import TraceSession
 from .schema import EvalCase, EvalScore
@@ -241,11 +241,12 @@ def score_argument_validity(tool_records: list[dict[str, Any]]) -> DimensionScor
 def score_error_handling(tool_records: list[dict[str, Any]]) -> DimensionScore:
     """Score whether the run reacted to a failing tool call rather than repeating it.
 
-    Replays ``pipeline.anomaly.trailing_streak`` over successive prefixes of
-    *tool_records* — the same signal ``AnomalyDetectNode`` computes live, one
-    step at a time — and flags every point a same-signature failure streak
-    first reaches ``STREAK_THRESHOLD`` (issue #140 scenario: "an ignored
-    repeated failure lowers the error-handling dimension").
+    Replays ``pipeline.nodes.anomaly_detect.trailing_streak`` over successive
+    prefixes of *tool_records* — the same signal ``AnomalyDetectNode``
+    computes live, one step at a time — and flags every point a
+    same-signature failure streak first reaches ``STREAK_THRESHOLD`` (issue
+    #140 scenario: "an ignored repeated failure lowers the error-handling
+    dimension").
 
     Args:
         tool_records: The run's tool-call records in call order.
