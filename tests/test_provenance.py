@@ -112,7 +112,7 @@ def test_check_reduction_fires_when_cloned_and_untrusted_and_build_command():
 
 
 def test_check_reduction_fires_on_relative_script_after_cd():
-    """Regression: `\\b\\./` never matches when preceded by whitespace (both
+    r"""Regression: `\\b\\./` never matches when preceded by whitespace (both
     sides of that position are non-word), so a command like `cd repo &&
     ./install.sh` — exactly what a steered model retries with after a `sh
     <path>/install.sh` refusal — must still be caught.

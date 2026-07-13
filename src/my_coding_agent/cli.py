@@ -251,7 +251,7 @@ def main(
     no_exfil_guard: bool,
     use_sandbox: bool,
 ) -> None:
-    """Run the coding-agent pipeline.
+    r"""Run the coding-agent pipeline.
 
     With no arguments this always starts an interactive terminal session
     (multi-line prompt, history, Esc-Enter to submit) — see \b--prompt to

@@ -643,7 +643,15 @@ def print_run_summary(
         elapsed_seconds: Wall-clock run duration.
         tool_records: Per-tool-call records summarized in the tool section.
         handoff_records: Context-reset/handoff records, if any.
+        agent_name: Label shown in the summary box header.
+        last_message: Final assistant/handoff message, shown as a preview.
+        last_prompt_tokens: Prompt tokens on the run's final LLM call, used
+            for the context-window percentage.
         llm_calls: Per-call usage entries plotted in the token chart.
+        model: Model identifier shown in the summary box header.
+        session_id: Session identifier shown in the summary box header.
+        started_at: ISO timestamp the run started, shown in the header.
+        tools: Tool specs available to the run, used for the tool-count line.
         rollup: This agent's usage summary (``AgentNode._usage_summary()``);
             when it carries delegated subagents, a task-level cost section is
             appended (own vs rolled-up totals, one line per subagent).

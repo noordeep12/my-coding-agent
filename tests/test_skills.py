@@ -152,7 +152,7 @@ def test_render_header_states_precedence_and_safety():
 def test_per_entry_truncation_of_long_description():
     long_desc = "x" * 500
     idx = render_skill_index({"a": Skill("a", long_desc)})
-    line = [ln for ln in idx.text.splitlines() if ln.startswith("- a:")][0]
+    line = next(ln for ln in idx.text.splitlines() if ln.startswith("- a:"))
     assert len(line) <= 200
     assert line.endswith("…")
 
