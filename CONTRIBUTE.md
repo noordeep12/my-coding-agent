@@ -1096,7 +1096,7 @@ Required mapping between documented rules and enforcement:
   dependencies are removed as soon as detected.
 - Workflow artifacts (`PROBLEM.*.md`, `gap.md`, generated reports) live in
   dedicated directories, not the repository root — the root listing is context
-  every agent session pays for. The dedicated directory is `.workbench/`
+  every agent session pays for. The dedicated directory is `.claude/`
   (gitignored).
 - Merged branches are deleted (§47); stale local/remote branches, caches, and
   build artifacts are pruned rather than accumulated.
