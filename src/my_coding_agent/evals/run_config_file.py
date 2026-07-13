@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from ..engine.agent import DEFAULT_MAX_STEPS, AgentNode
+from ..pipeline.nodes.agent import DEFAULT_MAX_STEPS, AgentNode
 from ..engine.llm import LLM
 from ..utils.exceptions import MyCodingAgentError
 from .evaluation import (

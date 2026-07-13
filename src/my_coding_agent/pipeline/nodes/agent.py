@@ -9,35 +9,35 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..observability import Recorder, current_session_id
-from ..observability.recorder import current_agent_node, current_recorder
-from ..observability.schema import HOOK_OUTCOME_FIRED
-from ..pipeline.context import RunContext
-from ..pipeline.handoff import handoff_to_user_message, save_handoff
-from ..pipeline.node import BaseNode
-from ..pipeline.nodes.context_summarizer import (
-    HANDOFF_PROMPT,
-    REPORT_PROMPT,
-    summarize_conversation,
-)
-from ..pipeline.schema import CLEAN_FINISH_REASONS, ContextHandoff
-from ..utils import (
+from ...engine import sandbox
+from ...engine.checkpoint import Checkpoint, remove_checkpoint, save_checkpoint
+from ...engine.hooks import Hooks
+from ...engine.hooks.schema import EVENT_SESSION_END, EVENT_SESSION_START, HookContext
+from ...engine.llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
+from ...engine.llm.errors import LLMCallError
+from ...engine.llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
+from ...engine.schema import REPORT_SOURCE_FALLBACK, llm_failure_stop_reason
+from ...engine.tool_execution.policy import get_protection_posture
+from ...engine.tool_registry.skills import RenderedIndex, Skill, build_opening_block
+from ...observability import Recorder, current_session_id
+from ...observability.recorder import current_agent_node, current_recorder
+from ...observability.schema import HOOK_OUTCOME_FIRED
+from ...utils import (
     attach_session_log,
     detach_session_log,
     get_logger,
     print_banner,
     print_run_summary,
 )
-from . import sandbox
-from .checkpoint import Checkpoint, remove_checkpoint, save_checkpoint
-from .hooks import Hooks
-from .hooks.schema import EVENT_SESSION_END, EVENT_SESSION_START, HookContext
-from .llm import LLM, OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
-from .llm.errors import LLMCallError
-from .llm.schema import CALL_KIND_HANDOFF, CALL_KIND_REPORT
-from .schema import REPORT_SOURCE_FALLBACK, llm_failure_stop_reason
-from .tool_execution.policy import get_protection_posture
-from .tool_registry.skills import RenderedIndex, Skill, build_opening_block
+from ..context import RunContext
+from ..handoff import handoff_to_user_message, save_handoff
+from ..node import BaseNode
+from ..schema import CLEAN_FINISH_REASONS, ContextHandoff
+from .context_summarizer import (
+    HANDOFF_PROMPT,
+    REPORT_PROMPT,
+    summarize_conversation,
+)
 
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
 # and delegated subagents, so all three run with the same ceiling.
@@ -210,7 +210,7 @@ class AgentNode(BaseNode):
 
     def execute(self, max_steps: int = DEFAULT_MAX_STEPS) -> list[dict[str, Any]]:
         """Drive the agentic pipeline and return the final message list."""
-        from ..pipeline import build_default_pipeline
+        from .. import build_default_pipeline
 
         self.step_num = self._resume_step
         self.stop_reason = "max_steps"

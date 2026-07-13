@@ -638,7 +638,7 @@ class ToolRegistry:
                 file/line/issue, max 10 rows, plus a 3-line summary'
         """
         # Lazy import — avoids a circular dependency (agent → tools → registry).
-        from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS, AgentNode
+        from my_coding_agent.pipeline.nodes.agent import DEFAULT_MAX_STEPS, AgentNode
         from my_coding_agent.engine.llm import OMLX_API_KEY, OMLX_API_URL, OMLX_MODEL
         from my_coding_agent.pipeline.schema import CLEAN_FINISH_REASONS
 

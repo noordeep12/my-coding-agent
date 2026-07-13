@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from ..engine.agent import AgentNode
+from ..pipeline.nodes.agent import AgentNode
 from ..engine.llm import LLM
 from ..utils.exceptions import MyCodingAgentError
 from .results import EvalRunResult, build_run_result, write_run_result

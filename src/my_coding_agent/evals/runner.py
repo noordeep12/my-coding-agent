@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..engine.agent import AgentNode
+from ..pipeline.nodes.agent import AgentNode
 from ..engine.tool_registry import ToolRegistry, tool
 from .schema import EvalCase, EvalScore
 from .scoring import RunResult, UnknownScorerError, resolve_scorer
