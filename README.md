@@ -213,7 +213,7 @@ Since the LLM runs locally, machine load *is* the run's real cost. A background 
 
 ### Web UI
 
-One local, offline server hosts the whole interface behind a persistent navigation bar (**Traces** · **Evals** · **Admin**):
+One local, offline server hosts the interface behind a persistent navigation bar, with **Traces** as its only destination:
 
 ```bash
 my-coding-agent-webui          # defaults: port 7474, dir .my_coding_agent
@@ -261,7 +261,7 @@ An eval **case** is a plain JSON file: a task prompt, a scorer ref, and the scor
 }
 ```
 
-Point the runner at a directory of your own case files (`--cases <dir>`; the default is `.my_coding_agent/evals/cases/`). No example cases ship committed (the repo's former bundled examples were removed when the web UI's [Evaluations tab](#evaluations-tab) moved to its own Evaluation records), so the bare invocation exits `1` with "No eval cases found" until you add case files to the default directory:
+Point the runner at a directory of your own case files (`--cases <dir>`; the default is `.my_coding_agent/evals/cases/`). No example cases ship committed, so the bare invocation exits `1` with "No eval cases found" until you add case files to the default directory:
 
 ```bash
 my-coding-agent-eval --cases path/to/case/dir
@@ -274,7 +274,7 @@ Every score names the session id of the agent run that produced it (`EvalScore.s
 
 ### Datasets
 
-A **dataset** groups cases into a named, versioned collection, so a result records exactly which cases (and which version of that set) it ran against — a static "golden set" stops meaning anything once it's memorised, and a dataset's version lets a later comparison tell whether two runs are even comparable. Datasets live under `.my_coding_agent/evals/datasets/<dataset_id>/`. Nothing ships committed there — the former bundled `example` dataset (and the example cases it wrapped) was removed when the web UI's [Evaluations tab](#evaluations-tab) moved to its own Evaluation records — so you create your own from case ids that reference `*.json` files under your cases directory:
+A **dataset** groups cases into a named, versioned collection, so a result records exactly which cases (and which version of that set) it ran against — a static "golden set" stops meaning anything once it's memorised, and a dataset's version lets a later comparison tell whether two runs are even comparable. Datasets live under `.my_coding_agent/evals/datasets/<dataset_id>/`. Nothing ships committed there, so you create your own from case ids that reference `*.json` files under your cases directory:
 
 ```python
 from my_coding_agent.evals.datasets import create_dataset, add_case, retire_case, run_dataset, load_dataset
@@ -332,31 +332,7 @@ my-coding-agent-eval run --config examples/eval_run_config.yaml
 my-coding-agent-eval run --config path/to/your/run.yaml
 ```
 
-The run executes in the real working directory (like the Evaluations tab, unlike the isolated-workspace case runner): its session lands under `.my_coding_agent/`, visible in the **Traces** tab. A validation failure (malformed YAML, unknown key, missing field, unknown evaluator, or a raw API key) prints every problem found and exits `2` without starting an agent run; a scored run exits `0` on pass, `1` on fail. The written result record (`.my_coding_agent/evals/<run_id>/result.json`) carries the config file's path and a content hash, so it stays traceable to the exact configuration version that produced it.
-
-### Evaluations tab
-
-The **Evals** tab of the [Web UI](#web-ui) (`my-coding-agent-webui`) serves a single two-pane **Evaluations** page for creating, configuring, and running evaluations end to end — not a read-only dashboard. The unit it lists and runs is an **Evaluation**, which binds two reusable configs:
-
-- **RunConfig** — *how the agent runs*: model/provider, system prompt and user-prompt template, sampling parameters, tool settings
-- **EvalConfig** — *what the output is judged against*: an ordered tree of **Rules**, each holding **Checks** (a named assertion with a method — e.g. `equals`, `contains`, `rubric` — an input, and an expected value), scored through the same scorer registry as the CLI runner
-
-The page:
-
-- **Left pane** — the Evaluation list (name, summary, linked Run/Eval Config, last-run id, pass/fail status), a **Create Eval** button, and a per-row **⋯** menu: **Details** (read-only view), **Configure** (edit), **Run**, **Delete**
-- **Right pane** — the configuration panel for the selected or new Evaluation (pick an existing RunConfig/EvalConfig or define a new one inline), or the **Last-Run drill-down**: verdict, timestamp, and each Check's pass/fail with the detail behind its score
-- **Running** — a run executes on a server-side background thread; the page shows a staged progress modal and polls the run id until it finishes, so the rest of the interface stays responsive. Unlike the CLI runner's throwaway temp workspaces, an interface-launched run executes in the real working directory: its session lands under `.my_coding_agent/` (visible in the **Traces** tab), and a Check's relative paths (e.g. a judge rubric) resolve against the project root
-
-Evaluations and their configs persist as plain JSON under `.my_coding_agent/evals/{evaluations,run_configs,eval_configs}/`; run results are written through the same result store as the CLI runner (`.my_coding_agent/evals/<run_id>/result.json`). A fresh checkout starts with an empty list — use **Create Eval**.
-
-### Admin
-
-The **Admin** tab of the [Web UI](#web-ui) is a viewable, editable, persisted surface for the LLM server connection — API base URL, model id, API key, and request timeout — that previously could only be set via the `OMLX_*` environment variables listed under [Configuration](#configuration).
-
-- **Resolution order**: saved setting → environment variable → documented default. An untouched field keeps showing/using the env var or default, so existing env-var setups keep working unchanged; a saved value takes precedence.
-- **Persistence**: settings are saved to the same local SQLite store as the rest of the shell (`.my_coding_agent/webui/webui.db`) and survive a restart.
-- **Effect**: interface-launched eval runs build their LLM client from the resolved settings, so a saved change takes effect immediately, without restarting the process.
-- **Secret handling**: the API key is masked by default and revealed only on explicit user action; it is never written to logs.
+The run executes in the real working directory (unlike the isolated-workspace case runner): its session lands under `.my_coding_agent/`, visible in the **Traces** tab. A validation failure (malformed YAML, unknown key, missing field, unknown evaluator, or a raw API key) prints every problem found and exits `2` without starting an agent run; a scored run exits `0` on pass, `1` on fail. The written result record (`.my_coding_agent/evals/<run_id>/result.json`) carries the config file's path and a content hash, so it stays traceable to the exact configuration version that produced it.
 
 ## Requirements
 
