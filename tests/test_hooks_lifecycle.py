@@ -299,7 +299,7 @@ class TestReusabilityDemonstration:
 
 class TestSessionHooksFireOnce:
     def test_session_start_and_end_fire_exactly_once(self):
-        from my_coding_agent.engine.agent import AgentNode
+        from my_coding_agent.pipeline.nodes.agent import AgentNode
 
         calls = {"start": 0, "end": 0}
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 from .context import RunContext
 from .dag import Pipeline
@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     # Lazy re-export: AgentNode (pipeline.nodes.agent) imports build_default_pipeline
     # from this package at call time, so an eager import here would cycle.
     if name in ("AgentNode", "DEFAULT_MAX_STEPS"):

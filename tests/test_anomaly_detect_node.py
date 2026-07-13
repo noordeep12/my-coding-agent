@@ -7,8 +7,8 @@ import unittest.mock as mock
 
 import pytest
 
-from my_coding_agent.engine.agent import AgentNode
 from my_coding_agent.engine.llm import LLM
+from my_coding_agent.pipeline.nodes.agent import AgentNode
 from my_coding_agent.pipeline.context import RunContext
 from my_coding_agent.pipeline.nodes.anomaly_detect import (
     STREAK_THRESHOLD,

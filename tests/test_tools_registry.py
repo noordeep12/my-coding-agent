@@ -10,7 +10,7 @@ import subprocess
 import httpx
 import pytest
 
-from my_coding_agent.engine.agent import DEFAULT_MAX_STEPS
+from my_coding_agent.pipeline.nodes.agent import DEFAULT_MAX_STEPS
 from my_coding_agent.engine.schema import (
     REPORT_SOURCE_FALLBACK,
     REPORT_SOURCE_SUMMARIZER,
@@ -853,7 +853,7 @@ def test_delegate_opening_message_task_only_when_known_facts_omitted(mocker):
         captured["messages"] = kwargs["messages"]
         return fake_agent
 
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node)
     ToolsRegistry().delegate(task="do X")
     opening = captured["messages"][1]["content"]
     assert opening == "do X"
@@ -867,7 +867,7 @@ def test_delegate_opening_message_task_only_when_guard_empties_facts(mocker):
         captured["messages"] = kwargs["messages"]
         return fake_agent
 
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node)
     ToolsRegistry().delegate(task="do X", known_facts="do X")
     opening = captured["messages"][1]["content"]
     assert opening == "do X"
@@ -881,7 +881,7 @@ def test_delegate_opening_message_presents_facts_distinctly_from_task(mocker):
         captured["messages"] = kwargs["messages"]
         return fake_agent
 
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node)
     ToolsRegistry().delegate(task="do X", known_facts="file at /abs/path/repo")
     opening = captured["messages"][1]["content"]
     assert opening.count("do X") == 1
@@ -897,7 +897,7 @@ def test_delegate_opening_message_task_and_expected_report(mocker):
         captured["messages"] = kwargs["messages"]
         return fake_agent
 
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node)
     ToolsRegistry().delegate(task="do X", expected_report="a table")
     opening = captured["messages"][1]["content"]
     assert opening.count("do X") == 1
@@ -913,7 +913,7 @@ def test_delegate_opening_message_task_facts_and_expected_report(mocker):
         captured["messages"] = kwargs["messages"]
         return fake_agent
 
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node)
     ToolsRegistry().delegate(
         task="do X", known_facts="file at /abs/path/repo", expected_report="a table"
     )
@@ -931,7 +931,7 @@ def test_delegate_opening_message_unaffected_when_expected_report_omitted(mocker
         captured["messages"] = kwargs["messages"]
         return fake_agent
 
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", side_effect=_fake_agent_node)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", side_effect=_fake_agent_node)
     ToolsRegistry().delegate(task="do X", known_facts="file at /abs/path/repo")
     opening = captured["messages"][1]["content"]
     assert opening == (
@@ -963,7 +963,7 @@ def test_delegate_clean_finish_returns_final_turn_verbatim(mocker):
     """A clean stop hands back the final assistant turn with no synthesis."""
     fake_agent = _make_fake_agent(mocker, stop_reason="stop", final_text="final turn")
     mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
@@ -981,7 +981,7 @@ def test_delegate_cutoff_returns_pipeline_report(mocker):
         mocker, stop_reason="max_steps", handback_report="synthesized report"
     )
     mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
@@ -999,7 +999,7 @@ def test_delegate_empty_final_turn_falls_back_to_generate_report(mocker):
         mocker, stop_reason="stop", final_text="", report="fallback report"
     )
     mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
@@ -1015,7 +1015,7 @@ def test_delegate_no_pipeline_report_falls_back_to_generate_report(mocker):
         mocker, stop_reason="aborted", report="fallback report"
     )
     mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
@@ -1063,7 +1063,7 @@ def test_delegate_clean_finish_end_to_end_zero_report_kind_rows(mocker, tmp_path
     fake_agent, events_path = _make_fake_agent_with_real_recorder(
         mocker, tmp_path, stop_reason="stop", final_text="final turn"
     )
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", return_value=fake_agent)
 
     ToolsRegistry().delegate(task="do X", known_facts="ctx")
 
@@ -1093,7 +1093,7 @@ def test_delegate_cutoff_end_to_end_one_report_kind_row(mocker, tmp_path):
         context_window=8192,
         response_data={},
     )
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", return_value=fake_agent)
 
     ToolsRegistry().delegate(task="do X", known_facts="ctx")
 
@@ -1113,7 +1113,7 @@ def test_delegate_fallback_end_to_end_one_report_kind_row_and_resave(mocker, tmp
     fake_agent, events_path = _make_fake_agent_with_real_recorder(
         mocker, tmp_path, stop_reason="aborted", report="fallback report"
     )
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=fake_agent)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.AgentNode", return_value=fake_agent)
 
     out = ToolsRegistry().delegate(task="do X", known_facts="ctx")
 
@@ -1137,7 +1137,7 @@ def test_delegate_resaves_session_data_after_generate_report(mocker):
         mocker, stop_reason="aborted", report="fallback report"
     )
     mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     ToolsRegistry().delegate(task="do X", known_facts="ctx")
@@ -1148,7 +1148,7 @@ def test_delegate_skips_resave_on_clean_finish(mocker):
     """No out-of-pipeline report call means no re-save is needed."""
     fake_agent = _make_fake_agent(mocker, stop_reason="stop", final_text="final turn")
     mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     ToolsRegistry().delegate(task="do X", known_facts="ctx")
@@ -1163,7 +1163,7 @@ def test_delegate_hands_usage_summary_up_to_parent_agent_node(mocker):
     fake_agent = _make_fake_agent(mocker, stop_reason="stop", final_text="final turn")
     fake_agent._usage_summary.return_value = {"session_id": "abc123", "fake": True}
     mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     parent = mocker.Mock()
@@ -1181,7 +1181,7 @@ def test_delegate_marks_subagent_needs_handback(mocker):
     """The delegate subagent is constructed owing a hand-back report."""
     fake_agent = _make_fake_agent(mocker)
     spy = mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     ToolsRegistry().delegate(task="do X", known_facts="ctx")
@@ -1192,7 +1192,7 @@ def test_delegate_excludes_delegate_tool_from_subagent(mocker):
     """The subagent must not receive the delegate tool to prevent recursion."""
     fake_agent = _make_fake_agent(mocker)
     spy = mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     tools = [
@@ -1220,7 +1220,7 @@ def test_delegate_forwards_parent_toolset_via_executor(mocker, bare_llm):
 
     fake_agent = _make_fake_agent(mocker)
     spy = mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode",
+        "my_coding_agent.pipeline.nodes.agent.AgentNode",
         return_value=fake_agent,
     )
     tools = [
