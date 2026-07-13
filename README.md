@@ -298,6 +298,39 @@ Each argument is either a run id under `.my_coding_agent/evals/` or a path to a 
 
 `add_failure_case` turns a recorded run failure into a new regression case file and adds it to a dataset in one step. Every mutation appends a new version rather than rewriting history, so `load_dataset("smoke", version=1)` still recovers the original membership.
 
+### Declarative YAML run config
+
+A single YAML file can fully define an eval/pipeline run — connection, prompts, run parameters, and evaluation criteria — as one versionable, plain-text artifact, so it can be read, diffed, and edited without a running server or the web UI:
+
+```yaml
+llm:
+  api_url: http://127.0.0.1:8321/v1   # optional; falls back to OMLX_API_URL, then the documented default
+  model: Qwen3.6-35B-A3B-6bit         # optional; falls back to OMLX_MODEL, then the documented default
+  api_key_env: MY_API_KEY             # optional; names an env var — never a raw key — falls back to OMLX_API_KEY
+  timeout: 30                        # optional; seconds, falls back to the documented default
+
+run:
+  system_prompt: "You are a coding assistant."   # optional
+  task: "Say exactly the word 'pong' and nothing else."
+  max_steps: 20                                  # optional; defaults to the agent's own default
+
+evaluation:
+  checks:                              # inline checks, scored against this run's own output
+    - name: says-pong
+      evaluator: exact_match
+      expected: { contains: "pong" }
+  cases: []                            # optional: existing case ids, run through the isolated case runner
+  dataset: null                        # optional: an existing dataset id, run the same way
+```
+
+`llm.api_key` (a raw secret value) is rejected at validation time — the file must stay safe to commit, so only `api_key_env` (an environment variable *name*) is accepted. `evaluation` must declare at least one of `checks`, `cases`, or `dataset`.
+
+```bash
+my-coding-agent-eval run --config path/to/run.yaml
+```
+
+The run executes in the real working directory (like the Evaluations tab, unlike the isolated-workspace case runner): its session lands under `.my_coding_agent/`, visible in the **Traces** tab. A validation failure (malformed YAML, unknown key, missing field, unknown evaluator, or a raw API key) prints every problem found and exits `2` without starting an agent run; a scored run exits `0` on pass, `1` on fail. The written result record (`.my_coding_agent/evals/<run_id>/result.json`) carries the config file's path and a content hash, so it stays traceable to the exact configuration version that produced it.
+
 ### Evaluations tab
 
 The **Evals** tab of the [Web UI](#web-ui) (`my-coding-agent-webui`) serves a single two-pane **Evaluations** page for creating, configuring, and running evaluations end to end — not a read-only dashboard. The unit it lists and runs is an **Evaluation**, which binds two reusable configs:

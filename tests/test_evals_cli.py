@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import yaml
 from click.testing import CliRunner
 
 from my_coding_agent.engine.agent import AgentNode
@@ -109,6 +110,45 @@ def test_compare_by_run_id_under_default_results_root(tmp_path, monkeypatch):
     result = CliRunner().invoke(main, ["compare", baseline.run_id, candidate.run_id])
 
     assert result.exit_code == 0, result.output
+
+
+def test_run_config_cmd_exits_zero_on_pass(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+
+    def fake_execute(self, max_steps=50):
+        self.failure_error = None
+        return [{"role": "assistant", "content": "pong"}]
+
+    mocker.patch.object(AgentNode, "execute", fake_execute)
+
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "run": {"task": "say pong"},
+                "evaluation": {
+                    "checks": [{"evaluator": "exact_match", "expected": "pong"}]
+                },
+            }
+        )
+    )
+
+    result = CliRunner().invoke(main, ["run", "--config", str(config_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "verdict pass" in result.output
+
+
+def test_run_config_cmd_exits_two_on_invalid_config(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(yaml.safe_dump({"bogus": {}}))
+
+    result = CliRunner().invoke(main, ["run", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "Invalid config" in result.output
+    assert not (tmp_path / ".my_coding_agent").exists()
 
 
 def test_compare_refuses_cross_version_by_default(tmp_path, monkeypatch):
