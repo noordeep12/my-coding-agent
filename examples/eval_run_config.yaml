@@ -14,7 +14,7 @@ llm:
   model: Qwen3.6-35B-A3B-6bit
   # Name of an environment variable holding the API key — never a raw key
   # value (a literal `api_key:` is rejected at validation time).
-  api_key_env: OMLX_API_KEY
+  api_key_env: OMLX_API_KEY  # pragma: allowlist secret
   timeout: 30
 
 run:

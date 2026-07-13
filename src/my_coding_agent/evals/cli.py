@@ -77,9 +77,7 @@ def run_config_cmd(config_path: str) -> None:
         sys.exit(2)
 
     click.echo(f"Run {result.run_id}: verdict {verdict}")
-    for score in result.scores:
-        status = "PASS" if score.passed else "FAIL"
-        click.echo(f"  {status}  {score.case_id}")
+    render_verdict(result)
     click.echo(f"Result written to {RESULTS_ROOT / result.run_id}/result.json")
     sys.exit(0 if verdict == "pass" else 1)
 
