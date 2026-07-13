@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from ...engine.llm import parsing as llm_parsing
 from ...engine.llm.schema import CALL_KIND_REPORT
 from ...utils import get_logger
-from ...utils.parsing import extract_finish_reason, extract_usage
 from ..context import RunContext
 from ..node import BaseNode
 from ..schema import CLEAN_FINISH_REASONS
@@ -38,7 +38,7 @@ class FinalizeStepNode(BaseNode):
 
     def run(self, ctx: RunContext) -> None:
         # --- token tracking ---
-        usage = extract_usage(ctx.last_response)
+        usage = llm_parsing.extract_usage(ctx.last_response)
         step_prompt = usage.get("prompt_tokens", 0)
         step_completion = usage.get("completion_tokens", 0)
         step_total = usage.get("total_tokens", 0)
@@ -63,7 +63,7 @@ class FinalizeStepNode(BaseNode):
         )
 
         # --- finish check ---
-        finish_reason = extract_finish_reason(ctx.last_response)
+        finish_reason = llm_parsing.extract_finish_reason(ctx.last_response)
         cutoff = False
         if finish_reason in CLEAN_FINISH_REASONS:
             ctx.stop_reason = finish_reason

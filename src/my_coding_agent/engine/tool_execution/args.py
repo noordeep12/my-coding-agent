@@ -8,7 +8,7 @@ import inspect
 import json
 
 from ...utils import get_logger
-from ...utils.parsing import parse_tool_args
+from ..llm import parsing as llm_parsing
 
 logger = get_logger(__name__)
 
@@ -81,7 +81,7 @@ def parse_tool_call(
     # func_name is truthy here, which is only possible when func_block is truthy.
     assert func_block is not None
     try:
-        args = parse_tool_args(func_block.get("arguments", {}))
+        args = llm_parsing.parse_tool_args(func_block.get("arguments", {}))
     except json.JSONDecodeError as exc:
         logger.error("malformed args %s → %s: %s", tool_call_id, func_name, exc)
         return (

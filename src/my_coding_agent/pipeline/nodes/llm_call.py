@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from ...engine.llm import parsing as llm_parsing
 from ...utils import get_logger
-from ...utils.parsing import extract_message
 from ..context import RunContext
 from ..node import BaseNode
 
@@ -22,7 +22,7 @@ class LLMCallNode(BaseNode):
         resp = ctx.llm.chat_completion(ctx.messages, tools=ctx.all_tools)
         ctx.last_response = resp
 
-        message = extract_message(resp)
+        message = llm_parsing.extract_message(resp)
         if not message:
             _logger.error(
                 "Step %d: API returned empty message — skipping step", ctx.step_num

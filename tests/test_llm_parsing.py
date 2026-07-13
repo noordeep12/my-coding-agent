@@ -1,4 +1,4 @@
-"""Tests for the response-parsing helpers in utils.py.
+"""Tests for the chat-completion response-parsing helpers in engine/llm/parsing.py.
 
 These helpers normalize raw chat-completion payloads; the contract is that they
 always return a sane type (dict/str) even when the payload is empty or malformed.
@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from my_coding_agent.utils.parsing import (
+from my_coding_agent.engine.llm.parsing import (
     extract_finish_reason,
     extract_message,
     extract_usage,

@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from ..engine.llm import LLM
+from ..engine.llm import parsing as llm_parsing
 from ..engine.llm.schema import CALL_KIND_JUDGE
 from ..utils.exceptions import MyCodingAgentError
-from ..utils.parsing import extract_finish_reason, extract_message
 from .schema import EvalCase, EvalScore
 from .scoring import RunResult, register_scorer
 
@@ -361,13 +361,13 @@ def score_with_judge(
         kind=CALL_KIND_JUDGE,
         max_tokens=max_tokens,
     )
-    if extract_finish_reason(resp) == "length":
+    if llm_parsing.extract_finish_reason(resp) == "length":
         raise JudgeError(
             "Judge response was truncated (finish_reason=length) before "
             "completing its verdict; raise max_tokens rather than trusting "
             "a partial response"
         )
-    content = extract_message(resp).get("content") or ""
+    content = llm_parsing.extract_message(resp).get("content") or ""
     return _parse_judge_response(content, rubric)
 
 
