@@ -20,6 +20,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: no-symlinks
+        name: no symlinks may be committed
+        entry: python3 .hooks/check_no_symlinks.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
       - id: commit-subject-length
         name: commit subject max 72 chars
         entry: python3 -c "import sys; s=open(sys.argv[1]).readline().rstrip(chr(10)); n=len(s); print(chr(10).join([f'Commit subject is {n} chars, max 72 allowed.', s])) if n > 72 else None; sys.exit(1 if n > 72 else 0)"

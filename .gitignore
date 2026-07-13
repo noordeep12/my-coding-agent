@@ -38,7 +38,10 @@ docs/_build/
 .my_coding_agent/evals/*
 !.my_coding_agent/evals/rubrics/
 !.my_coding_agent/evals/rubrics/**
-.claude/
+# Bare name (no trailing slash) so a stray FILE or SYMLINK named .claude is
+# ignored too, not just the directory — a committed self-symlink clobbers the
+# local dir on checkout (see 0ffaa4f).
+.claude
 .codex/
 
 .hooks/.conformity_state.json
@@ -50,7 +53,8 @@ PLAN-CHECKLIST.md
 PROBLEM.md
 PROBLEM.*.md
 
-openspec/*
+# Bare name for the same symlink reason as .claude above (see 27af23c).
+openspec
 
 CLAUDE.md
 CLAUDE-*.md
