@@ -7,9 +7,11 @@
 # Exit codes: 2 if the config fails validation (no agent run happens),
 # 0 if every check passes, 1 if any check fails.
 #
-# Only `exact_match` is registered as a config-loadable evaluator today, so
-# both checks below are `contains` checks against the final markdown output
-# rather than checks on subagent behavior itself.
+# Combines all three registered evaluators: `exact_match` (substring checks
+# on the final output), `trajectory` (scores the run's execution path — tool
+# selection, argument validity, error handling, efficiency — not its answer),
+# and `judge` (rubric-graded LLM judgment against the checked-in rubric at
+# .my_coding_agent/evals/rubrics/cve_aggregation_rubric.json).
 
 llm:
   api_url: http://127.0.0.1:8321/v1
@@ -34,3 +36,11 @@ evaluation:
     - name: has-markdown-table
       evaluator: exact_match
       expected: { contains: "|" }
+    - name: trajectory-quality
+      evaluator: trajectory
+      expected: { pass_threshold: 0.7 }
+    - name: judged-aggregation-quality
+      evaluator: judge
+      expected:
+        rubric: .my_coding_agent/evals/rubrics/cve_aggregation_rubric.json
+        pass_threshold: 4
