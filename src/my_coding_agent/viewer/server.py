@@ -112,6 +112,9 @@ body{font-family:var(--font);background:var(--bg2);color:var(--text);font-size:1
 .posture-tag{font-size:10px;font-weight:600;border-radius:5px;padding:1px 6px}
 .posture-tag.sandboxed{color:var(--pos);background:var(--pos-bg)}
 .posture-tag.screened-only{color:var(--amber);background:#fff3e6}
+.verdict-tag{font-size:10px;font-weight:600;border-radius:5px;padding:1px 6px}
+.verdict-tag.pass{color:var(--pos);background:var(--pos-bg)}
+.verdict-tag.fail{color:var(--neg);background:var(--neg-bg)}
 
 /* ── tree ── */
 .tree{display:flex;flex-direction:column;gap:1px}
@@ -555,6 +558,7 @@ function Toolbar({showFilters,setShowFilters,hidden,setHidden,data}){
 
 function Stats({data}){
   const [open,setOpen] = useState(false);
+  const [verdictOpen,setVerdictOpen] = useState(false);
   const a = data.analytics || {};
   const cost = a.cost_usd!=null ? '$'+Number(a.cost_usd).toFixed(4) : '—';
   const byKind = a.by_kind || {};
@@ -562,6 +566,7 @@ function Stats({data}){
   const rr = a.resource_rollup;
   const projectedCosts = a.projected_costs || {};
   const hasBreakdown = Object.keys(byKind).length>0 || Object.keys(byAgent).length>0 || !!rr || Object.keys(projectedCosts).length>0;
+  const verdict = data.verdict;
   return html`<div>
     <div class="stats">
       <span><b>${data.model||'?'}</b></span>
@@ -570,6 +575,8 @@ function Stats({data}){
       <span><b>${cost}</b></span>
       ${data.posture==='sandboxed' ? html`<span class="posture-tag sandboxed">🔒 sandboxed</span>` : null}
       ${data.posture==='screened_only' ? html`<span class="posture-tag screened-only">🛡 screened only</span>` : null}
+      ${verdict ? html`<span class=${'verdict-tag '+(verdict.passed?'pass':'fail')}>
+        ${verdict.passed?'✓ pass':'✗ fail'}</span>` : null}
       ${a.loop_count ? html`<span class="warn">⚠ ${a.loop_count} loop(s)</span>` : null}
       ${a.anomaly_count ? html`<span class="warn">⚠ ${a.anomaly_count} anomaly(s)</span>` : null}
       ${a.refusal_count ? html`<span class="warn">🛑 ${a.refusal_count} refused</span>` : null}
@@ -577,6 +584,8 @@ function Stats({data}){
       ${data.stop_reason ? html`<span class="muted">stop: ${data.stop_reason}</span>` : null}
       ${hasBreakdown ? html`<button class="filter-btn" onClick=${()=>setOpen(!open)}>
         Breakdown</button>` : null}
+      ${verdict ? html`<button class="filter-btn" onClick=${()=>setVerdictOpen(!verdictOpen)}>
+        Verdict</button>` : null}
     </div>
     ${open && hasBreakdown ? html`<div class="stats-breakdown">
       ${Object.keys(byKind).length ? html`<div class="bd-row">
@@ -604,6 +613,27 @@ function Stats({data}){
         <span class="chip">disk ${(rr.disk_bytes/1048576).toFixed(1)} MB</span>
       </div>` : null}
     </div>` : null}
+    ${verdictOpen && verdict ? html`<${VerdictDetail} verdict=${verdict}/>` : null}
+  </div>`;
+}
+
+// Expandable verdict detail: run/case identifiers, metrics, and the
+// detail/rationale content — the verdict is a whole-session property, not a
+// pipeline step, so it lives beside Stats rather than as a tree node.
+function VerdictDetail({verdict}){
+  const metrics = verdict.metrics || {};
+  const detail = verdict.detail;
+  return html`<div class="stats-breakdown">
+    <div class="bd-row">
+      <span class="muted">run:</span><span class="chip">${verdict.run_id||'—'}</span>
+      <span class="muted">case:</span><span class="chip">${verdict.case_id||'—'}</span>
+    </div>
+    ${Object.keys(metrics).length ? html`<div class="bd-row">
+      <span class="muted">metrics:</span>
+      ${Object.entries(metrics).map(([k,v])=>html`<span key=${k} class="chip">${k}: ${String(v)}</span>`)}
+    </div>` : null}
+    ${detail!=null ? html`<div class="tr-block"><div class="tr-label">detail</div>
+      <${ContentBox} value=${typeof detail==='string'?detail:JSON.stringify(detail,null,2)}/></div>` : null}
   </div>`;
 }
 

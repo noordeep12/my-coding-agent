@@ -91,6 +91,9 @@ class TraceSession:
         posture: This run's command-protection posture — ``"sandboxed"`` or
             ``"screened_only"`` (issue #130) — or ``None`` for a trace
             recorded before posture capture existed, which renders unchanged.
+        verdict: The session's eval verdict — ``run_id``, ``case_id``, ``passed``,
+            ``metrics``, ``detail``, ``result_path`` — read from a ``verdict.json``
+            sibling when present, or ``None`` for a non-eval or pre-eval session.
     """
 
     session_id: str
@@ -104,6 +107,7 @@ class TraceSession:
     order: list[str] = field(default_factory=list)
     analytics: dict[str, Any] = field(default_factory=dict)
     posture: str | None = None
+    verdict: dict[str, Any] | None = None
 
 
 # Signature shared by every per-event-type node builder in ``reader.py``:

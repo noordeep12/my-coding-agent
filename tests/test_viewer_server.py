@@ -250,3 +250,76 @@ class TestRoutes:
         assert status == 200
         rows = json.loads(body)
         assert any(r["session_id"] == sid for r in rows)
+
+    def _write_session(self, base, sid, events):
+        sdir = base / sid
+        sdir.mkdir()
+        (sdir / "events.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in events), encoding="utf-8"
+        )
+        return sdir
+
+    def test_session_payload_carries_verdict_for_scored_session(self, server):
+        port, base = server
+        sid = "aabbccdd1234abce"
+        events = [
+            {
+                "type": "session_start",
+                "session_id": sid,
+                "label": "T",
+                "model": "m",
+                "context_window": 8192,
+                "started_at": "2026-01-01T00:00:00",
+                "parent_session_id": None,
+            },
+            {
+                "type": "session_end",
+                "stop_reason": "stop",
+                "steps": 1,
+                "elapsed_s": 1.0,
+                "ended_at": "2026-01-01T00:00:01",
+            },
+        ]
+        sdir = self._write_session(base, sid, events)
+        verdict = {
+            "run_id": "run-1",
+            "case_id": "case-1",
+            "passed": True,
+            "metrics": {"score": 1.0},
+            "detail": "great",
+            "result_path": "/tmp/result.json",
+        }
+        (sdir / "verdict.json").write_text(json.dumps(verdict))
+        status, body = _get(port, f"/api/sessions/{sid}")
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["verdict"] == verdict
+        assert payload["session_id"] == sid
+
+    def test_session_payload_has_no_verdict_for_unscored_session(self, server):
+        port, base = server
+        sid = "aabbccdd1234abcf"
+        events = [
+            {
+                "type": "session_start",
+                "session_id": sid,
+                "label": "T",
+                "model": "m",
+                "context_window": 8192,
+                "started_at": "2026-01-01T00:00:00",
+                "parent_session_id": None,
+            },
+            {
+                "type": "session_end",
+                "stop_reason": "stop",
+                "steps": 1,
+                "elapsed_s": 1.0,
+                "ended_at": "2026-01-01T00:00:01",
+            },
+        ]
+        self._write_session(base, sid, events)
+        status, body = _get(port, f"/api/sessions/{sid}")
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["verdict"] is None
+        assert payload["session_id"] == sid
