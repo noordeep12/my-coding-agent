@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..evals import evaluation as ev
+from . import admin
+from .store import Store
 
 
 class _Handler(Protocol):
@@ -275,6 +277,7 @@ def _handle_evaluation_run(
     run_configs_dir: Path,
     eval_configs_dir: Path,
     evaluation_id: str,
+    store: Store,
 ) -> bool:
     if method != "POST":
         return False
@@ -283,6 +286,9 @@ def _handle_evaluation_run(
     except ev.NotFoundError as exc:
         return _error(handler, str(exc), status=404)
     run_id = ev.new_id()
+    # Resolved here (request thread), before the background thread starts, so
+    # the run uses the Admin settings saved at launch time.
+    llm_client = admin.build_llm_client(store)
 
     def _run() -> None:
         try:
@@ -293,6 +299,7 @@ def _handle_evaluation_run(
                 evaluations_dir=evaluations_dir,
                 results_root=evaluations_dir.parent,
                 run_id=run_id,
+                llm_client=llm_client,
             )
         except Exception:
             logging.getLogger(__name__).exception(
@@ -330,6 +337,7 @@ def _handle_evaluations(
     evaluations_dir: Path,
     run_configs_dir: Path,
     eval_configs_dir: Path,
+    store: Store,
 ) -> bool:
     if sub == "/evaluations":
         return _handle_evaluations_collection(
@@ -350,6 +358,7 @@ def _handle_evaluations(
             run_configs_dir=run_configs_dir,
             eval_configs_dir=eval_configs_dir,
             evaluation_id=match.group(1),
+            store=store,
         )
 
     match = re.fullmatch(r"/evaluations/([^/]+)/runs/([^/]+)", sub)
@@ -380,6 +389,7 @@ def handle_evaluation_route(
     raw_body: bytes,
     *,
     evals_root: Path,
+    store: Store,
 ) -> bool:
     """Dispatch a `/api/evals/{evaluations,run-configs,eval-configs}` request.
 
@@ -419,5 +429,6 @@ def handle_evaluation_route(
             evaluations_dir=evaluations_dir,
             run_configs_dir=run_configs_dir,
             eval_configs_dir=eval_configs_dir,
+            store=store,
         )
     )

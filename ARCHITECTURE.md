@@ -471,6 +471,11 @@ connection already sets `check_same_thread=False` behind its own lock).
 through as `run_evaluation(..., run_id=...)`, which overrides the id
 `build_run_result` would otherwise mint, so the id the client was handed
 before the run started is the same id the result eventually lands under.
+The handler also resolves `admin.build_llm_client(store)` on the request
+thread — before the background thread starts — and passes it through as
+`run_evaluation(..., llm_client=...)`, so the run's agent is built from the
+saved Admin connection settings (falling back to env var/default when none
+are saved) rather than `AgentNode`'s own env-only defaults.
 `GET /evaluations/{id}/runs/{run_id}` reads the written result record back
 by id, or — while the background thread hasn't written it yet — responds
 `202 {run_id, status: "running"}` so a polling client (the web UI's own
