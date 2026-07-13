@@ -196,7 +196,7 @@ def test_post_unknown_route_404(server):
     assert json.loads(body) == {"error": "not found"}
 
 
-def test_unhandled_write_method_on_eval_config_route_404(server):
+def test_removed_eval_config_route_404(server):
     port, _ = server
     status, body = _req_raw(port, "PUT", "/api/evals/config/datasets", b"{}")
     assert status == 404

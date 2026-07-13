@@ -30,7 +30,6 @@ from ..viewer.reader import list_sessions, load_session
 from ..viewer.server import _check_vendor_assets, _full_html
 from ..viewer.sumcheck import check_tree
 from .admin import admin_html, masked_llm_settings, save_llm_settings
-from .evals_config import handle_eval_config_route
 from .evaluations_api import handle_evaluation_route
 from .store import Store, default_db_path
 
@@ -272,8 +271,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, status=404)
 
     def _dispatch_get_api(self, path: str) -> bool:
-        if path.startswith("/api/evals/config"):
-            return self._handle_eval_config("GET")
         if path.startswith(_EVAL_MGMT_PREFIXES):
             return self._handle_evaluation_api("GET")
         if path.startswith("/api/evals/"):
@@ -295,10 +292,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
 
     def _dispatch_write(self, method: str) -> None:
         path = self.path.split("?")[0]
-        if path.startswith("/api/evals/config"):
-            if not self._handle_eval_config(method):
-                self._send_json({"error": "not found"}, status=404)
-            return
         if path.startswith(_EVAL_MGMT_PREFIXES):
             if not self._handle_evaluation_api(method):
                 self._send_json({"error": "not found"}, status=404)
@@ -330,20 +323,6 @@ class _WebUIHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_json({"error": "invalid json"}, status=400)
             return None
-
-    def _handle_eval_config(self, method: str) -> bool:
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length) if length else b""
-        path = self.path.split("?")[0]
-        return handle_eval_config_route(
-            self,
-            method,
-            path,
-            raw,
-            evals_root=self.base_dir.resolve() / "evals",
-            sessions_root=self.base_dir.resolve(),
-            store=self.store,
-        )
 
     def _handle_evaluation_api(self, method: str) -> bool:
         length = int(self.headers.get("Content-Length", "0"))

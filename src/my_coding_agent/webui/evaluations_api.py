@@ -2,10 +2,8 @@
 
 A thin JSON-in/JSON-out layer over `evals.evaluation` — it never invents new
 evaluation semantics, it only exposes CRUD and a "run" trigger over what
-already exists there. Modeled on `webui/evals_config.py`'s dispatch pattern
-(thin `_handle_*` functions, `_read_json_body`, `_send_json`), but kept as a
-sibling dispatcher under `/api/evals/{evaluations,run-configs,eval-configs}`
-so this surface stays isolated from the existing `/api/evals/config` routes.
+already exists there, dispatched under
+`/api/evals/{evaluations,run-configs,eval-configs}`.
 """
 
 from __future__ import annotations
