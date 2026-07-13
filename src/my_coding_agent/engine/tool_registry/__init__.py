@@ -13,6 +13,7 @@ Public surface:
 import logging
 
 from .converter import function_to_json, tool
+from .exceptions import ToolDefinitionError
 from .registry import ARTIFACT_THRESHOLD, ToolRegistry, artifact_file_path
 from .skills import (
     RenderedIndex,
@@ -30,6 +31,7 @@ __all__ = [
     "artifact_file_path",
     "function_to_json",
     "tool",
+    "ToolDefinitionError",
     "Skill",
     "RenderedIndex",
     "discover_skills",

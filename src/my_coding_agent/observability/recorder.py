@@ -84,7 +84,7 @@ FULL_PAYLOAD_KINDS: set[str] = {
 }
 
 
-def _now() -> str:
+def now() -> str:
     """Return the current local time as an ISO-8601 string.
 
     Millisecond precision with an explicit UTC offset: milliseconds keep
@@ -92,6 +92,9 @@ def _now() -> str:
     offset keeps rows comparable across machine/timezone changes.
     """
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
+_now = now
 
 
 class Recorder:

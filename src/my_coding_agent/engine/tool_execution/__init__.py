@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from ...observability import current_session_id
-from ...observability.recorder import _now
+from ...observability.recorder import now
 from ...observability.schema import (
     EGRESS_HOST,
     EGRESS_MATCHED_LIST,
@@ -397,7 +397,7 @@ class ToolExecutor:
         overlap never races the recorder). Runs no recorder or artifact-store
         code; those stay on the main thread so overlap never races shared state.
         """
-        started_at = _now()
+        started_at = now()
         start_mono = time.monotonic()
         hook_firings: list[tuple[HookSpec, HookResult]] = []
         raw, failure = self.invoke_tool(tool_call_id, func_name, args, hook_firings)

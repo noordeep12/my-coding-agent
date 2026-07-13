@@ -9,12 +9,16 @@ or an empty assistant turn — the single choke point raises one of these first.
 
 from __future__ import annotations
 
-from ...utils.exceptions import APIResponseError, MyCodingAgentError
+from ...utils.exceptions import MyCodingAgentError
 from .schema import (
     CLASSIFICATION_HTTP_STATUS,
     CLASSIFICATION_MALFORMED_BODY,
     CLASSIFICATION_TRANSPORT,
 )
+
+
+class APIResponseError(MyCodingAgentError, ValueError):
+    """Raise when the LLM API returns a response that cannot be parsed."""
 
 
 class LLMCallError(MyCodingAgentError):
