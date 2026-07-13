@@ -6,7 +6,7 @@ import json
 
 from click.testing import CliRunner
 
-from my_coding_agent.viewer.server import _cli
+from my_coding_agent.viewer.server import main
 
 
 def _write_session(base_dir, session_id, by_kind, calls, grand_total, report_source):
@@ -34,7 +34,7 @@ def test_check_passes_with_exit_zero(tmp_path):
         "verbatim",
     )
     runner = CliRunner()
-    result = runner.invoke(_cli, ["--dir", str(tmp_path), "--check", "s1"])
+    result = runner.invoke(main, ["--dir", str(tmp_path), "--check", "s1"])
     assert result.exit_code == 0
     assert "PASS s1" in result.output
 
@@ -50,7 +50,7 @@ def test_check_fails_with_exit_one_naming_kind(tmp_path):
         "verbatim",
     )
     runner = CliRunner()
-    result = runner.invoke(_cli, ["--dir", str(tmp_path), "--check", "s2"])
+    result = runner.invoke(main, ["--dir", str(tmp_path), "--check", "s2"])
     assert result.exit_code == 1
     assert "FAIL s2" in result.output
     assert "main" in result.output
@@ -58,7 +58,7 @@ def test_check_fails_with_exit_one_naming_kind(tmp_path):
 
 def test_check_unverifiable_for_missing_session(tmp_path):
     runner = CliRunner()
-    result = runner.invoke(_cli, ["--dir", str(tmp_path), "--check", "ghost"])
+    result = runner.invoke(main, ["--dir", str(tmp_path), "--check", "ghost"])
     assert result.exit_code == 0
     assert "UNVERIFIABLE ghost" in result.output
 
@@ -72,7 +72,7 @@ def test_cli_without_check_starts_server(tmp_path, monkeypatch):
 
     monkeypatch.setattr("my_coding_agent.viewer.server.run_server", fake_run_server)
     runner = CliRunner()
-    result = runner.invoke(_cli, ["--dir", str(tmp_path), "--port", "7777"])
+    result = runner.invoke(main, ["--dir", str(tmp_path), "--port", "7777"])
     assert result.exit_code == 0
     assert started["port"] == 7777
     assert str(started["base_dir"]) == str(tmp_path)
