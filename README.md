@@ -213,7 +213,7 @@ Since the LLM runs locally, machine load *is* the run's real cost. A background 
 
 ### Web UI
 
-One local, offline server hosts the interface behind a persistent navigation bar, with **Traces** as its only destination:
+The Trace Explorer is served directly, with no separate shell process:
 
 ```bash
 my-coding-agent-webui          # defaults: port 7474, dir .my_coding_agent
@@ -221,9 +221,7 @@ my-coding-agent-webui --port 8080 --dir /path/to/.my_coding_agent
 my-coding-agent-webui --dir .my_coding_agent --check <session_id>  # deterministic sum-check, no server; exit 0/1
 ```
 
-Then open `http://localhost:7474`. It remembers where you left off — last-visited tab and in-progress selection (e.g. the open session) persist to a local SQLite store under `.my_coding_agent/webui/` and are restored the next time you launch it, even after stopping the process.
-
-This supersedes the old standalone `my-coding-agent-traces` entrypoint (removed); its Trace Explorer rendering is unchanged, just mounted into the **Traces** tab below.
+Then open `http://localhost:7474`. The in-page session picker still selects a session within a run, but cross-restart last-selection memory is no longer persisted — a single read-only view owns no mutable state.
 
 #### Trace Explorer
 

@@ -50,9 +50,8 @@ _CHECK_KEYS = {
     "threshold",
 }
 
-#: Field -> (env var name, documented default). Mirrors `webui/admin.py`'s
-#: resolution order (config value -> env var -> default), with "config" in
-#: place of "saved settings" — reads the environment live, not the
+#: Field -> (env var name, documented default). Resolution order is
+#: config value -> env var -> default; reads the environment live, not the
 #: import-time-frozen `engine.llm` constants.
 _ENV_FIELDS: dict[str, tuple[str, str]] = {
     "api_url": ("OMLX_API_URL", "http://127.0.0.1:8321/v1"),

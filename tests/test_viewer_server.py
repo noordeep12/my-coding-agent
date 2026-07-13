@@ -5,10 +5,16 @@ from __future__ import annotations
 import json
 import threading
 from http.client import HTTPConnection
+from http.server import HTTPServer
 
 import pytest
 
-from my_coding_agent.viewer.server import _SID_RE, EMBEDDED_HTML, _TraceHandler
+from my_coding_agent.viewer.server import (
+    _SID_RE,
+    EMBEDDED_HTML,
+    _TraceHandler,
+    run_server,
+)
 
 # ── SID regex ────────────────────────────────────────────────────────────────
 
@@ -47,8 +53,6 @@ def server(tmp_path):
     port = None
     for p in range(19800, 19900):
         try:
-            from http.server import HTTPServer
-
             httpd = HTTPServer(("127.0.0.1", p), _TraceHandler)
             port = p
             break
@@ -323,3 +327,15 @@ class TestRoutes:
         payload = json.loads(body)
         assert payload["verdict"] is None
         assert payload["session_id"] == sid
+
+
+# ── run_server lifecycle ─────────────────────────────────────────────────────
+
+
+def test_run_server_starts_and_stops_on_keyboard_interrupt(tmp_path, monkeypatch):
+    def interrupt(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(HTTPServer, "serve_forever", interrupt)
+    run_server(host="127.0.0.1", port=0, base_dir=tmp_path)
+    assert _TraceHandler.base_dir == tmp_path
