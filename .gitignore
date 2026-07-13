@@ -42,7 +42,7 @@ docs/_build/
 # ignored too, not just the directory — a committed self-symlink clobbers the
 # local dir on checkout (see 0ffaa4f).
 .claude
-.codex/
+.codex
 
 .hooks/.conformity_state.json
 
