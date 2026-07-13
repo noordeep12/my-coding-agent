@@ -3,9 +3,8 @@
 Every test keeps the suite network-free (CONTRIBUTE.md §30): the HTTP layer is
 mocked at ``_request_with_retry`` or ``chat_completion``, never reaching a real
 server. These cover the client (``available_models``, ``chat_completion``
-accounting), the router's phase-2 fallback (``ToolRouter`` via ``bare_router``),
-and the executor's output validation/summarization, tool dispatch, arg-correction
-loop, and full ``execute_tool_calls`` flow (``ToolExecutor`` via
+accounting), and the executor's output validation/summarization, tool dispatch,
+arg-correction loop, and full ``execute_tool_calls`` flow (``ToolExecutor`` via
 ``bare_executor``) — §42: behavior is asserted, not merely executed.
 """
 
@@ -215,77 +214,6 @@ def test_chat_completion_non_json_body_raises_value_error(bare_llm, mocker):
     )
     with pytest.raises(ValueError, match="non-JSON response"):
         bare_llm.chat_completion([{"role": "user", "content": "q"}])
-
-
-# --- route_tools phase-2 (LLM fallback) --------------------------------------
-
-
-def _tool(name, tags=None):
-    return {"function": {"name": name}, "tags": tags or []}
-
-
-def test_route_tools_phase2_selects_llm_choice_plus_baseline(bare_router, mocker):
-    tools = [
-        _tool("bash"),
-        _tool("read_file"),
-        _tool("read_tool_artifact"),
-        _tool("read_article", tags=["web"]),
-    ]
-    # Message matches no tag anywhere → phase-2 LLM fallback runs.
-    mocker.patch.object(
-        bare_router.client,
-        "chat_completion",
-        return_value=_Resp({"choices": [{"message": {"content": '["read_article"]'}}]}),
-    )
-    selected, phase = bare_router.route_tools("xyzzy", tools)
-    names = {t["function"]["name"] for t in selected}
-    assert "read_article" in names
-    assert {"bash", "read_file", "read_tool_artifact"} <= names
-    assert phase == "phase2_llm"
-
-
-def test_route_tools_phase2_falls_back_to_all_on_bad_json(bare_router, mocker):
-    tools = [
-        _tool("bash"),
-        _tool("read_file"),
-        _tool("read_tool_artifact"),
-        _tool("read_article", tags=["web"]),
-    ]
-    mocker.patch.object(
-        bare_router.client,
-        "chat_completion",
-        return_value=_Resp({"choices": [{"message": {"content": "not an array"}}]}),
-    )
-    selected, phase = bare_router.route_tools("xyzzy", tools)
-    assert selected == tools  # unparseable → keep all tools
-    assert phase == "phase2_llm"
-
-
-def test_route_tools_phase2_extracts_array_from_prose(bare_router, mocker):
-    tools = [
-        _tool("bash"),
-        _tool("read_file"),
-        _tool("read_tool_artifact"),
-        _tool("read_article", tags=["web"]),
-    ]
-    mocker.patch.object(
-        bare_router.client,
-        "chat_completion",
-        return_value=_Resp(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": 'Sure! Here you go: ["read_article"] done.'
-                        }
-                    }
-                ]
-            }
-        ),
-    )
-    selected, _phase = bare_router.route_tools("xyzzy", tools)
-    names = {t["function"]["name"] for t in selected}
-    assert "read_article" in names
 
 
 # --- validate_tool_output ----------------------------------------------------

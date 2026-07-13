@@ -53,9 +53,6 @@ class RunContext:
 
     # --- per-step transient state (LLMCallNode writes, downstream nodes read) ---
     last_response: Any = None
-    # Written only by the retained-but-unwired ToolRoutingNode (issue #114); no
-    # live node reads it since LLMCallNode now offers ctx.all_tools directly.
-    routed_tools: list[dict[str, Any]] = field(default_factory=list)
 
     # --- control signals written by nodes, read by the pipeline engine ---
     signal: str = "CONTINUE"  # CONTINUE | STOP | RESET

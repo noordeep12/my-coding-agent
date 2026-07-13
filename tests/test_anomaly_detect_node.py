@@ -142,7 +142,6 @@ def _make_ctx(**kwargs) -> RunContext:
     ctx.last_prompt_tokens = 0
     ctx.context_reset_threshold = 0.75
     ctx.all_tools = []
-    ctx.routed_tools = []
     ctx.last_response = None
     ctx.signal = "CONTINUE"
     ctx.stop_reason = "max_steps"
@@ -336,10 +335,6 @@ BASH_TOOL_SCHEMA = {
 def _run_streak_agent(monkeypatch, mocker, tmp_path, needs_handback=False):
     tmp_path.mkdir(parents=True, exist_ok=True)
     monkeypatch.chdir(tmp_path)
-    mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
-        return_value=([BASH_TOOL_SCHEMA], "phase1_keyword"),
-    )
     agent = AgentNode(
         messages=[
             {"role": "system", "content": "sys"},
@@ -396,13 +391,11 @@ class TestAnomalyDetectNodeEndToEnd:
                 FinalizeStepNode,
                 LLMCallNode,
                 ToolDispatchNode,
-                ToolRoutingNode,
             )
 
             return Pipeline(
                 [
                     ContextGuardNode(spawn_fn=spawn_fn),
-                    ToolRoutingNode(),
                     LLMCallNode(),
                     ToolDispatchNode(),
                     FinalizeStepNode(),
@@ -431,10 +424,6 @@ class TestAnomalyDetectNodeEndToEnd:
 
     def test_clean_session_zero_false_flags(self, monkeypatch, mocker, tmp_path):
         monkeypatch.chdir(tmp_path)
-        mocker.patch(
-            "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter.route_tools",
-            return_value=([BASH_TOOL_SCHEMA], "phase1_keyword"),
-        )
         agent = AgentNode(
             messages=[
                 {"role": "system", "content": "sys"},

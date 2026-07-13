@@ -1,9 +1,9 @@
 """Tests for the pipeline/ package: Pipeline, nodes, and RunContext.
 
-Node unit tests for ContextGuardNode, FinalizeStepNode token tracking, and
-_routing_signal live in test_agent.py alongside the Agent integration tests that
-exercise those same nodes end-to-end.  This file covers the remaining nodes and
-the pipeline engine itself.
+Node unit tests for ContextGuardNode and FinalizeStepNode token tracking live
+in test_agent.py alongside the Agent integration tests that exercise those
+same nodes end-to-end.  This file covers the remaining nodes and the pipeline
+engine itself.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from my_coding_agent.pipeline.node import BaseNode
 from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
 from my_coding_agent.pipeline.nodes.llm_call import LLMCallNode
 from my_coding_agent.pipeline.nodes.tool_dispatch import ToolDispatchNode
-from my_coding_agent.pipeline.nodes.tool_routing import ToolRoutingNode
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,7 +36,6 @@ def _make_ctx(**kwargs) -> RunContext:
     ctx.last_prompt_tokens = 0
     ctx.context_reset_threshold = 0.75
     ctx.all_tools = []
-    ctx.routed_tools = []
     ctx.last_response = None
     ctx.signal = "CONTINUE"
     ctx.stop_reason = "max_steps"
@@ -166,176 +164,6 @@ def test_tool_dispatch_node_no_op_on_empty_messages():
     ctx.messages = []
     ToolDispatchNode().run(ctx)
     assert ctx.signal == "CONTINUE"
-
-
-# ---------------------------------------------------------------------------
-# ToolRoutingNode — lazy router construction
-# ---------------------------------------------------------------------------
-
-
-def _tool_def(name):
-    return {"function": {"name": name}, "tags": []}
-
-
-def test_tool_routing_node_creates_router_once(mocker):
-    ctx = _make_ctx()
-    ctx.messages = [{"role": "user", "content": "do it"}]
-    mock_router_cls = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter"
-    )
-    mock_router = mock_router_cls.return_value
-    mock_router.route_tools.side_effect = [([], "empty"), ([], "empty")]
-
-    node = ToolRoutingNode()
-    node.run(ctx)
-    ctx.messages = [{"role": "user", "content": "do something else"}]
-    node.run(ctx)  # second call, different signal, must reuse the same instance
-
-    assert mock_router_cls.call_count == 1
-    assert mock_router.route_tools.call_count == 2
-
-
-def test_tool_routing_node_recomputes_every_step_regardless_of_signal(mocker):
-    ctx = _make_ctx()
-    ctx.messages = [{"role": "user", "content": "do it"}]
-    mock_router = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter"
-    ).return_value
-    mock_router.route_tools.return_value = ([], "empty")
-
-    node = ToolRoutingNode()
-    node.run(ctx)
-    node.run(ctx)  # identical signal — phase-1 still recomputes at zero cost
-
-    assert mock_router.route_tools.call_count == 2
-    assert ctx.routed_tools == []
-
-
-def test_tool_routing_node_skips_record_router_on_unchanged_selection():
-    ctx = _make_ctx()
-    ctx.messages = [{"role": "user", "content": "do it"}]
-    ctx.all_tools = []  # real ToolRouter, phase "empty", selection always []
-
-    node = ToolRoutingNode()
-    node.run(ctx)
-    node.run(ctx)  # unchanged selection — record_router must not fire again
-
-    assert ctx.llm._recorder.record_router.call_count == 1
-
-
-def test_tool_routing_node_records_on_changed_selection(mocker):
-    ctx = _make_ctx()
-    ctx.all_tools = [_tool_def("a"), _tool_def("b")]
-    ctx.messages = [{"role": "user", "content": "do it"}]
-    mock_router = mocker.patch(
-        "my_coding_agent.pipeline.nodes.tool_routing.ToolRouter"
-    ).return_value
-    mock_router.route_tools.side_effect = [
-        ([_tool_def("a")], "phase1_keyword"),
-        ([_tool_def("b")], "phase1_keyword"),
-    ]
-
-    node = ToolRoutingNode()
-    node.run(ctx)
-    first_names = {t["function"]["name"] for t in ctx.routed_tools}
-    node.run(ctx)
-    second_names = {t["function"]["name"] for t in ctx.routed_tools}
-
-    assert first_names == {"a"}
-    # "a" doesn't match this step but a single miss is debounced — it stays.
-    assert second_names == {"a", "b"}
-    assert ctx.llm._recorder.record_router.call_count == 2
-
-
-# ---------------------------------------------------------------------------
-# ToolRoutingNode — carry-forward and debounced exits (real ToolRouter)
-# ---------------------------------------------------------------------------
-
-
-def _routed_names(ctx):
-    return {t["function"]["name"] for t in ctx.routed_tools}
-
-
-def test_tool_routing_carry_forward_on_mid_run_no_match():
-    ctx = _make_ctx()
-    ctx.all_tools = [{"function": {"name": "a"}, "tags": ["alpha"]}]
-
-    node = ToolRoutingNode()
-    ctx.messages = [{"role": "user", "content": "mention alpha"}]
-    node.run(ctx)
-    assert _routed_names(ctx) == {"a"}
-
-    ctx.messages = [{"role": "user", "content": "totally unrelated"}]
-    node.run(ctx)  # no tag match, mid-run -> carries forward, no LLM call
-    assert _routed_names(ctx) == {"a"}
-
-
-def test_tool_routing_flap_absorbed_then_exits_after_two_misses():
-    ctx = _make_ctx()
-    ctx.all_tools = [{"function": {"name": "a"}, "tags": ["alpha"]}]
-
-    node = ToolRoutingNode()
-    ctx.messages = [{"role": "user", "content": "mention alpha"}]
-    node.run(ctx)
-    assert _routed_names(ctx) == {"a"}
-
-    ctx.messages = [{"role": "user", "content": "unrelated"}]
-    node.run(ctx)  # miss 1 — still selected
-    assert _routed_names(ctx) == {"a"}
-
-    node.run(ctx)  # miss 2 — exits
-    assert _routed_names(ctx) == set()
-
-
-def test_tool_routing_rematch_resets_decay():
-    ctx = _make_ctx()
-    ctx.all_tools = [{"function": {"name": "a"}, "tags": ["alpha"]}]
-
-    node = ToolRoutingNode()
-    ctx.messages = [{"role": "user", "content": "mention alpha"}]
-    node.run(ctx)
-
-    ctx.messages = [{"role": "user", "content": "unrelated"}]
-    node.run(ctx)  # miss 1
-    assert _routed_names(ctx) == {"a"}
-
-    ctx.messages = [{"role": "user", "content": "mention alpha again"}]
-    node.run(ctx)  # re-match resets the miss counter
-    assert _routed_names(ctx) == {"a"}
-
-    ctx.messages = [{"role": "user", "content": "unrelated"}]
-    node.run(ctx)  # miss 1 again (not miss 3)
-    assert _routed_names(ctx) == {"a"}
-
-
-def test_tool_routing_baseline_tag_match_includes_all_non_baseline():
-    ctx = _make_ctx()
-    ctx.all_tools = [
-        {"function": {"name": "bash"}, "tags": ["shell", "run"]},
-        {"function": {"name": "a"}, "tags": ["alpha"]},
-    ]
-    node = ToolRoutingNode()
-    ctx.messages = [{"role": "user", "content": "run the tests"}]
-    node.run(ctx)
-    assert _routed_names(ctx) == {"bash", "a"}
-
-
-def test_tool_routing_phase2_llm_selection_becomes_debounce_baseline(mocker):
-    ctx = _make_ctx()
-    ctx.all_tools = [{"function": {"name": "a"}, "tags": ["alpha"]}]
-    mocker.patch.object(
-        ctx.llm,
-        "chat_completion",
-        return_value=mocker.Mock(
-            json=lambda: {
-                "choices": [{"message": {"role": "assistant", "content": "[]"}}]
-            }
-        ),
-    )
-    node = ToolRoutingNode()
-    ctx.messages = [{"role": "user", "content": "totally unrelated"}]
-    node.run(ctx)  # cold start, no tag match -> phase-2 LLM fallback, empty choice
-    assert _routed_names(ctx) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -476,48 +304,3 @@ def test_pipeline_checkpoints_completed_non_reset_step():
     ctx = _make_ctx(max_steps=5)
     Pipeline([_StopNode()], checkpoint_fn=calls.append).execute(ctx)
     assert calls == [ctx]  # the completed step was checkpointed once
-
-
-# ---------------------------------------------------------------------------
-# ToolRoutingNode — end-to-end cadence across multiple pipeline steps
-# ---------------------------------------------------------------------------
-
-
-def test_tool_routing_records_one_event_when_signal_stays_static():
-    class _AdvanceStep(BaseNode):
-        name = "advance"
-
-        def run(self, ctx):
-            ctx.step_num += 1
-            ctx.signal = "CONTINUE"
-
-    ctx = _make_ctx(max_steps=3)
-    ctx.messages = [{"role": "user", "content": "do it"}]
-    ctx.all_tools = []
-    Pipeline([ToolRoutingNode(), _AdvanceStep()]).execute(ctx)
-    assert ctx.llm._recorder.record_router.call_count == 1
-
-
-def test_tool_routing_records_one_event_per_changed_signal():
-    class _AdvanceWithNewUserMessage(BaseNode):
-        name = "advance"
-        contents = ["mention beta", "mention gamma", "mention gamma"]
-        counter = 0
-
-        def run(self, ctx):
-            ctx.messages.append(
-                {"role": "user", "content": self.contents[self.counter]}
-            )
-            self.counter += 1
-            ctx.step_num += 1
-            ctx.signal = "CONTINUE"
-
-    ctx = _make_ctx(max_steps=3)
-    ctx.messages = [{"role": "user", "content": "mention alpha"}]
-    ctx.all_tools = [
-        {"function": {"name": "a"}, "tags": ["alpha"]},
-        {"function": {"name": "b"}, "tags": ["beta"]},
-        {"function": {"name": "c"}, "tags": ["gamma"]},
-    ]
-    Pipeline([ToolRoutingNode(), _AdvanceWithNewUserMessage()]).execute(ctx)
-    assert ctx.llm._recorder.record_router.call_count == 3
