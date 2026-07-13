@@ -60,14 +60,6 @@ Tool execution
    :show-inheritance:
 
 
-Tool routing
-------------
-
-.. automodule:: my_coding_agent.engine.routing
-   :members:
-   :show-inheritance:
-
-
 Pipeline
 --------
 
@@ -97,10 +89,6 @@ Pipeline nodes
    :show-inheritance:
 
 .. automodule:: my_coding_agent.pipeline.nodes.context_guard
-   :members:
-   :show-inheritance:
-
-.. automodule:: my_coding_agent.pipeline.nodes.tool_routing
    :members:
    :show-inheritance:
 
