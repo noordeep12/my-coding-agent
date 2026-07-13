@@ -1,4 +1,4 @@
-"""Tests for the `my-coding-agent-webui --check` sum-check CLI surface (D4)."""
+"""Tests for the `my-coding-agent-webui` CLI surface (`--port`/`--dir`/`--check`)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 
 from click.testing import CliRunner
 
-from my_coding_agent.webui.server import _cli
+from my_coding_agent.viewer.server import _cli
 
 
 def _write_session(base_dir, session_id, by_kind, calls, grand_total, report_source):
@@ -70,7 +70,7 @@ def test_cli_without_check_starts_server(tmp_path, monkeypatch):
         started["port"] = port
         started["base_dir"] = base_dir
 
-    monkeypatch.setattr("my_coding_agent.webui.server.run_server", fake_run_server)
+    monkeypatch.setattr("my_coding_agent.viewer.server.run_server", fake_run_server)
     runner = CliRunner()
     result = runner.invoke(_cli, ["--dir", str(tmp_path), "--port", "7777"])
     assert result.exit_code == 0

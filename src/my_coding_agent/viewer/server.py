@@ -5,10 +5,9 @@ Uses only the Python stdlib ``http.server`` module — no new *runtime* Python
 dependencies.  The UI is a Preact + htm app; those libraries are vendored
 offline under ``viewer/_vendor/`` and injected inline into the page (no CDN).
 
-``run_server`` and the render helpers below are also imported by
-``my_coding_agent.webui`` to mount the Trace Explorer into the unified shell;
-the standalone ``my-coding-agent-traces`` console script has been retired
-(superseded by ``my-coding-agent-webui``).
+Entry point::
+
+    my-coding-agent-webui [--port 7474] [--dir .my_coding_agent]
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ import dataclasses
 import json
 import logging
 import re
+import sys
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -26,6 +26,7 @@ import click
 
 from ..utils.exceptions import MyCodingAgentError
 from .reader import list_sessions, load_session
+from .sumcheck import check_tree
 
 logger = logging.getLogger(__name__)
 
@@ -444,7 +445,7 @@ function App(){
   const [showFilters,setShowFilters] = useState(false);
   const [collapsed,setCollapsed]     = useState(()=>new Set());
 
-  // Restore-where-you-were: an embedding shell (webui) may pass the
+  // Restore-where-you-were: a caller may pass the
   // previously selected session via ?session=<id>; that selection wins over
   // "most recent session" the first time the list loads.
   const initialSid = useMemo(()=>{
@@ -1330,3 +1331,42 @@ def run_server(
         click.echo("\nStopped.")
     finally:
         server.server_close()
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+
+@click.command()
+@click.option("--port", default=7474, show_default=True, help="TCP port to listen on.")
+@click.option(
+    "--dir",
+    "sessions_dir",
+    default=".my_coding_agent",
+    show_default=True,
+    help="Root directory containing session subdirectories.",
+)
+@click.option(
+    "--check",
+    "check_session_id",
+    default=None,
+    help=(
+        "Run the deterministic, LLM-free sum-check on this session id "
+        "(and its delegated subtree) and exit — no server is started."
+    ),
+)
+def _cli(port: int, sessions_dir: str, check_session_id: str | None) -> None:
+    """Launch the Trace Explorer on localhost.
+
+    Opens http://localhost:PORT in your browser. Press Ctrl-C to stop.
+    """
+    if check_session_id is not None:
+        results = check_tree(Path(sessions_dir), check_session_id)
+        failed = False
+        for result in results:
+            if result.status == "fail":
+                failed = True
+            label = result.status.upper()
+            suffix = f": {'; '.join(result.reasons)}" if result.reasons else ""
+            click.echo(f"{label} {result.session_id}{suffix}")
+        sys.exit(1 if failed else 0)
+    run_server(port=port, base_dir=Path(sessions_dir))
