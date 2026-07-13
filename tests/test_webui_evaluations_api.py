@@ -228,6 +228,156 @@ def test_evaluation_full_lifecycle_run_and_result(server, monkeypatch, mocker):
     assert listing["evaluations"][0]["eval_config_id"] == ec["id"]
 
 
+def test_evaluation_run_uses_saved_admin_settings(server, monkeypatch, mocker):
+    """Saved Admin settings reach the agent an interface-launched run builds."""
+    port, tmp_path = server
+    monkeypatch.chdir(tmp_path)
+
+    status, _ = _req(
+        port,
+        "POST",
+        "/api/admin/settings",
+        {
+            "api_url": "http://saved-host:9999/v1",
+            "model": "saved-model",
+            "api_key": "saved-key",  # pragma: allowlist secret
+            "timeout": 5,
+        },
+    )
+    assert status == 200
+
+    status, rc = _req(port, "POST", "/api/evals/run-configs", {"name": "rc1"})
+    assert status == 201
+    status, ec = _req(
+        port,
+        "POST",
+        "/api/evals/eval-configs",
+        {
+            "name": "ec1",
+            "rules": [
+                {
+                    "name": "rule1",
+                    "checks": [
+                        {"name": "c1", "evaluator": "exact_match", "expected": "pong"}
+                    ],
+                }
+            ],
+        },
+    )
+    assert status == 201
+    status, evaluation = _req(
+        port,
+        "POST",
+        "/api/evals/evaluations",
+        {"name": "e1", "run_config_id": rc["id"], "eval_config_id": ec["id"]},
+    )
+    assert status == 201
+
+    captured: dict = {}
+
+    def fake_init(self, **kwargs):
+        captured.update(kwargs)
+        self.session_id = "sid"
+        self.llm = mocker.Mock(timeout=None, setup_session=lambda: None)
+        self.failure_error = None
+
+    def fake_execute(self, max_steps=50):
+        return [{"role": "assistant", "content": "pong"}]
+
+    mocker.patch.object(AgentNode, "__init__", fake_init)
+    mocker.patch.object(AgentNode, "execute", fake_execute)
+
+    status, run_body = _req(
+        port, "POST", f"/api/evals/evaluations/{evaluation['id']}/run"
+    )
+    assert status == 202
+    run_id = run_body["run_id"]
+
+    deadline = time.monotonic() + 5
+    status, result = _req(
+        port, "GET", f"/api/evals/evaluations/{evaluation['id']}/runs/{run_id}"
+    )
+    while status == 202 and time.monotonic() < deadline:
+        time.sleep(0.05)
+        status, result = _req(
+            port, "GET", f"/api/evals/evaluations/{evaluation['id']}/runs/{run_id}"
+        )
+    assert status == 200
+
+    assert captured["api_url"] == "http://saved-host:9999/v1"
+    assert captured["model"] == "saved-model"
+    assert captured["api_key"] == "saved-key"  # pragma: allowlist secret
+
+
+def test_evaluation_run_without_saved_settings_uses_env_defaults(
+    server, monkeypatch, mocker
+):
+    """No saved Admin settings -> the run constructs the same client as today."""
+    port, tmp_path = server
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OMLX_API_URL", raising=False)
+    monkeypatch.delenv("OMLX_MODEL", raising=False)
+
+    status, rc = _req(port, "POST", "/api/evals/run-configs", {"name": "rc1"})
+    status, ec = _req(
+        port,
+        "POST",
+        "/api/evals/eval-configs",
+        {
+            "name": "ec1",
+            "rules": [
+                {
+                    "name": "rule1",
+                    "checks": [
+                        {"name": "c1", "evaluator": "exact_match", "expected": "pong"}
+                    ],
+                }
+            ],
+        },
+    )
+    status, evaluation = _req(
+        port,
+        "POST",
+        "/api/evals/evaluations",
+        {"name": "e1", "run_config_id": rc["id"], "eval_config_id": ec["id"]},
+    )
+    assert status == 201
+
+    captured: dict = {}
+
+    def fake_init(self, **kwargs):
+        captured.update(kwargs)
+        self.session_id = "sid"
+        self.llm = mocker.Mock(timeout=None, setup_session=lambda: None)
+        self.failure_error = None
+
+    def fake_execute(self, max_steps=50):
+        return [{"role": "assistant", "content": "pong"}]
+
+    mocker.patch.object(AgentNode, "__init__", fake_init)
+    mocker.patch.object(AgentNode, "execute", fake_execute)
+
+    status, run_body = _req(
+        port, "POST", f"/api/evals/evaluations/{evaluation['id']}/run"
+    )
+    assert status == 202
+    run_id = run_body["run_id"]
+
+    deadline = time.monotonic() + 5
+    status, result = _req(
+        port, "GET", f"/api/evals/evaluations/{evaluation['id']}/runs/{run_id}"
+    )
+    while status == 202 and time.monotonic() < deadline:
+        time.sleep(0.05)
+        status, result = _req(
+            port, "GET", f"/api/evals/evaluations/{evaluation['id']}/runs/{run_id}"
+        )
+    assert status == 200
+
+    assert captured["api_url"] == "http://127.0.0.1:8321/v1"
+    assert captured["model"] == "Qwen3.6-35B-A3B-6bit"
+
+
 def test_delete_evaluation_leaves_configs_intact(server):
     port, _ = server
     status, rc = _req(port, "POST", "/api/evals/run-configs", {"name": "rc1"})
@@ -511,15 +661,18 @@ class _NullHandler:
 
 
 def test_handle_evaluation_route_ignores_foreign_prefix(tmp_path):
+    store = Store(default_db_path(tmp_path))
     assert (
         handle_evaluation_route(
-            _NullHandler(), "GET", "/api/other", b"", evals_root=tmp_path
+            _NullHandler(), "GET", "/api/other", b"", evals_root=tmp_path, store=store
         )
         is False
     )
+    store.close()
 
 
 def test_handle_evaluation_route_ignores_config_subtree(tmp_path):
+    store = Store(default_db_path(tmp_path))
     assert (
         handle_evaluation_route(
             _NullHandler(),
@@ -527,6 +680,8 @@ def test_handle_evaluation_route_ignores_config_subtree(tmp_path):
             "/api/evals/config/datasets",
             b"",
             evals_root=tmp_path,
+            store=store,
         )
         is False
     )
+    store.close()

@@ -334,6 +334,7 @@ class _WebUIHandler(BaseHTTPRequestHandler):
             path,
             raw,
             evals_root=self.base_dir.resolve() / "evals",
+            store=self.store,
         )
 
     def _handle_session(self, session_id: str) -> None:

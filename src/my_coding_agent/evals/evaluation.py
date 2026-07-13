@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from ..engine.agent import AgentNode
+from ..engine.llm import LLM
 from ..utils.exceptions import MyCodingAgentError
 from .results import EvalRunResult, build_run_result, write_run_result
 from .runner import _build_tools, _final_output
@@ -540,8 +541,14 @@ def _check_expected(check: Check) -> dict[str, Any]:
     return expected
 
 
-def _run_agent(run_config: RunConfig, evaluation_id: str) -> tuple[str, RunResult]:
+def _run_agent(
+    run_config: RunConfig, evaluation_id: str, *, llm_client: LLM | None = None
+) -> tuple[str, RunResult]:
     """Run the agent once per the RunConfig inside an isolated temp workspace.
+
+    ``llm_client``, if given, supplies the connection (api_url/api_key/model/
+    timeout) the agent's LLM client is built from — e.g. the interface's
+    resolved Admin settings — instead of `AgentNode`'s own env-var defaults.
 
     Caller must consume the returned `RunResult` (which may reference
     `session_dir`) before the temp workspace this was invoked under tears
@@ -549,6 +556,13 @@ def _run_agent(run_config: RunConfig, evaluation_id: str) -> tuple[str, RunResul
     """
     system_prompt = run_config.system_prompt or _DEFAULT_SYSTEM_PROMPT
     task = _run_config_task(run_config)
+    agent_kwargs: dict[str, Any] = {}
+    if llm_client is not None:
+        agent_kwargs = {
+            "api_url": llm_client.api_url,
+            "api_key": llm_client.api_key,
+            "model": llm_client.model,
+        }
     agent = AgentNode(
         messages=[
             {"role": "system", "content": system_prompt},
@@ -556,7 +570,11 @@ def _run_agent(run_config: RunConfig, evaluation_id: str) -> tuple[str, RunResul
         ],
         tools=_build_tools() if run_config.tools_enabled else [],
         label=f"Evaluation[{evaluation_id}]",
+        **agent_kwargs,
     )
+    if llm_client is not None:
+        agent.llm.timeout = llm_client.timeout
+        agent.llm.setup_session()
     try:
         messages = agent.execute()
         run_result = RunResult(
@@ -611,6 +629,7 @@ def run_evaluation(
     evaluations_dir: Path = DEFAULT_EVALUATIONS_DIR,
     results_root: Path | None = None,
     run_id: str | None = None,
+    llm_client: LLM | None = None,
 ) -> EvalRunResult:
     """Run `evaluation`'s RunConfig through the agent and score every Check.
 
@@ -629,6 +648,10 @@ def run_evaluation(
     back to a client (e.g. the web UI's fire-and-poll endpoint, which returns
     a run id before this function has finished) can find the written result
     under the id it was promised.
+
+    ``llm_client``, if given, is forwarded to `_run_agent` so the run's agent
+    is built from that connection instead of env-var defaults (see
+    `_run_agent`).
     """
     run_config = get_run_config(evaluation.run_config_id, base_dir=run_configs_dir)
     eval_config = get_eval_config(evaluation.eval_config_id, base_dir=eval_configs_dir)
@@ -643,7 +666,7 @@ def run_evaluation(
         }
         verdict = "no_checks"
     else:
-        task, run_result = _run_agent(run_config, evaluation.id)
+        task, run_result = _run_agent(run_config, evaluation.id, llm_client=llm_client)
         scores = _score_checks(checks, task, run_result)
         pass_rate = sum(1 for s in scores if s.passed) / len(scores)
         aggregate_metrics = {"pass_rate": pass_rate, "checks_total": float(len(scores))}
