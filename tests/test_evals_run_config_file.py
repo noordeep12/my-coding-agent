@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from my_coding_agent.engine.agent import AgentNode
 from my_coding_agent.engine.llm import LLM
 from my_coding_agent.evals import run_config_file as rcf
 from my_coding_agent.evals.results import load_run_result
+from my_coding_agent.pipeline.nodes.agent import AgentNode
 from my_coding_agent.viewer import reader as viewer_reader
 
 

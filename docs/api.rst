@@ -11,10 +11,6 @@ The package ``my_coding_agent`` re-exports the core types listed in its
 Engine
 ------
 
-.. automodule:: my_coding_agent.engine.agent
-   :members:
-   :show-inheritance:
-
 .. automodule:: my_coding_agent.engine.llm
    :members:
    :show-inheritance:
@@ -95,6 +91,10 @@ Pipeline
 
 Pipeline nodes
 --------------
+
+.. automodule:: my_coding_agent.pipeline.nodes.agent
+   :members:
+   :show-inheritance:
 
 .. automodule:: my_coding_agent.pipeline.nodes.context_guard
    :members:

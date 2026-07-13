@@ -19,8 +19,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from ..engine.agent import AgentNode
 from ..engine.llm import LLM
+from ..pipeline.nodes.agent import AgentNode
 from ..utils.exceptions import MyCodingAgentError
 from .results import EvalRunResult, build_run_result, write_run_result
 from .runner import _build_tools, _final_output

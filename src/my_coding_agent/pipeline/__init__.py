@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 from .context import RunContext
 from .dag import Pipeline
@@ -30,8 +30,20 @@ __all__ = [
     "FinalizeStepNode",
     "LLMCallNode",
     "ToolDispatchNode",
+    "AgentNode",
+    "DEFAULT_MAX_STEPS",
     "build_default_pipeline",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Lazy re-export: AgentNode (pipeline.nodes.agent) imports build_default_pipeline
+    # from this package at call time, so an eager import here would cycle.
+    if name in ("AgentNode", "DEFAULT_MAX_STEPS"):
+        from .nodes.agent import DEFAULT_MAX_STEPS, AgentNode
+
+        return {"AgentNode": AgentNode, "DEFAULT_MAX_STEPS": DEFAULT_MAX_STEPS}[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def build_default_pipeline(

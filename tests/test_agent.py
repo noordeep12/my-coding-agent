@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from my_coding_agent.engine.agent import AgentNode as Agent
 from my_coding_agent.engine.checkpoint import (
     Checkpoint,
     checkpoint_path,
@@ -26,6 +25,7 @@ from my_coding_agent.engine.llm import LLM
 from my_coding_agent.engine.llm.errors import LLMHTTPStatusError, LLMTransportError
 from my_coding_agent.engine.schema import REPORT_SOURCE_FALLBACK
 from my_coding_agent.pipeline.context import RunContext
+from my_coding_agent.pipeline.nodes.agent import AgentNode as Agent
 from my_coding_agent.pipeline.nodes.context_guard import ContextGuardNode
 from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
 from my_coding_agent.pipeline.nodes.tool_routing import (
@@ -530,11 +530,11 @@ def _stub_run_internals(agent, mocker):
     # it so the loop logic is exercised without writing a checkpoint file.
     mocker.patch.object(agent, "_write_checkpoint")
     # Banner is emitted at the start of run() (not __init__) — stub its output.
-    mocker.patch("my_coding_agent.engine.agent.print_banner")
-    mocker.patch("my_coding_agent.engine.agent.detach_session_log")
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.print_banner")
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.detach_session_log")
     # session_data.json existence check in finally → pretend it already exists so
     # the finally block does not try to save/summarize/detach again.
-    mocker.patch("my_coding_agent.engine.agent.Path.exists", return_value=True)
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.Path.exists", return_value=True)
     agent._session_log_handler = (None, None, None)
     agent.session_id = "testsession"
     # Observability recorder is read by run() (start/finish/record_handoff); stub
@@ -746,7 +746,7 @@ def test_execute_removes_checkpoint_on_clean_finish(silent_logger, mocker):
     ).return_value
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
-    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+    remove = mocker.patch("my_coding_agent.pipeline.nodes.agent.remove_checkpoint")
 
     agent.execute(max_steps=5)
     assert agent.failure_error is None
@@ -762,7 +762,7 @@ def test_execute_keeps_checkpoint_on_unrecoverable_failure(silent_logger, mocker
         "chat_completion",
         side_effect=LLMHTTPStatusError("HTTP 400", status_code=400, retryable=False),
     )
-    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+    remove = mocker.patch("my_coding_agent.pipeline.nodes.agent.remove_checkpoint")
 
     agent.execute(max_steps=5)
     assert agent.failure_error is not None
@@ -790,7 +790,7 @@ def test_execute_keeps_checkpoint_on_max_steps(silent_logger, mocker):
     ).return_value
     _exec.run.return_value = ([], [])
     _exec.tool_artifacts = {}
-    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+    remove = mocker.patch("my_coding_agent.pipeline.nodes.agent.remove_checkpoint")
 
     agent.execute(max_steps=1)
     assert agent.stop_reason == "max_steps"
@@ -819,7 +819,7 @@ def test_execute_drops_own_checkpoint_after_context_reset(silent_logger, mocker)
         "my_coding_agent.pipeline.build_default_pipeline",
         return_value=_FakePipeline(),
     )
-    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+    remove = mocker.patch("my_coding_agent.pipeline.nodes.agent.remove_checkpoint")
 
     agent.execute(max_steps=5)
 
@@ -848,7 +848,7 @@ def test_resumed_run_context_reset_clean_finish_clears_source(silent_logger, moc
         "my_coding_agent.pipeline.build_default_pipeline",
         return_value=_FakePipeline(),
     )
-    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+    remove = mocker.patch("my_coding_agent.pipeline.nodes.agent.remove_checkpoint")
 
     agent.execute(max_steps=5)
 
@@ -877,7 +877,7 @@ def test_handoff_summary_failure_keeps_main_checkpoint(silent_logger, mocker):
         "my_coding_agent.pipeline.build_default_pipeline",
         return_value=_FakePipeline(),
     )
-    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+    remove = mocker.patch("my_coding_agent.pipeline.nodes.agent.remove_checkpoint")
 
     agent.execute(max_steps=5)
 
@@ -1082,7 +1082,7 @@ def test_resume_past_budget_deletes_neither_checkpoint(
     agent.llm.logger = silent_logger
     agent.llm.context_window = 8192
     chat = mocker.patch.object(agent.llm, "chat_completion")  # must not be reached
-    remove = mocker.patch("my_coding_agent.engine.agent.remove_checkpoint")
+    remove = mocker.patch("my_coding_agent.pipeline.nodes.agent.remove_checkpoint")
 
     agent.execute(max_steps=4)  # resume_step == max_steps → zero steps run
 
@@ -1110,7 +1110,7 @@ def test_generate_handoff_builds_and_saves(silent_logger, mocker):
         return_value=_Resp({"choices": [{"message": {"content": "handoff summary"}}]}),
     )
     saved = mocker.patch(
-        "my_coding_agent.engine.agent.save_handoff",
+        "my_coding_agent.pipeline.nodes.agent.save_handoff",
         return_value="/tmp/h.json",
     )
     handoff = agent._generate_handoff(step_num=2, prompt_tokens=8000)
@@ -1281,7 +1281,7 @@ def test_print_summary_forwards_aggregates(silent_logger, mocker):
         session_id="s1",
         started_at="2026-06-12",
     )
-    spy = mocker.patch("my_coding_agent.engine.agent.print_run_summary")
+    spy = mocker.patch("my_coding_agent.pipeline.nodes.agent.print_run_summary")
     agent._print_summary(max_steps=5)
     kwargs = spy.call_args.kwargs
     assert kwargs["prompt_tokens"] == 100
@@ -1304,7 +1304,7 @@ def test_save_session_data_writes_json(silent_logger, mocker, tmp_path):
         started_at="2026-06-12",
     )
     mocker.patch(
-        "my_coding_agent.engine.agent.Path",
+        "my_coding_agent.pipeline.nodes.agent.Path",
         lambda *a: tmp_path.joinpath(*a),
     )
     agent._save_session_data(max_steps=5)
@@ -1421,7 +1421,7 @@ def test_save_session_data_includes_rollup(silent_logger, mocker, tmp_path):
         started_at="2026-06-12",
     )
     mocker.patch(
-        "my_coding_agent.engine.agent.Path",
+        "my_coding_agent.pipeline.nodes.agent.Path",
         lambda *a: tmp_path.joinpath(*a),
     )
     agent._save_session_data(max_steps=5)
@@ -1449,13 +1449,13 @@ def test_spawn_continuation_seeds_system_plus_handoff(silent_logger, mocker):
     agent.llm.api_key = "k"
     handoff = mocker.Mock()
     mocker.patch(
-        "my_coding_agent.engine.agent.handoff_to_user_message",
+        "my_coding_agent.pipeline.nodes.agent.handoff_to_user_message",
         return_value={"role": "user", "content": "HANDOFF"},
     )
     fake_cont = mocker.Mock()
     fake_cont.execute.return_value = [{"role": "assistant", "content": "cont done"}]
     cont_cls = mocker.patch(
-        "my_coding_agent.engine.agent.AgentNode", return_value=fake_cont
+        "my_coding_agent.pipeline.nodes.agent.AgentNode", return_value=fake_cont
     )
 
     result = agent._spawn_continuation(handoff, max_steps=5)
@@ -1483,14 +1483,14 @@ def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
     agent._session_log_handler = (None, None, None)
     mocker.patch.object(agent, "_save_session_data")
     mocker.patch.object(agent, "_print_summary")
-    mocker.patch("my_coding_agent.engine.agent.detach_session_log")
+    mocker.patch("my_coding_agent.pipeline.nodes.agent.detach_session_log")
     mocker.patch.object(
         agent,
         "_generate_handoff",
         return_value=mocker.Mock(path="/tmp/h.json", content="summary"),
     )
     mocker.patch(
-        "my_coding_agent.engine.agent.handoff_to_user_message",
+        "my_coding_agent.pipeline.nodes.agent.handoff_to_user_message",
         return_value={"role": "user", "content": "H"},
     )
 
@@ -1502,7 +1502,9 @@ def test_context_reset_continuation_failure_propagates(silent_logger, mocker):
         "HTTP 400", status_code=400, retryable=False
     )
     failed_cont.execute.return_value = [{"role": "assistant", "content": "partial"}]
-    mocker.patch("my_coding_agent.engine.agent.AgentNode", return_value=failed_cont)
+    mocker.patch(
+        "my_coding_agent.pipeline.nodes.agent.AgentNode", return_value=failed_cont
+    )
 
     ctx = _make_ctx(
         agent.llm,

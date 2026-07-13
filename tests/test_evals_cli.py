@@ -7,10 +7,10 @@ import json
 import yaml
 from click.testing import CliRunner
 
-from my_coding_agent.engine.agent import AgentNode
 from my_coding_agent.evals.cli import main
 from my_coding_agent.evals.results import build_run_result, write_run_result
 from my_coding_agent.evals.schema import EvalScore
+from my_coding_agent.pipeline.nodes.agent import AgentNode
 
 
 def _write_case(path, **fields):

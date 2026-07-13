@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 
-from my_coding_agent.engine.agent import AgentNode
 from my_coding_agent.evals.runner import run_case_set
 from my_coding_agent.evals.schema import EvalCase
+from my_coding_agent.pipeline.nodes.agent import AgentNode
 
 
 def _case(case_id, expected_contains):
