@@ -1,4 +1,4 @@
-"""Tests for webui/evaluations_api.py — Evaluation/RunConfig/EvalConfig HTTP API."""
+"""Tests for webui/evals/api.py — Evaluation/RunConfig/EvalConfig HTTP API."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from http.server import HTTPServer
 import pytest
 
 from my_coding_agent.engine.agent import AgentNode
-from my_coding_agent.webui.evaluations_api import handle_evaluation_route
+from my_coding_agent.webui.evals.api import handle_evaluation_route
 from my_coding_agent.webui.server import _WebUIHandler
 from my_coding_agent.webui.store import Store, default_db_path
 

@@ -1,9 +1,9 @@
-"""Eval Dashboard routes and embedded UI, served from the Trace Explorer server.
+"""Eval Dashboard routes and embedded UI, served from the web UI shell.
 
 Serves the single two-pane Evaluation management page against the
-Evaluation/RunConfig/EvalConfig CRUD + run API (`webui/evaluations_api.py`).
+Evaluation/RunConfig/EvalConfig CRUD + run API (`webui/evals/api.py`).
 Reuses the same offline-vendored Preact + htm bundle as the Trace Explorer
-(no CDN, no build step) — see `server.py`'s `_vendor_js()`.
+(no CDN, no build step) — see this module's `_eval_vendor_js()`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import evals_reader
+from . import reader as evals_reader
 
 # Eval run ids are `uuid.uuid4().hex[:12]` (evals/results.py) — 12 lowercase
 # hex chars; allow some slack for future id shapes without loosening past hex.
@@ -808,7 +808,7 @@ def eval_dashboard_html(path: str) -> str | None:
     """
     if path != "/evals":
         return None
-    vendor_dir = Path(__file__).parent / "_vendor"
+    vendor_dir = Path(__file__).parent.parent.parent / "viewer" / "_vendor"
     return _full_eval_html(vendor_dir)
 
 
