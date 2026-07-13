@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -86,9 +87,13 @@ def _run_and_score_case(case: EvalCase) -> EvalScore:
         except UnknownScorerError as exc:
             logger.error("case %s: %s", case.id, exc)
             return EvalScore(
-                case_id=case.id, passed=False, metrics={}, detail={"reason": str(exc)}
+                case_id=case.id,
+                passed=False,
+                metrics={},
+                detail={"reason": str(exc)},
+                session_id=run_result.session_id,
             )
-        return scorer.score(case, run_result)
+        return replace(scorer.score(case, run_result), session_id=run_result.session_id)
 
 
 def run_case_set(cases: list[EvalCase]) -> tuple[list[EvalScore], dict[str, float]]:

@@ -45,9 +45,12 @@ class EvalScore:
         passed: Overall pass/fail verdict.
         metrics: Numeric metrics keyed by name (e.g. {"match": 1.0}).
         detail: Per-check human-readable detail (e.g. {"reason": "..."}).
+        session_id: The session id of the agent run that produced this score,
+            when known (additive; `None` for records predating this field).
     """
 
     case_id: str
     passed: bool
     metrics: dict[str, float]
     detail: dict[str, Any]
+    session_id: str | None = None
