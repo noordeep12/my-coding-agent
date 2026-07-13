@@ -25,7 +25,6 @@ from typing import Any
 import click
 
 from ..utils.exceptions import MyCodingAgentError
-from .evals_server import eval_dashboard_html, handle_eval_api_route
 from .reader import list_sessions, load_session
 
 logger = logging.getLogger(__name__)
@@ -1205,20 +1204,12 @@ class _TraceHandler(BaseHTTPRequestHandler):
             ``/``                        → embedded HTML viewer
             ``/api/sessions``            → session index JSON
             ``/api/sessions/{session_id}``→ full trace JSON
-            ``/evals``                   → embedded eval dashboard UI
-            ``/api/evals/...``           → eval dashboard JSON (see evals_server.py)
         """
         path = self.path.split("?")[0]
-        eval_html = eval_dashboard_html(path)
         if path == "/":
             self._send_html()
-        elif eval_html is not None:
-            self._send_html(eval_html)
         elif path == "/api/sessions":
             self._send_json(list_sessions(self.base_dir))
-        elif path.startswith("/api/evals/"):
-            if not handle_eval_api_route(self, path, self.base_dir.resolve() / "evals"):
-                self._send_json({"error": "not found"}, status=404)
         else:
             match = re.fullmatch(r"/api/sessions/([^/]+)", path)
             if match:

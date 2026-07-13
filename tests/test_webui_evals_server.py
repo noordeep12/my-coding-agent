@@ -1,28 +1,69 @@
-"""Tests for viewer/evals_server.py routes — served offline, read-only."""
+"""Tests for webui/evals/server.py routes — served offline, read-only."""
 
 from __future__ import annotations
 
 import json
 import threading
 from http.client import HTTPConnection
-from http.server import HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
 from my_coding_agent.evals.results import build_run_result, write_run_result
 from my_coding_agent.evals.schema import EvalScore
-from my_coding_agent.viewer.server import _TraceHandler
+from my_coding_agent.webui.evals.server import (
+    eval_dashboard_html,
+    handle_eval_api_route,
+)
+
+
+class _EvalOnlyHandler(BaseHTTPRequestHandler):
+    """Minimal handler exercising only the moved eval dashboard routes."""
+
+    base_dir = None  # set as class attribute before serve_forever()
+
+    def do_GET(self) -> None:
+        path = self.path.split("?")[0]
+        eval_html = eval_dashboard_html(path)
+        if eval_html is not None:
+            self._send_html(eval_html)
+        elif path.startswith("/api/evals/"):
+            if not handle_eval_api_route(self, path, self.base_dir.resolve() / "evals"):
+                self._send_json({"error": "not found"}, status=404)
+        elif path == "/":
+            self._send_html("<!DOCTYPE html><title>Trace Explorer</title>")
+        else:
+            self._send_json({"error": "not found"}, status=404)
+
+    def _send_html(self, html: str) -> None:
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json(self, data, status: int = 200) -> None:
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):  # noqa: A002 - stdlib signature
+        pass
 
 
 @pytest.fixture()
 def server(tmp_path):
     """Spin up a real HTTP server on a random port, rooted at tmp_path."""
-    _TraceHandler.base_dir = tmp_path
+    _EvalOnlyHandler.base_dir = tmp_path
     httpd = None
     port = None
     for p in range(19900, 20000):
         try:
-            httpd = HTTPServer(("127.0.0.1", p), _TraceHandler)
+            httpd = HTTPServer(("127.0.0.1", p), _EvalOnlyHandler)
             port = p
             break
         except OSError:

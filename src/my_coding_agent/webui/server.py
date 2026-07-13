@@ -25,12 +25,12 @@ from typing import Any
 
 import click
 
-from ..viewer.evals_server import eval_dashboard_html, handle_eval_api_route
 from ..viewer.reader import list_sessions, load_session
 from ..viewer.server import _check_vendor_assets, _full_html
 from ..viewer.sumcheck import check_tree
 from .admin import admin_html, masked_llm_settings, save_llm_settings
-from .evaluations_api import handle_evaluation_route
+from .evals import server as evals_server
+from .evals.api import handle_evaluation_route
 from .store import Store, default_db_path
 
 logger = logging.getLogger(__name__)
@@ -223,7 +223,7 @@ def _serve_traces(handler: _WebUIHandler) -> None:
 
 
 def _serve_evals(handler: _WebUIHandler) -> None:
-    handler._send_html(eval_dashboard_html("/evals") or "")
+    handler._send_html(evals_server.eval_dashboard_html("/evals") or "")
 
 
 def _serve_admin(handler: _WebUIHandler) -> None:
@@ -274,7 +274,9 @@ class _WebUIHandler(BaseHTTPRequestHandler):
         if path.startswith(_EVAL_MGMT_PREFIXES):
             return self._handle_evaluation_api("GET")
         if path.startswith("/api/evals/"):
-            return handle_eval_api_route(self, path, self.base_dir.resolve() / "evals")
+            return evals_server.handle_eval_api_route(
+                self, path, self.base_dir.resolve() / "evals"
+            )
         match = re.fullmatch(r"/api/sessions/([^/]+)", path)
         if match:
             self._handle_session(match.group(1))

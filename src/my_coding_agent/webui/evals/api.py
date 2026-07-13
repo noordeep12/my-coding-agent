@@ -15,9 +15,9 @@ import threading
 from pathlib import Path
 from typing import Any, Protocol
 
-from ..evals import evaluation as ev
-from . import admin
-from .store import Store
+from ...evals import evaluation as ev
+from .. import admin
+from ..store import Store
 
 
 class _Handler(Protocol):

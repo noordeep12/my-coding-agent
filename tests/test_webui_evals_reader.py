@@ -1,4 +1,4 @@
-"""Tests for viewer/evals_reader.py — read-only eval-result view models."""
+"""Tests for webui/evals/reader.py — read-only eval-result view models."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 
 from my_coding_agent.evals.results import build_run_result, write_run_result
 from my_coding_agent.evals.schema import EvalScore
-from my_coding_agent.viewer.evals_reader import list_runs, load_run
+from my_coding_agent.webui.evals.reader import list_runs, load_run
 
 
 def _scores():
