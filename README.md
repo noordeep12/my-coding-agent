@@ -269,7 +269,7 @@ my-coding-agent-eval --cases path/to/case/dir
 my-coding-agent-eval               # reads .my_coding_agent/evals/cases/; exits 1 while it's empty
 ```
 
-Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores it with the case's scorer (`evals.scoring.register_scorer` is the extension point for scorers). Three ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output); `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number; and `judge`, the rubric-based LLM judge — it grades the output against a declared disk-loaded rubric (criteria, score scale, per-criterion anchors), never a free-form "is this good?" prompt. A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`. The full verdict — per-check pass/fail, score, and rationale/detail — prints to the terminal at run end (not just the summary pass-rate line), and each score also carries the session id of the agent run that produced it, so it's traceable back to the run's evidence rather than only its aggregate result.
+Each case runs the agent in a fresh, isolated temp workspace (so cases can't contaminate each other or the real repo), collects its trace, and scores it with the case's scorer (`evals.scoring.register_scorer` is the extension point for scorers). Three ship today: `exact_match`, the baseline deterministic scorer (`equals`/`contains` check on the final output); `trajectory`, which scores the run's *path* rather than its answer — tool-selection correctness, argument validity, error handling, and efficiency (steps/tokens/wall-clock, redundancy), each reported as its own dimension so a weak run is locatable, not just a single number; and `judge`, the rubric-based LLM judge — it grades the output against a declared rubric (criteria, score scale, per-criterion anchors), declared either inline in the case/config or loaded from a rubric JSON file by path, never a free-form "is this good?" prompt. A versioned, self-describing result record — run identity (agent/model version, dataset ref, timestamp), per-case scores, and aggregate metrics — is written under `.my_coding_agent/evals/<run_id>/result.json`. The full verdict — per-check pass/fail, score, and rationale/detail — prints to the terminal at run end (not just the summary pass-rate line), and each score also carries the session id of the agent run that produced it, so it's traceable back to the run's evidence rather than only its aggregate result.
 
 Every score names the session id of the agent run that produced it (`EvalScore.session_id`, additive — older records without it load with `None`). For a run whose session directory survives past the run (the real-cwd paths: `run_evaluation` and config-driven runs; the case runner's temp-workspace sessions are torn down before the result is written and are exempt by design), a `verdict.json` — `{run_id, case_id, passed, metrics, detail, result_path}` — is written into `.my_coding_agent/<session_id>/` alongside the trace, so a verdict is reachable starting from only a session id without scanning every result record. It's a plain sibling file; `events.jsonl`/`session_data.json` are never touched, and the write is fault-tolerant (a failure logs a warning and never fails the run).
 
@@ -326,7 +326,37 @@ evaluation:
 
 `llm.api_key` (a raw secret value) is rejected at validation time — the file must stay safe to commit, so only `api_key_env` (an environment variable *name*) is accepted. `evaluation.checks` must declare at least one check.
 
-A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml):
+A `judge` check's rubric can be declared inline, so the config alone states what "pass" means and a rubric change shows up in the config's own diff:
+
+```yaml
+evaluation:
+  checks:
+    - name: judged-quality
+      evaluator: judge
+      expected:
+        rubric:
+          name: helpfulness
+          scale: { min: 1, max: 5 }
+          criteria:
+            - name: correctness
+              description: Is the answer factually correct?
+              anchors:
+                "1": "completely wrong"
+                "5": "fully correct"
+        pass_threshold: 4
+```
+
+Or reference a rubric JSON file by path — the same shape as the inline mapping above — when the rubric is reused across multiple configs:
+
+```yaml
+      expected:
+        rubric: .my_coding_agent/evals/rubrics/helpfulness_rubric.json
+        pass_threshold: 4
+```
+
+Both forms validate through the same rules and produce the same scoring behavior; a mapping value is the only trigger for the inline form.
+
+A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml), and [`examples/eval_run_cve_subagents.yaml`](examples/eval_run_cve_subagents.yaml) / [`examples/eval_run_cve_subagents_rubric_path.yaml`](examples/eval_run_cve_subagents_rubric_path.yaml) show the inline and path forms of a `judge` check side by side:
 
 ```bash
 my-coding-agent-eval run --config examples/eval_run_config.yaml
