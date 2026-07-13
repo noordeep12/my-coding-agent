@@ -369,9 +369,9 @@ class ToolExecutor:
                     item.func_name,
                     args,
                 )
-                for item, args in zip(group, prepared_args)
+                for item, args in zip(group, prepared_args, strict=True)
             ]
-        for item, args, future in zip(group, prepared_args, futures):
+        for item, args, future in zip(group, prepared_args, futures, strict=True):
             raw, failure, start_mono, end_mono, started_at, hook_firings = (
                 future.result()
             )

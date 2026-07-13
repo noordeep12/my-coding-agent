@@ -346,7 +346,7 @@ class AgentNode(BaseNode):
         so only the recorded ``fired`` outcome matters here.
         """
         ctx = HookContext(event=event, session_id=self.session_id, step=self.step_num)
-        for spec, result in self.hooks.fire(event, ctx):
+        for spec, _result in self.hooks.fire(event, ctx):
             self.recorder.record_hook(
                 event=spec.event,
                 hook_name=spec.name,
