@@ -95,7 +95,6 @@ src/my_coding_agent/
 │   ├── store.py                 ← SQLite store: generic items CRUD + ui_state key/value (webui.db)
 │   ├── server.py                ← Shell page + iframe-mounted tabs (/traces /evals /admin) + re-exposed APIs
 │   ├── admin.py                 ← Admin tab: persisted LLM connection settings + resolve/mask/build_llm_client (issue #155)
-│   ├── evals_config.py          ← Eval config CRUD API + run-to-eval bridge (/api/evals/config/..., issue #154)
 │   └── evaluations_api.py       ← Evaluation/RunConfig/EvalConfig CRUD + async run API (issue #163)
 │
 ├── evals/                       ← Repeatable case runner and result store — leaf package (issue #139)
@@ -393,39 +392,6 @@ web UI's Evaluations tab moved to its own Evaluation records — so users
 create their own datasets from case ids that reference files under their
 cases directory.
 
-## Eval configuration and run-to-eval bridge (issue #154)
-
-`webui/evals_config.py` adds a CRUD front over the existing eval model to the
-Evals tab (extending #152's read-only dashboard, not replacing it) so
-datasets, cases, expectations, and scorer choice can be configured from the
-interface instead of by editing files or writing Python. It is a thin
-JSON-in/JSON-out dispatcher, wired into `webui/server.py`'s `do_GET`/
-`do_POST`/`do_DELETE` under `/api/evals/config/...`, that calls straight
-into `evals.datasets` (`create_dataset`/`add_case`/`retire_case`,
-version-preserving), `evals.cases` (`save_case`/`delete_case`, new thin
-writers alongside the existing `load_case_set` reader), and
-`evals.scoring` (`list_scorer_refs` for the offered scorer set,
-`validate_expected` — a new advisory check of a case's `expected` payload
-against the selected scorer's documented required keys, run before save;
-it never changes what a scorer does at run time, only what the UI accepts).
-A `POST /run` route triggers a real run of a chosen dataset through the
-same `evals.datasets.run_dataset` the CLI uses, so its result shows up in
-the pre-existing read-only Run History unchanged. UI-only draft/selection
-state (e.g. last-selected dataset) persists through #152's store via its
-generic `items` table — no schema migration needed for this change.
-
-The run-to-eval bridge (`POST /send-run`) reads a completed session's
-`events.jsonl` directly for its opening user message and final assistant
-message (mirroring the shape `evals.runner` already reads for a live case
-run), then calls `evals.datasets.add_failure_case` to turn that run into a
-new regression case and add it to a chosen dataset — the same function the
-CLI's own failure-capture path already uses — so sending a run to
-evaluation never requires re-typing its task or expected outcome by hand.
-The Evals tab's embedded Preact app (`viewer/evals_server.py`) gains a
-"Configure" nav entry (Datasets / Cases / Send run to eval) built from the
-same vendored Preact/htm bundle the rest of the dashboard uses, no new
-dependency.
-
 ## Evaluation entity: RunConfig + EvalConfig (issue #162)
 
 An evaluation used to live only in the operator's head: nothing bound *how
@@ -486,11 +452,9 @@ path. Running in the real cwd fixes both — the session lands under the
 project's actual `.my_coding_agent/` (visible to Traces) and relative
 paths resolve where the operator expects.
 
-`webui/evaluations_api.py` is a thin JSON-in/JSON-out dispatcher (mirroring
-`evals_config.py`'s pattern) registered in `webui/server.py` under
-`/api/evals/{evaluations,run-configs,eval-configs}` — a sibling surface to
-`/api/evals/config/...`, not a replacement of it; the two dispatchers share
-no route prefix so they can't collide. `POST /evaluations/{id}/run` starts
+`webui/evaluations_api.py` is a thin JSON-in/JSON-out dispatcher registered
+in `webui/server.py` under `/api/evals/{evaluations,run-configs,eval-configs}`.
+`POST /evaluations/{id}/run` starts
 `run_evaluation` on a daemon `threading.Thread` and returns `202 {run_id}`
 immediately, before the agent turn has run — a genuinely async accept, not
 a synchronous call dressed up with a 202 status (the original

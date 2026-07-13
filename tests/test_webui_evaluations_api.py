@@ -254,15 +254,6 @@ def test_delete_evaluation_leaves_configs_intact(server):
     assert status == 200
 
 
-def test_eval_config_routes_do_not_touch_existing_config_api(server):
-    port, _ = server
-    status, body = _req(
-        port, "POST", "/api/evals/config/datasets", {"id": "ds1", "case_ids": []}
-    )
-    assert status == 200
-    assert body == {"id": "ds1", "version": 1, "case_ids": []}
-
-
 # ── RunConfig error and unhandled-method paths ───────────────────────────────
 
 
