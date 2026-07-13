@@ -145,7 +145,9 @@ def test_verdict_artifact_write_failure_does_not_fail_the_run(tmp_path, monkeypa
     (session_dir / "verdict.json").mkdir()
 
     scores = [
-        EvalScore(case_id="c1", passed=True, metrics={}, detail={}, session_id=session_id)
+        EvalScore(
+            case_id="c1", passed=True, metrics={}, detail={}, session_id=session_id
+        )
     ]
     result = build_run_result(
         dataset="example", scores=scores, aggregate_metrics={"pass_rate": 1.0}
@@ -165,7 +167,9 @@ def test_trace_files_are_untouched_by_verdict_write(tmp_path, monkeypatch):
     (session_dir / "session_data.json").write_text('{"existing": true}')
 
     scores = [
-        EvalScore(case_id="c1", passed=True, metrics={}, detail={}, session_id=session_id)
+        EvalScore(
+            case_id="c1", passed=True, metrics={}, detail={}, session_id=session_id
+        )
     ]
     result = build_run_result(
         dataset="example", scores=scores, aggregate_metrics={"pass_rate": 1.0}
