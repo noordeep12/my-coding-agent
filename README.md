@@ -244,7 +244,7 @@ The **Traces** tab visualises sessions with an interactive pipeline DAG. The UI 
 - A tool call refused by the dangerous-command gate carries its own distinct **refused** tag (tree row + detail header, alongside — never replacing — loop/anomaly) and a **🛑 refused** count in the stats bar; its detail panel spells out the reason, the matched rule, clickable security-standard reference links, and the safer alternative
 - The stats bar shows the run's **protection posture** — a distinct **🔒 sandboxed** or **🛡 screened only** tag — so you can tell at a glance whether OS-level enforcement was in force or only the textual gate; traces recorded before posture capture existed show no tag and render unchanged
 - A **Breakdown** toggle in the stats bar (shown whenever the session has token-usage data) reveals per-call-kind and per-agent token totals across the whole delegated tree
-- When a session was produced by an eval run (a `verdict.json` sibling exists next to its trace), the stats bar shows an at-a-glance **✓ pass** / **✗ fail** tag and a **Verdict** toggle revealing the run id, case id, metrics, and detail/rationale; sessions with no verdict render with no verdict UI at all
+- When a session was produced by an eval run (a `verdict.json` sibling exists next to its trace), the stats bar shows a single **Eval: pass** / **Eval: fail** toggle button (same size as the **Breakdown** button) that reveals the run id, case id, metrics, and detail/rationale; sessions with no verdict render with no verdict UI at all
 - When a run used [skills](#skills), `use_skill` tool calls carry a **🧠 skill** badge and the stats bar shows an **offered / loaded** count; traces recorded before skills existed load and render unchanged
 
 ## Evals
