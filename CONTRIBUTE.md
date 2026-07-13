@@ -1026,3 +1026,76 @@ this convention. Enable it locally:
 ```bash
 git config commit.template .gitmessage
 ```
+
+---
+
+### 47. Branch & Pull Request Standards
+
+- Every change reaches `main` through a pull request — **never a direct push**.
+- The PR title becomes the squash-merge commit subject, so it follows the §46
+  subject rules: `type(scope): description`, ≤ 72 characters. Enforced by
+  `.github/workflows/pr-title.yml`.
+- **One concern per PR.** Guideline: ~200–400 changed lines; beyond that, split.
+  Small PRs are reviewed faster, revert cleanly, and hide fewer bugs (Google
+  eng-practices, "Small CLs") — doubly important when the author is an
+  unattended agent.
+- Delete the branch after merge; a merged branch left behind is repo debt (§50).
+
+---
+
+### 48. Enforcement Parity
+
+**Every mechanically checkable rule in this document MUST be enforced by an
+enabled tool rule.** A standard that lives only in prose decays silently; a
+check that lives only in tooling (with no documented rule) cannot be audited.
+Both directions are gaps.
+
+Required mapping between documented rules and enforcement:
+
+| Documented rule | Enforcing check |
+|-----------------|-----------------|
+| §27 anti-patterns (mutable defaults, bare except, boolean traps) | ruff `B` (bugbear) |
+| §27 Pythonic idioms, modern syntax | ruff `UP`, `SIM`, `RUF` |
+| §30 test patterns | ruff `PT` |
+| §32/§42 security patterns | ruff `S` + bandit |
+| §39 docstring standards (Google style, every public symbol) | ruff `D` with `convention = "google"` |
+| §50 dead code | ruff `ERA`, `ARG` |
+| §46/§47 commit and PR subjects | commit-msg hooks + `pr-title.yml` |
+
+- mypy `strict = true` is the target configuration. Each per-module override is
+  tracked debt and requires an open issue; the override list only shrinks.
+- Enforcement thresholds (`--cov-fail-under`, enabled ruff families, mypy
+  overrides) are **ratchets**: they may only tighten. A loosened threshold is a
+  standards violation, not a configuration choice.
+
+---
+
+### 49. Versioning & Release
+
+- Versions follow **Semantic Versioning** (semver.org): breaking / feature /
+  fix maps to major / minor / patch.
+- `CHANGELOG.md` follows the **Keep a Changelog** format with an `Unreleased`
+  section. Every user-facing change updates it **in the same PR**.
+- The git tag `vX.Y.Z` must equal `[project] version` in `pyproject.toml` at
+  the tagged commit. A mismatch between tag, version, and changelog is a
+  release-process violation.
+- Every release is an annotated tag plus a GitHub Release whose notes come from
+  the changelog entry. No untagged version bumps; no unreleased tags.
+
+---
+
+### 50. Dead Code & Repo Hygiene
+
+- **No exported-but-unreferenced public surface.** A symbol re-exported in
+  `__init__.py` or kept on a module's public API with no caller and no external
+  contract must be removed, not retained "just in case" (see §8: build
+  abstractions when needed, not speculatively).
+- Dead code is **removed**, never commented out and never excluded from
+  coverage to hide it (extends §43).
+- `[project] dependencies` contains only packages the code imports; unused
+  dependencies are removed as soon as detected.
+- Workflow artifacts (`PROBLEM.*.md`, `gap.md`, generated reports) live in
+  dedicated directories, not the repository root — the root listing is context
+  every agent session pays for.
+- Merged branches are deleted (§47); stale local/remote branches, caches, and
+  build artifacts are pruned rather than accumulated.
