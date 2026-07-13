@@ -1354,7 +1354,7 @@ def run_server(
         "(and its delegated subtree) and exit — no server is started."
     ),
 )
-def _cli(port: int, sessions_dir: str, check_session_id: str | None) -> None:
+def main(port: int, sessions_dir: str, check_session_id: str | None) -> None:
     """Launch the Trace Explorer on localhost.
 
     Opens http://localhost:PORT in your browser. Press Ctrl-C to stop.
