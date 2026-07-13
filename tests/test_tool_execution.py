@@ -62,7 +62,7 @@ def test_validate_tool_result_accepts_minimal_failure():
     ],
 )
 def test_validate_tool_result_rejects_malformed(bad):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="tool result"):
         validate_tool_result(bad)
 
 
@@ -214,7 +214,7 @@ def test_parse_tool_call_valid():
 
 
 @pytest.mark.parametrize(
-    "tc,needle",
+    ("tc", "needle"),
     [
         ({"id": "c1", "function": {"name": "bash"}}, "missing 'type'"),
         (
@@ -234,7 +234,8 @@ def test_parse_tool_call_valid():
 )
 def test_parse_tool_call_errors(tc, needle):
     _id, _name, _args, error = args.parse_tool_call(tc)
-    assert error is not None and needle in error
+    assert error is not None
+    assert needle in error
 
 
 # ── characterization: argument preparation ────────────────────────────────────
@@ -425,7 +426,8 @@ def test_build_stream_preview_bounds_output_and_reports_true_totals():
     # Guidance is inline in the value, naming the path + skim tools.
     assert "[Preview:" in output_text
     assert "/s/artifacts/c1.stdout.txt" in output_text
-    assert "grep" in output_text and "sed" in output_text
+    assert "grep" in output_text
+    assert "sed" in output_text
     assert "guidance" not in preview
 
 
@@ -436,7 +438,8 @@ def test_skim_guidance_multiline_states_shape_and_names_both_retrieval_modes():
     assert "read_tool_artifact(tool_call_id=..., query=" in output_text
     assert "read_tool_artifact(tool_call_id=..., start=" in output_text
     assert "cat " not in output_text
-    assert " head " not in output_text and "tail " not in output_text
+    assert " head " not in output_text
+    assert "tail " not in output_text
 
 
 def test_skim_guidance_single_line_warns_off_line_tools():
@@ -527,7 +530,8 @@ def test_skim_guidance_non_json_multiline_unchanged_behavior():
     assert "read_tool_artifact(tool_call_id=..., query=" in output_text
     assert "read_tool_artifact(tool_call_id=..., start=" in output_text
     assert "cat " not in output_text
-    assert " head " not in output_text and "tail " not in output_text
+    assert " head " not in output_text
+    assert "tail " not in output_text
 
 
 def test_executor_offloads_stdout_stream_and_omits_full_output(
@@ -541,7 +545,7 @@ def test_executor_offloads_stdout_stream_and_omits_full_output(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
         ),
@@ -575,7 +579,7 @@ def test_executor_offloads_large_stderr_into_error(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 1, "ok": False, "stdout": "", "stderr": err},
         ),
@@ -594,7 +598,8 @@ def test_executor_offloads_large_stderr_into_error(
     stdout_file = (
         tmp_path / ".my_coding_agent" / "sess123" / "artifacts" / "call1.stdout.txt"
     )
-    assert stderr_file.exists() and stderr_file.read_text() == err
+    assert stderr_file.exists()
+    assert stderr_file.read_text() == err
     assert not stdout_file.exists()  # empty stdout writes no file
     assert env["ok"] is False
     assert env["output"] == "(tool returned empty output)"  # stdout was empty
@@ -616,7 +621,7 @@ def test_offloaded_artifact_reports_true_verdict_to_recorder(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 1, "ok": False, "stdout": "", "stderr": err},
         ),
@@ -652,7 +657,7 @@ def test_executor_offloads_both_streams_separately(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 2, "ok": False, "stdout": out, "stderr": err},
         ),
@@ -668,8 +673,10 @@ def test_executor_offloads_both_streams_separately(
     base = tmp_path / ".my_coding_agent" / "sess123" / "artifacts"
     assert (base / "call1.stdout.txt").read_text() == out
     assert (base / "call1.stderr.txt").read_text() == err
-    assert "OUTTAIL" not in env["output"] and "[Preview:" in env["output"]
-    assert "ERRTAIL" not in env["error"] and "[Preview:" in env["error"]
+    assert "OUTTAIL" not in env["output"]
+    assert "[Preview:" in env["output"]
+    assert "ERRTAIL" not in env["error"]
+    assert "[Preview:" in env["error"]
     assert set(env["metadata"]["preview"]) == {"stdout", "stderr"}
     assert env["metadata"]["exit_code"] == 2
 
@@ -762,7 +769,7 @@ def test_executor_inlines_small_stderr_when_stdout_offloaded(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 0, "ok": True, "stdout": body, "stderr": "just a warning"},
         ),
@@ -795,7 +802,7 @@ def test_write_artifact_file_returns_none_on_oserror(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
         ),
@@ -895,7 +902,7 @@ def test_dedup_byte_identical_readback_creates_no_new_artifact(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (None, _bash_offload(stdout=body)),
+        return_value=(None, _bash_offload(stdout=body)),
     )
     token = current_session_id.set("sess123")
     try:
@@ -933,7 +940,7 @@ def test_dedup_rstripped_variant_is_contained_match(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (None, _bash_offload(stdout=stored)),
+        return_value=(None, _bash_offload(stdout=stored)),
     )
     token = current_session_id.set("sess123")
     try:
@@ -942,7 +949,7 @@ def test_dedup_rstripped_variant_is_contained_match(
         mocker.patch.object(
             ToolsRegistry,
             "bash",
-            lambda self, command, timeout=60: (
+            return_value=(
                 None,
                 _bash_offload(stdout=inner),  # rstripped read-back
             ),
@@ -971,7 +978,7 @@ def test_dedup_contained_slice_readback_reports_offset(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (None, _bash_offload(stdout=body)),
+        return_value=(None, _bash_offload(stdout=body)),
     )
     token = current_session_id.set("sess123")
     try:
@@ -981,7 +988,7 @@ def test_dedup_contained_slice_readback_reports_offset(
         mocker.patch.object(
             ToolsRegistry,
             "bash",
-            lambda self, command, timeout=60: (None, _bash_offload(stdout=slice_)),
+            return_value=(None, _bash_offload(stdout=slice_)),
         )
         env2, _s2, _r2 = _invoke(
             bare_executor, "call2", "bash", {"command": "head"}, ToolsRegistry()
@@ -1007,7 +1014,7 @@ def test_dedup_novel_large_output_offloads_unaffected(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (None, _bash_offload(stdout=first)),
+        return_value=(None, _bash_offload(stdout=first)),
     )
     token = current_session_id.set("sess123")
     try:
@@ -1016,7 +1023,7 @@ def test_dedup_novel_large_output_offloads_unaffected(
         mocker.patch.object(
             ToolsRegistry,
             "bash",
-            lambda self, command, timeout=60: (None, _bash_offload(stdout=second)),
+            return_value=(None, _bash_offload(stdout=second)),
         )
         env2, _s2, _r2 = _invoke(
             bare_executor, "call2", "bash", {"command": "two"}, ToolsRegistry()
@@ -1038,7 +1045,7 @@ def test_dedup_duplicate_stdout_with_novel_stderr_handled_independently(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             _bash_offload(stdout=stdout_body),
         ),
@@ -1051,7 +1058,7 @@ def test_dedup_duplicate_stdout_with_novel_stderr_handled_independently(
         mocker.patch.object(
             ToolsRegistry,
             "bash",
-            lambda self, command, timeout=60: (
+            return_value=(
                 None,
                 _bash_offload(stdout=stdout_body, stderr=stderr_body, exit_code=1),
             ),
@@ -1079,7 +1086,7 @@ def test_dedup_envelope_validates_and_absent_on_non_duplicate(
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (None, _bash_offload(stdout=body)),
+        return_value=(None, _bash_offload(stdout=body)),
     )
     token = current_session_id.set("sess123")
     try:

@@ -24,7 +24,7 @@ from my_coding_agent.engine.exfil.schema import (
 
 
 @pytest.mark.parametrize(
-    "path,expected_category",
+    ("path", "expected_category"),
     [
         (".env", CATEGORY_ENV_FILE),
         ("/repo/.env.local", CATEGORY_ENV_FILE),

@@ -39,7 +39,8 @@ def test_parse_frontmatter_ignores_unknown_keys():
     fm, _ = _parse_frontmatter(
         "---\nname: a\ndescription: d\nversion: 3\nauthor: x\n---\nb"
     )
-    assert fm["name"] == "a" and fm["description"] == "d"
+    assert fm["name"] == "a"
+    assert fm["description"] == "d"
     assert fm["version"] == "3"  # kept but harmless; builder ignores extras
 
 
@@ -123,7 +124,9 @@ def test_directory_without_skill_md_ignored(tmp_path):
 
 def test_render_empty_index():
     idx = render_skill_index({})
-    assert idx.text == "" and idx.names == [] and idx.tier == TIER_NONE
+    assert idx.text == ""
+    assert idx.names == []
+    assert idx.tier == TIER_NONE
 
 
 def test_render_full_tier_lists_all_skills():
@@ -181,7 +184,8 @@ def test_render_always_within_total_cap():
 
 def test_build_opening_block_empty_when_no_skills():
     block, idx = build_opening_block({})
-    assert block == "" and idx.tier == TIER_NONE
+    assert block == ""
+    assert idx.tier == TIER_NONE
 
 
 def test_build_opening_block_injects_loaded_bodies():

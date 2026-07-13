@@ -225,4 +225,5 @@ def test_recovery_events_land_in_events_jsonl(bare_llm, mocker, tmp_path):
     assert "llm_recovery" in types
     wait = next(e for e in events if e["type"] == "llm_wait")
     assert wait["classification"] == CLASSIFICATION_TRANSPORT
-    assert "attempt" in wait and "delay_s" in wait
+    assert "attempt" in wait
+    assert "delay_s" in wait

@@ -65,7 +65,8 @@ class TestVendorAssets:
         assert "window.markdownit" not in src  # instantiated once, at module scope
         assert "window.DOMPurify.sanitize" in src
         assert "fetch(" not in src
-        assert "http://" not in src and "https://" not in src
+        assert "http://" not in src
+        assert "https://" not in src
 
 
 # ── Render pipeline: parse (html:false) → sanitize → single insertion path ──

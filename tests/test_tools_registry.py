@@ -98,7 +98,9 @@ def test_write_file_absolute_outside_base_raises(tmp_path):
 def test_read_tool_artifact_requires_query():
     reg = ToolsRegistry(artifacts={"call_1": {"k": "v"}})
     out = reg.read_tool_artifact("call_1", "")
-    assert "Error" in out and "query" in out and "read_tool_artifact(" in out
+    assert "Error" in out
+    assert "query" in out
+    assert "read_tool_artifact(" in out
 
 
 def test_read_tool_artifact_found_dict_no_llm_falls_back_to_head_excerpt():
@@ -209,7 +211,8 @@ def test_read_tool_artifact_range_length_is_capped_at_budget():
 def test_read_tool_artifact_range_out_of_range_start_errors_with_total_size():
     reg = ToolsRegistry(artifacts={"call_1": {"stdout": "0123456789", "stderr": ""}})
     out = reg.read_tool_artifact("call_1", start=10)
-    assert "Error" in out and "10 bytes" in out
+    assert "Error" in out
+    assert "10 bytes" in out
 
 
 def test_read_tool_artifact_range_missing_artifact_errors():

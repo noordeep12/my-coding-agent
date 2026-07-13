@@ -119,7 +119,8 @@ class TestRoutes:
         status, body = _get(port, "/")
         html = body.decode()
         assert "function RetirementModal" in html
-        assert "retire-before" in html and "retire-after" in html
+        assert "retire-before" in html
+        assert "retire-after" in html
         ctx_card_src = html[html.index("function CtxCard") :]
         assert "retirements.length?()=>setShowRetired(true):null" in ctx_card_src
         assert "ctx-delta-add" in ctx_card_src

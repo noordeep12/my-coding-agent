@@ -1200,7 +1200,8 @@ class TestReportNode:
         reports = [n for n in session.nodes.values() if n.type == "report"]
         assert len(reports) == 1
         node = reports[0]
-        assert node.type == "report" and node.type != "handoff"
+        assert node.type == "report"
+        assert node.type != "handoff"
         assert node.label == "Subagent Report"
         assert node.outputs["content"] == "the final report"
         assert node.attributes["source"] == "verbatim"

@@ -49,7 +49,8 @@ def test_use_skill_unknown_name_lists_available():
     reg = _reg({"alpha": Skill("alpha", "d"), "beta": Skill("beta", "d")})
     out = reg.use_skill("gamma")
     assert out.startswith("Error:")
-    assert "alpha" in out and "beta" in out
+    assert "alpha" in out
+    assert "beta" in out
 
 
 def test_use_skill_unknown_with_no_skills():

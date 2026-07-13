@@ -267,7 +267,8 @@ def test_parallel_path_passes_true_per_call_timing(bare_executor, monkeypatch):
         assert timing is not None
         start_mono, end_mono, started_at = timing
         assert end_mono > start_mono  # real elapsed duration
-        assert isinstance(started_at, str) and started_at
+        assert isinstance(started_at, str)
+        assert started_at
 
 
 def test_single_call_uses_sequential_recorder_path(bare_executor, monkeypatch):

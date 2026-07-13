@@ -306,7 +306,7 @@ def test_invoke_tool_artifact_tuple_is_previewed(bare_executor, mocker):
     mocker.patch.object(
         ToolsRegistry,
         "bash",
-        lambda self, command, timeout=60: (
+        return_value=(
             None,
             {"exit_code": 0, "ok": True, "stdout": body, "stderr": ""},
         ),
