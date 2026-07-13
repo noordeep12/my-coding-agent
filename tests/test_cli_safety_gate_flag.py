@@ -12,8 +12,8 @@ import os
 import pytest
 from click.testing import CliRunner
 
-from my_coding_agent.engine.tool_execution import policy
 from my_coding_agent import cli
+from my_coding_agent.engine.tool_execution import policy
 
 
 @pytest.fixture
@@ -33,9 +33,7 @@ def test_no_safety_gate_flag_sets_env_var_and_warns(runner, mocker):
     fake_agent.failure_error = None
     mocker.patch.object(cli, "_build_fresh_agent", return_value=fake_agent)
     with runner.isolated_filesystem():
-        result = runner.invoke(
-            cli.main, ["--prompt", "do a thing", "--no-safety-gate"]
-        )
+        result = runner.invoke(cli.main, ["--prompt", "do a thing", "--no-safety-gate"])
         assert result.exit_code == 0
         assert os.environ.get(policy.DISABLE_ENV_VAR) == "1"
         assert "refusal gate is off" in result.output.lower()

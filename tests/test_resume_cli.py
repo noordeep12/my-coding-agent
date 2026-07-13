@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from my_coding_agent import cli
 from my_coding_agent.engine.checkpoint import Checkpoint, save_checkpoint
 from my_coding_agent.engine.llm.errors import LLMTransportError
-from my_coding_agent import cli
 
 
 @pytest.fixture

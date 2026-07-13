@@ -68,8 +68,6 @@ def test_no_exfil_guard_flag_sets_env_var(runner, mocker):
     fake_agent.failure_error = None
     mocker.patch.object(cli, "_build_fresh_agent", return_value=fake_agent)
     with runner.isolated_filesystem():
-        result = runner.invoke(
-            cli.main, ["--prompt", "do a thing", "--no-exfil-guard"]
-        )
+        result = runner.invoke(cli.main, ["--prompt", "do a thing", "--no-exfil-guard"])
         assert result.exit_code == 0
         assert os.environ.get(exfil.DISABLE_ENV_VAR) == "1"
