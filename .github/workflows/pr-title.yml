@@ -1,0 +1,31 @@
+name: PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: PR title follows commit standard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PR title (commit-subject-format, commit-subject-length)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/pr_title.txt"
+          fail=0
+          if ! python3 .hooks/check_commit_subject_format.py "$RUNNER_TEMP/pr_title.txt"; then
+            echo "::error::Rule violated: commit-subject-format — PR title becomes the squash-merge commit subject and must follow 'type(scope): description' (CONTRIBUTE.md §47). Edit the PR title to re-run this check."
+            fail=1
+          fi
+          if [ "${#PR_TITLE}" -gt 72 ]; then
+            echo "::error::Rule violated: commit-subject-length — PR title is ${#PR_TITLE} chars, max 72 allowed (CONTRIBUTE.md §47). Edit the PR title to re-run this check."
+            fail=1
+          fi
+          exit "$fail"
