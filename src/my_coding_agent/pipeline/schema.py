@@ -12,6 +12,23 @@ CLEAN_FINISH_REASONS = frozenset({"stop", "exit", "quit"})
 
 
 @dataclass
+class Transition:
+    """A declared conditional transition from one node to another (D1/D2).
+
+    ``source``/``target`` name nodes in the same pipeline's step list.
+    ``max_rounds`` is required for a backward transition (target at or before
+    source in step order) — the only way to form a cycle — and bounds how many
+    times that specific transition may be taken before the run stops with
+    ``loop_bound:<source>-><target>`` (design D3/D4). ``None`` for a forward
+    transition, which cannot cycle and needs no ceiling.
+    """
+
+    source: str
+    target: str
+    max_rounds: int | None = None
+
+
+@dataclass
 class ContextHandoff:
     """Capture state transferred when a run hands off to a fresh context.
 
