@@ -427,6 +427,7 @@ const TYPE_META = {
   summarizer:     { name:'Context Summarizer',dot:'#d9a800' },
   finalize_step:  { name:'Finalize Step',     dot:'#1aa3c4' },
   anomaly:        { name:'Anomaly Detect',    dot:'#d70015' },
+  transition:     { name:'Transition',        dot:'#ff9f0a' },
   session_end:    { name:'Session End',       dot:'#8e8e93' },
 };
 const meta = t => TYPE_META[t] || { name:t, dot:'#8e8e93' };
@@ -701,6 +702,7 @@ function nodeBadges(node){
   else if(node.type==='session' && a.model) b.push({t:a.model, c:'name'});
   else if(node.type==='session_end' && a.stop_reason) b.push({t:'stop: '+a.stop_reason, c:'stop'});
   else if(node.type==='anomaly' && a.tool_name) b.push({t:a.tool_name, c:'name'});
+  else if(node.type==='transition' && a.outcome) b.push({t:a.outcome==='bound_exhausted'?'bound exhausted':'round '+a.round, c:a.outcome==='bound_exhausted'?'err':'name'});
   // 2. status — colored success/error
   if(r && r.ok===true) b.push({t:'✓ success', c:'ok'});
   else if(r && r.ok===false) b.push({t:'✗ error', c:'err'});

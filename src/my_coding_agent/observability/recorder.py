@@ -48,6 +48,7 @@ SUPERSESSION = "supersession"
 LLM_WAIT = "llm_wait"  # one patient-phase wait before a retry
 LLM_RECOVERY = "llm_recovery"  # server answered after a stall
 LLM_FAILURE = "llm_failure"  # unrecoverable — tolerance exceeded / non-retryable
+TRANSITION = "transition"  # a declared node-to-node JUMP taken or bound-exhausted
 
 # Set by ``Agent.run`` for the duration of a run; a child ``Agent`` constructed
 # inside ``delegate`` reads it so the session tree can be reconstructed.
@@ -532,6 +533,38 @@ class Recorder:
                 "tool_name": tool_name,
                 "streak_len": streak_len,
                 "tokens_spent": tokens_spent,
+                "step": step,
+                "started_at": _now(),
+            }
+        )
+
+    def record_transition(
+        self,
+        source: str,
+        target: str,
+        round_num: int,
+        outcome: str,
+        step: int,
+    ) -> None:
+        """Record one declared node-to-node transition (passive: reports the
+        engine's already-made decision — see ``Pipeline._resolve_jump``).
+
+        ``round_num`` is this backward transition's counter value at the time
+        it was taken (0 for a forward transition, which is never bounded).
+        ``outcome`` is ``"jump"`` (execution moved to ``target``) or
+        ``"bound_exhausted"`` (the loop's ``max_rounds`` ceiling was reached
+        and the run stopped instead). One row per taken transition and one for
+        each bound exhaustion (issue #228), so counting rows per
+        ``source``/``target`` pair reconstructs the full round history from
+        ``events.jsonl`` alone.
+        """
+        self._emit(
+            {
+                "type": TRANSITION,
+                "source": source,
+                "target": target,
+                "round": round_num,
+                "outcome": outcome,
                 "step": step,
                 "started_at": _now(),
             }

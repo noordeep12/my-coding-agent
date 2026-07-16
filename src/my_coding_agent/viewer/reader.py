@@ -188,6 +188,7 @@ def load_session(
     _seed_session_inputs(graph.nodes[root_id], graph.nodes, graph.order, session_id)
     _add_anomaly_nodes(events, graph, session_id)
     _flag_anomalies(graph.nodes, graph.order, events)
+    _add_transition_nodes(events, graph, session_id)
 
     if end_ev:
         end_id = f"{session_id}::session_end"
@@ -1196,6 +1197,43 @@ def _add_anomaly_nodes(
                     "tool_name": ev.get("tool_name", ""),
                     "streak_len": ev.get("streak_len", 0),
                     "tokens_spent": ev.get("tokens_spent", 0),
+                    "started_at": ev.get("started_at", ""),
+                },
+            ),
+            step=ev.get("step"),
+        )
+
+
+def _add_transition_nodes(
+    events: list[dict[str, Any]], graph: _Graph, session_id: str
+) -> None:
+    """Add one trace node per recorded ``transition`` row (issue #228).
+
+    Unlike anomaly rows (deduped to the latest per streak), every transition
+    row is its own round and is rendered as its own node, so round counts and
+    outcomes are visible one-for-one with ``events.jsonl``. A trace recorded
+    before this event type existed has none of these rows, so it renders
+    unchanged (design D6).
+    """
+    for i, ev in enumerate(events):
+        if ev.get("type") != "transition":
+            continue
+        node_id = f"{session_id}::transition::{i}"
+        source = ev.get("source", "")
+        target = ev.get("target", "")
+        graph.add(
+            node_id,
+            _make_node(
+                id=node_id,
+                type="transition",
+                label=f"{source} -> {target}",
+                inputs={},
+                outputs={},
+                attributes={
+                    "source": source,
+                    "target": target,
+                    "round": ev.get("round", 0),
+                    "outcome": ev.get("outcome", ""),
                     "started_at": ev.get("started_at", ""),
                 },
             ),
