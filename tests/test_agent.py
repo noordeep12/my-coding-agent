@@ -64,6 +64,7 @@ def _make_agent(silent_logger, **overrides):
     agent.resumed_from = None
     agent._resume_step = 0
     agent._resume_prompt_tokens = 0
+    agent._resume_round_counters = {}
     agent.failure_error = None
     agent.failure_session_id = None
     agent._continuation = None

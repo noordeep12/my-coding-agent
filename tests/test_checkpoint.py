@@ -72,6 +72,37 @@ def test_overwrite_replaces_previous_checkpoint(tmp_path):
     assert not list(sdir.glob("*.tmp"))
 
 
+def test_round_counters_round_trip(tmp_path):
+    """Round counters (issue #228 D5) persist through save/load exactly."""
+    sdir = tmp_path / "s1"
+    cp = _cp()
+    cp.round_counters = {"evaluator->generator": 2}
+    save_checkpoint(sdir, cp)
+    loaded = load_checkpoint(sdir)
+    assert loaded.round_counters == {"evaluator->generator": 2}
+
+
+def test_load_checkpoint_without_round_counters_defaults_empty(tmp_path):
+    """A checkpoint written before this capability existed omits
+    ``round_counters``; loading it must default to ``{}``, not fail (D5).
+    """
+    sdir = tmp_path / "s1"
+    sdir.mkdir(parents=True)
+    (sdir / "checkpoint.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "session_id": "s1",
+                "step_num": 3,
+                "last_prompt_tokens": 10,
+                "messages": [],
+            }
+        )
+    )
+    loaded = load_checkpoint(sdir)
+    assert loaded.round_counters == {}
+
+
 def test_load_missing_raises_checkpoint_error(tmp_path):
     with pytest.raises(CheckpointError, match="No checkpoint"):
         load_checkpoint(tmp_path / "nope")
