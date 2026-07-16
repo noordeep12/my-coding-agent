@@ -71,6 +71,7 @@ class AgentNode(BaseNode):
         resumed_from: str | None = None,
         resume_step: int = 0,
         resume_prompt_tokens: int = 0,
+        resume_round_counters: dict[str, int] | None = None,
     ) -> None:
         """Initialize the agent, open a session log, and build the LLM client.
 
@@ -100,6 +101,7 @@ class AgentNode(BaseNode):
         self.resumed_from = resumed_from
         self._resume_step = resume_step
         self._resume_prompt_tokens = resume_prompt_tokens
+        self._resume_round_counters = resume_round_counters or {}
         # Set to the classified error when a run ends on an unrecoverable LLM
         # failure (D6), so the CLI can print a one-line resume hint. None → OK.
         self.failure_error: LLMCallError | None = None
@@ -267,6 +269,7 @@ class AgentNode(BaseNode):
             needs_handback=self.needs_handback,
             skills=self.skills,
             loaded_skills=self.loaded_skills,
+            round_counters=dict(self._resume_round_counters),
         )
 
         def _spawn_fn() -> list[dict[str, Any]]:
@@ -601,6 +604,7 @@ class AgentNode(BaseNode):
                 step_num=ctx.step_num,
                 last_prompt_tokens=ctx.last_prompt_tokens,
                 messages=ctx.messages,
+                round_counters=dict(ctx.round_counters),
             ),
         )
 
@@ -641,6 +645,7 @@ class AgentNode(BaseNode):
             resumed_from=checkpoint.session_id,
             resume_step=checkpoint.step_num,
             resume_prompt_tokens=checkpoint.last_prompt_tokens,
+            resume_round_counters=dict(checkpoint.round_counters),
         )
 
     def _handle_context_reset(
