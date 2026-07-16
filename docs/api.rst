@@ -63,7 +63,7 @@ Tool execution
 Pipeline
 --------
 
-.. automodule:: my_coding_agent.pipeline.dag
+.. automodule:: my_coding_agent.pipeline.graph
    :members:
    :show-inheritance:
 
