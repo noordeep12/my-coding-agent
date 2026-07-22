@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import yaml
 
@@ -13,6 +15,9 @@ from my_coding_agent.viewer import reader as viewer_reader
 
 
 class _Resp:
+    status_code = 200
+    content = b"{}"
+
     def __init__(self, payload):
         self._payload = payload
 
@@ -20,18 +25,32 @@ class _Resp:
         return self._payload
 
 
+def _stop_payload(content="pong"):
+    return {
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+    }
+
+
 def _stop_resp(content="pong"):
-    return _Resp(
-        {
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": content},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
-        }
-    )
+    return _Resp(_stop_payload(content))
+
+
+def _stop_recovery_pair(content="pong"):
+    """A `(resp, data)` pair for patching `LLM._post_chat_with_recovery`.
+
+    Unlike patching `chat_completion` itself, this leaves `chat_completion`'s
+    own body running for real — so its `kind` tagging and
+    `recorder.record_llm_call` still fire, letting a test assert on the
+    resulting `llm_call` events.
+    """
+    payload = _stop_payload(content)
+    return _Resp(payload), payload
 
 
 def _write_config(tmp_path, data, name="run.yaml"):
@@ -356,3 +375,187 @@ def test_execute_from_config_scores_carry_session_id_and_write_verdict(
     trace = viewer_reader.load_session(session_dir / "events.jsonl")
     assert trace.verdict is not None
     assert trace.verdict["case_id"] == result.scores[0].case_id
+
+
+# -- pipeline section (issue #228) ----------------------------------------
+
+
+def _pipeline_config(**overrides):
+    data = _full_config(
+        run={
+            "system_prompt": "You are helpful.",
+            "task": "say pong",
+            "max_steps": 20,
+        },
+        pipeline={
+            "nodes": [
+                {"name": "generator", "prompt": "Draft it."},
+                {
+                    "name": "evaluator",
+                    "prompt": "Judge it.",
+                    "accept_if_contains": "ACCEPT",
+                },
+            ],
+            "transitions": [
+                {"source": "evaluator", "target": "generator", "max_rounds": 3}
+            ],
+        },
+        evaluation={
+            "checks": [
+                {
+                    "name": "accepted",
+                    "evaluator": "exact_match",
+                    "expected": {"contains": "ACCEPT"},
+                }
+            ]
+        },
+    )
+    data.update(overrides)
+    return data
+
+
+def test_pipeline_section_loads_into_nodes_and_transitions(tmp_path):
+    path = _write_config(tmp_path, _pipeline_config())
+    loaded = rcf.load_config_file(path)
+
+    assert loaded.pipeline_nodes is not None
+    assert [n.name for n in loaded.pipeline_nodes] == ["generator", "evaluator"]
+    assert loaded.pipeline_transitions is not None
+    assert len(loaded.pipeline_transitions) == 1
+    assert loaded.pipeline_transitions[0].source == "evaluator"
+    assert loaded.pipeline_transitions[0].target == "generator"
+    assert loaded.pipeline_transitions[0].max_rounds == 3
+
+
+def test_config_without_pipeline_section_leaves_it_none(tmp_path):
+    path = _write_config(tmp_path, _full_config())
+    loaded = rcf.load_config_file(path)
+
+    assert loaded.pipeline_nodes is None
+    assert loaded.pipeline_transitions is None
+
+
+def test_pipeline_node_missing_prompt_is_rejected(tmp_path):
+    data = _pipeline_config()
+    del data["pipeline"]["nodes"][0]["prompt"]
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "prompt" in str(excinfo.value)
+
+
+def test_pipeline_duplicate_node_name_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["nodes"].append({"name": "generator", "prompt": "again"})
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "duplicate" in str(excinfo.value)
+
+
+def test_pipeline_transition_unknown_source_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["transitions"][0]["source"] = "nonexistent"
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "nonexistent" in str(excinfo.value)
+
+
+def test_pipeline_backward_transition_without_max_rounds_is_rejected(tmp_path):
+    """Loading succeeds (config-level parsing doesn't itself enforce this — the
+    engine's own build-time Pipeline validation does), but executing must
+    surface the unbounded-loop error rather than silently looping forever.
+    """
+    data = _pipeline_config()
+    del data["pipeline"]["transitions"][0]["max_rounds"]
+    path = _write_config(tmp_path, data)
+
+    loaded = rcf.load_config_file(path)
+    assert loaded.pipeline_transitions[0].max_rounds is None
+
+
+def test_decision_node_without_matching_transition_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["transitions"] = []
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "accept_if_contains" in str(excinfo.value)
+
+
+def test_pipeline_unknown_node_key_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["nodes"][0]["bogus"] = "x"
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "bogus" in str(excinfo.value)
+
+
+def test_execute_from_config_with_pipeline_runs_generator_evaluator_loop(
+    tmp_path, monkeypatch, mocker
+):
+    """End-to-end: the evaluator rejects once then accepts, driven entirely by
+    the declared pipeline section — no default single-agent pipeline involved.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    responses = [
+        _stop_recovery_pair("draft v1"),
+        _stop_recovery_pair("REJECT: try again"),
+        _stop_recovery_pair("draft v2"),
+        _stop_recovery_pair("ACCEPT: good"),
+    ]
+    mocker.patch.object(LLM, "_post_chat_with_recovery", side_effect=responses)
+
+    path = _write_config(tmp_path, _pipeline_config())
+    _, verdict = rcf.execute_from_config(path)
+
+    assert verdict == "pass"
+    session_dirs = [
+        d for d in (tmp_path / ".my_coding_agent").glob("*") if d.name != "evals"
+    ]
+    session_dir = session_dirs[0]
+    events = [
+        json.loads(line)
+        for line in (session_dir / "events.jsonl").read_text().splitlines()
+    ]
+    transition_events = [e for e in events if e["type"] == "transition"]
+    assert len(transition_events) == 1
+    assert transition_events[0]["source"] == "evaluator"
+    assert transition_events[0]["target"] == "generator"
+    assert transition_events[0]["outcome"] == "jump"
+
+    llm_call_kinds = [e["kind"] for e in events if e["type"] == "llm_call"]
+    assert llm_call_kinds == ["generator", "evaluator", "generator", "evaluator"]
+
+
+def test_execute_from_config_pipeline_loop_bound_exhaustion(
+    tmp_path, monkeypatch, mocker
+):
+    """A never-accepting evaluator stops at its round ceiling, not a crash."""
+    monkeypatch.chdir(tmp_path)
+
+    responses = [_stop_resp("REJECT: never good enough")] * 20
+    mocker.patch.object(LLM, "chat_completion", side_effect=responses)
+
+    path = _write_config(tmp_path, _pipeline_config())
+    _, verdict = rcf.execute_from_config(path)
+
+    assert verdict == "fail"
+    session_dirs = [
+        d for d in (tmp_path / ".my_coding_agent").glob("*") if d.name != "evals"
+    ]
+    session_dir = session_dirs[0]
+    events = [
+        json.loads(line)
+        for line in (session_dir / "events.jsonl").read_text().splitlines()
+    ]
+    end_event = next(e for e in events if e["type"] == "session_end")
+    assert end_event["stop_reason"] == "loop_bound:evaluator->generator"

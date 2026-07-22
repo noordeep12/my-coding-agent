@@ -73,6 +73,9 @@ current_agent_node: contextvars.ContextVar[Any] = contextvars.ContextVar(
 # and the ``tools`` definitions given to the model. Every chat-completion kind —
 # including the ancillary ones (tool_router, arg_correction) — keeps
 # its input so the viewer can show each call's input/output like the main call.
+# ``generator``/``evaluator`` are the kinds a workflow-graph stage (issue #228)
+# tags its own calls with, distinct from the single-agent step loop's ``main``,
+# so the Trace Explorer can label and show the full input/output of each stage.
 # Trim this set to bound the event-stream size if needed.
 FULL_PAYLOAD_KINDS: set[str] = {
     "main",
@@ -81,6 +84,8 @@ FULL_PAYLOAD_KINDS: set[str] = {
     "tool_router",
     "tool_arg_correction",
     "artifact_query",
+    "generator",
+    "evaluator",
 }
 
 
