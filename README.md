@@ -319,15 +319,22 @@ Or reference a rubric JSON file by path — the same shape as the inline mapping
 
 Both forms validate through the same rules and produce the same scoring behavior; a mapping value is the only trigger for the inline form.
 
-An optional `pipeline` section replaces the standard single-agent loop with a declared workflow graph of named stages (iterative-workflow-control, issue #228) — e.g. a generator/evaluator loop that redrafts until accepted, or until a hard round ceiling is reached:
+An optional `pipeline` section replaces the standard single-agent loop with a declared workflow graph of named stages (iterative-workflow-control, issue #228) — e.g. a generator/evaluator loop that redrafts until accepted, or until a hard round ceiling is reached. Each stage keeps its own **isolated conversation** — its own `system_prompt` and own turn history — never one shared by every stage; `receives_from` is the only channel between two stages, and it carries plain output text only, never the other stage's system prompt, directives, or internal reasoning:
 
 ```yaml
+run:
+  task: "Begin the review loop."   # seeds only the pipeline's entry stage (nodes[0])
+
 pipeline:
   nodes:
     - name: generator
-      prompt: "Write (or, if rejected below, rewrite) the haiku now."
+      system_prompt: "You are GENERATOR. Write a haiku about testing software."
+      prompt: "Write (or, using the feedback above, revise) the haiku now."
+      receives_from: evaluator       # sees only evaluator's latest verdict text
     - name: evaluator
+      system_prompt: "You are EVALUATOR. Judge haikus for 5-7-5 form and relevance."
       prompt: "Judge the haiku above. Reply 'ACCEPT: <why>' or 'REJECT: <why>'."
+      receives_from: generator       # sees only generator's latest draft text
       accept_if_contains: "ACCEPT"   # omit on a pure generator stage (no decision)
   transitions:
     - source: evaluator
@@ -335,7 +342,7 @@ pipeline:
       max_rounds: 4                  # required on every backward transition
 ```
 
-Each stage's own `run.system_prompt`/`run.task` seed the opening conversation as usual, then the declared `nodes` run in order instead of the default pipeline; a node without `accept_if_contains` always continues to the next node. A node with `accept_if_contains` is a decision stage: a case-insensitive match in its reply stops the run, no match jumps back to the transition whose `source` is that node's name (there must be exactly one). Every stage's LLM call is tagged with its own node name, so the Trace Explorer labels and shows the full input/output of each stage distinctly, and each rejected round is recorded as its own `Transition` node. Omit `pipeline` entirely and a config runs exactly as before this section existed.
+The declared `nodes` run in order instead of the default pipeline. `run.task` seeds only the pipeline's entry stage (`nodes[0]`) — every other stage receives its input exclusively through `receives_from`; `run.system_prompt` is unused when `pipeline` is present (each node declares its own instead). A node without `accept_if_contains` always continues to the next node. A node with `accept_if_contains` is a decision stage: a case-insensitive match in its reply stops the run, no match jumps back to the transition whose `source` is that node's name (there must be exactly one). `receives_from` names another node whose latest reply is injected as a plain user message before this node's own `prompt` — omit it for a stage that only needs its own history. Every stage's LLM call is tagged with its own node name, so the Trace Explorer labels and shows the full, isolated input/output of each stage distinctly, and each rejected round is recorded as its own `Transition` node. Omit `pipeline` entirely and a config runs exactly as before this section existed.
 
 A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml), and [`examples/eval_run_cve_subagents.yaml`](examples/eval_run_cve_subagents.yaml) / [`examples/eval_run_cve_subagents_rubric_path.yaml`](examples/eval_run_cve_subagents_rubric_path.yaml) show the inline and path forms of a `judge` check side by side; [`examples/iterative_workflow_generator_evaluator.yaml`](examples/iterative_workflow_generator_evaluator.yaml) shows the `pipeline` section in a complete, runnable generator/evaluator loop:
 
