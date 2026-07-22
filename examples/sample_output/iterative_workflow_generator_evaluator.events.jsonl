@@ -1,0 +1,4 @@
+{"type": "session_start", "session_id": "507e0aa6d0ea", "parent_session_id": null, "resumed_from": null, "label": "GenEvalExample", "model": "Qwen3.6-35B-A3B-6bit", "context_window": 131072, "posture": "screened_only", "started_at": "2026-07-22T22:49:10.184+02:00"}
+{"type": "transition", "source": "evaluator", "target": "generator", "round": 1, "outcome": "jump", "step": 2, "started_at": "2026-07-22T22:49:10.195+02:00"}
+{"type": "transition", "source": "evaluator", "target": "generator", "round": 2, "outcome": "jump", "step": 4, "started_at": "2026-07-22T22:49:10.195+02:00"}
+{"type": "session_end", "stop_reason": "stop", "steps": 6, "elapsed_s": 0.023, "ended_at": "2026-07-22T22:49:10.205+02:00"}
