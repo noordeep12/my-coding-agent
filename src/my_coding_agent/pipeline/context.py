@@ -70,3 +70,14 @@ class RunContext:
     # --- summarizer outputs (ContextSummarizerNode writes, consumers read) ---
     handback_report: str | None = None  # kind "report" → delegate() hand-back
     handoff_content: str | None = None  # kind "handoff" → continuation seed
+
+    # --- per-node isolated conversation state (issue #228 PromptStageNode) ---
+    # Each workflow-graph stage owns its own private message thread — its own
+    # system prompt and own turn history — instead of every stage reading and
+    # appending to the single shared ``messages`` list above. ``node_outputs``
+    # holds each node's latest reply text, the only thing that crosses between
+    # stages, and only when a node explicitly declares it wants another node's
+    # output (``receives_from``) — an evaluator sees the generator's draft, not
+    # the generator's own system prompt or internal reasoning, and vice versa.
+    node_threads: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    node_outputs: dict[str, str] = field(default_factory=dict)

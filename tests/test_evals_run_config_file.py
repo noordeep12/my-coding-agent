@@ -389,10 +389,17 @@ def _pipeline_config(**overrides):
         },
         pipeline={
             "nodes": [
-                {"name": "generator", "prompt": "Draft it."},
+                {
+                    "name": "generator",
+                    "system_prompt": "You are GENERATOR.",
+                    "prompt": "Draft it.",
+                    "receives_from": "evaluator",
+                },
                 {
                     "name": "evaluator",
+                    "system_prompt": "You are EVALUATOR.",
                     "prompt": "Judge it.",
+                    "receives_from": "generator",
                     "accept_if_contains": "ACCEPT",
                 },
             ],
@@ -498,6 +505,40 @@ def test_pipeline_unknown_node_key_is_rejected(tmp_path):
     assert "bogus" in str(excinfo.value)
 
 
+def test_pipeline_node_system_prompt_and_receives_from_load(tmp_path):
+    path = _write_config(tmp_path, _pipeline_config())
+    loaded = rcf.load_config_file(path)
+
+    generator, evaluator = loaded.pipeline_nodes
+    assert generator._system_prompt == "You are GENERATOR."
+    assert generator._receives_from == "evaluator"
+    assert evaluator._system_prompt == "You are EVALUATOR."
+    assert evaluator._receives_from == "generator"
+
+
+def test_pipeline_receives_from_unknown_node_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["nodes"][0]["receives_from"] = "nonexistent"
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "receives_from" in str(excinfo.value)
+    assert "nonexistent" in str(excinfo.value)
+
+
+def test_only_entry_node_is_seeded_with_run_task(tmp_path):
+    """Only pipeline.nodes[0] gets run.task; every other stage's input comes
+    exclusively through receives_from (issue #228 D-isolation).
+    """
+    path = _write_config(tmp_path, _pipeline_config())
+    loaded = rcf.load_config_file(path)
+
+    generator, evaluator = loaded.pipeline_nodes
+    assert generator._seed_task == "say pong"
+    assert evaluator._seed_task is None
+
+
 def test_execute_from_config_with_pipeline_runs_generator_evaluator_loop(
     tmp_path, monkeypatch, mocker
 ):
@@ -534,6 +575,68 @@ def test_execute_from_config_with_pipeline_runs_generator_evaluator_loop(
 
     llm_call_kinds = [e["kind"] for e in events if e["type"] == "llm_call"]
     assert llm_call_kinds == ["generator", "evaluator", "generator", "evaluator"]
+
+
+def test_execute_from_config_pipeline_stages_have_isolated_contexts(
+    tmp_path, monkeypatch, mocker
+):
+    """Each stage's own recorded LLM input carries only its own system prompt
+    and the other stage's plain output text — never the other stage's own
+    system prompt or persona (issue #228 D-isolation).
+
+    Reads the trace through ``viewer_reader.load_session`` (not the raw
+    ``events.jsonl``) since the recorder delta-encodes a kind's second-and-
+    later ``messages`` snapshot — the reader is what reconstructs the full
+    per-call input the way the Trace Explorer shows it.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    responses = [
+        _stop_recovery_pair("draft v1"),
+        _stop_recovery_pair("REJECT: try again"),
+        _stop_recovery_pair("draft v2"),
+        _stop_recovery_pair("ACCEPT: good"),
+    ]
+    mocker.patch.object(LLM, "_post_chat_with_recovery", side_effect=responses)
+
+    path = _write_config(tmp_path, _pipeline_config())
+    rcf.execute_from_config(path)
+
+    session_dirs = [
+        d for d in (tmp_path / ".my_coding_agent").glob("*") if d.name != "evals"
+    ]
+    session_dir = session_dirs[0]
+    trace = viewer_reader.load_session(session_dir / "events.jsonl")
+    llm_nodes = [
+        trace.nodes[nid] for nid in trace.order if trace.nodes[nid].type == "llm_call"
+    ]
+
+    def _contents(node):
+        return " ".join(
+            m.get("content") or "" for m in node.inputs.get("messages") or []
+        )
+
+    for node in llm_nodes:
+        kind = node.attributes.get("kind")
+        contents = _contents(node)
+        if kind == "generator":
+            assert "You are GENERATOR." in contents
+            assert "You are EVALUATOR." not in contents
+        elif kind == "evaluator":
+            assert "You are EVALUATOR." in contents
+            assert "You are GENERATOR." not in contents
+
+    generator_nodes = [n for n in llm_nodes if n.attributes.get("kind") == "generator"]
+    evaluator_nodes = [n for n in llm_nodes if n.attributes.get("kind") == "evaluator"]
+    assert len(generator_nodes) == 2
+    assert len(evaluator_nodes) == 2
+
+    # The evaluator's second call must have received the generator's second
+    # draft ("draft v2") as its input, not the first ("draft v1").
+    assert "draft v2" in _contents(evaluator_nodes[1])
+    # The generator's second call must have received the evaluator's
+    # rejection reason, not any of the evaluator's own persona/history.
+    assert "REJECT: try again" in _contents(generator_nodes[1])
 
 
 def test_execute_from_config_pipeline_loop_bound_exhaustion(

@@ -53,7 +53,13 @@ _CHECK_KEYS = {
     "threshold",
 }
 _PIPELINE_KEYS = {"nodes", "transitions"}
-_PIPELINE_NODE_KEYS = {"name", "prompt", "accept_if_contains"}
+_PIPELINE_NODE_KEYS = {
+    "name",
+    "prompt",
+    "system_prompt",
+    "receives_from",
+    "accept_if_contains",
+}
 _PIPELINE_TRANSITION_KEYS = {"source", "target", "max_rounds"}
 
 #: Field -> (env var name, documented default). Resolution order is
@@ -205,6 +211,8 @@ def _parse_pipeline_node_specs(
             {
                 "name": name,
                 "prompt": prompt,
+                "system_prompt": raw_node.get("system_prompt"),
+                "receives_from": raw_node.get("receives_from"),
                 "accept_if_contains": raw_node.get("accept_if_contains"),
             }
         )
@@ -258,12 +266,21 @@ def _parse_pipeline_transitions(
 
 def _build_pipeline_nodes(
     node_specs: list[dict[str, Any]],
+    node_names: list[str],
     jump_target_by_source: dict[str, str],
+    task: str,
     problems: list[str],
 ) -> list[PromptStageNode]:
-    """Build `PromptStageNode`s, wiring each decision node's jump target."""
+    """Build `PromptStageNode`s, wiring each decision node's jump target.
+
+    Each node gets its own private thread (issue #228 D-isolation): only the
+    pipeline's entry stage (`node_specs[0]`) is seeded with `task` (`run.task`)
+    — every other stage receives its input exclusively via `receives_from`,
+    never the run-level task text. A `receives_from` naming an undeclared
+    node is a config error, same collect-every-problem style as elsewhere.
+    """
     nodes: list[PromptStageNode] = []
-    for spec in node_specs:
+    for index, spec in enumerate(node_specs):
         accept = spec["accept_if_contains"]
         jump_target = jump_target_by_source.get(spec["name"]) if accept else None
         if accept and jump_target is None:
@@ -271,10 +288,19 @@ def _build_pipeline_nodes(
                 f"pipeline node {spec['name']!r} declares 'accept_if_contains' "
                 "but has no transition with matching 'source'"
             )
+        receives_from = spec["receives_from"]
+        if receives_from is not None and receives_from not in node_names:
+            problems.append(
+                f"pipeline node {spec['name']!r} declares receives_from "
+                f"{receives_from!r}, which is not a declared node"
+            )
         nodes.append(
             PromptStageNode(
                 name=spec["name"],
                 prompt=spec["prompt"],
+                system_prompt=spec["system_prompt"],
+                seed_task=task if index == 0 else None,
+                receives_from=receives_from,
                 accept_if_contains=accept,
                 jump_target=jump_target,
             )
@@ -283,7 +309,7 @@ def _build_pipeline_nodes(
 
 
 def _parse_pipeline(
-    raw_pipeline: Any, problems: list[str]
+    raw_pipeline: Any, task: str, problems: list[str]
 ) -> tuple[tuple[PromptStageNode, ...], tuple[Transition, ...]] | None:
     """Parse an optional `pipeline` section into workflow-graph stages (issue #228).
 
@@ -292,8 +318,11 @@ def _parse_pipeline(
     a `prompt`; a node that also declares `accept_if_contains` is a decision
     stage and must be the `source` of exactly one `transitions` entry — its
     `target` becomes that node's jump target when the reply doesn't match.
-    Appends every problem found to `problems` rather than raising, so the
-    caller can report them all together.
+    `task` (`run.task`) seeds only the pipeline's entry stage — every other
+    stage gets its input exclusively via `receives_from` (issue #228
+    D-isolation: each stage keeps its own private conversation, never one
+    shared by every stage). Appends every problem found to `problems` rather
+    than raising, so the caller can report them all together.
     """
     if raw_pipeline in (None, ""):
         return None
@@ -313,7 +342,9 @@ def _parse_pipeline(
     transitions, jump_target_by_source = _parse_pipeline_transitions(
         raw_pipeline.get("transitions"), node_names, problems
     )
-    nodes = _build_pipeline_nodes(node_specs, jump_target_by_source, problems)
+    nodes = _build_pipeline_nodes(
+        node_specs, node_names, jump_target_by_source, task, problems
+    )
 
     return tuple(nodes), tuple(transitions)
 
@@ -375,7 +406,7 @@ def load_config_file(path: Path) -> LoadedRunConfig:
     if not checks:
         problems.append("'evaluation.checks' must declare at least one check")
     max_steps = _parse_max_steps(run_section, problems)
-    pipeline_result = _parse_pipeline(data.get("pipeline"), problems)
+    pipeline_result = _parse_pipeline(data.get("pipeline"), task or "", problems)
 
     if problems:
         raise ConfigValidationError(path, problems)
