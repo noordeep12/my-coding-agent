@@ -238,10 +238,27 @@ def load_session(
 
 # ── Step grouping ─────────────────────────────────────────────────────────────
 
+# Kinds that piggyback onto an already-open step rather than opening their own
+# (ContextSummarizerNode's report/handoff calls, and the legacy tool-routing
+# kinds) — never a workflow-graph stage's own primary call.
+_ANCILLARY_LLM_KINDS = frozenset(
+    {"report", "handoff", "tool_router", "tool_arg_correction", "artifact_query"}
+)
+
 
 def _is_main_llm_call(ev: dict[str, Any]) -> bool:
-    """True if *ev* is the per-step main ``llm_call`` (not a nested/ancillary one)."""
-    return ev.get("type") == "llm_call" and ev.get("kind", "main") == "main"
+    """True if *ev* opens a new step.
+
+    True for the per-step main ``llm_call`` and for a declared workflow-graph
+    stage's own call (issue #228 — any ``kind`` other than the known
+    ancillary ones counts, so a config's ``generator``/``evaluator``-tagged
+    calls each open their own step); false for a nested/ancillary call that
+    piggybacks onto an already-open step.
+    """
+    return (
+        ev.get("type") == "llm_call"
+        and ev.get("kind", "main") not in _ANCILLARY_LLM_KINDS
+    )
 
 
 def _group_into_steps(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:

@@ -327,6 +327,21 @@ class TestGroupIntoSteps:
         assert len(groups) == 1
         assert len(groups[0]) == 3
 
+    def test_custom_workflow_graph_kinds_each_open_their_own_step(self):
+        """A declared-pipeline stage's own kind (issue #228) is not 'main' but
+        must still open a new step — otherwise every one of its llm_call
+        events is silently dropped (discarded as "before the first boundary").
+        """
+        events = [
+            _ev("session_start"),
+            _ev("llm_call", call=1, kind="generator"),
+            _ev("llm_call", call=2, kind="evaluator"),
+        ]
+        groups = _group_into_steps(events)
+        assert len(groups) == 2
+        assert groups[0][0]["kind"] == "generator"
+        assert groups[1][0]["kind"] == "evaluator"
+
 
 # ── _detect_loops ─────────────────────────────────────────────────────────────
 
