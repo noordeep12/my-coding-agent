@@ -5,6 +5,7 @@ from .context_guard import ContextGuardNode
 from .context_summarizer import ContextSummarizerNode
 from .finalize_step import FinalizeStepNode
 from .llm_call import LLMCallNode
+from .prompt_stage import PromptStageNode
 from .tool_dispatch import ToolDispatchNode
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "ContextSummarizerNode",
     "FinalizeStepNode",
     "LLMCallNode",
+    "PromptStageNode",
     "ToolDispatchNode",
 ]

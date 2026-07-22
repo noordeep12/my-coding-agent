@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from ...utils import (
     print_run_summary,
 )
 from ..context import RunContext
+from ..graph import Pipeline
 from ..handoff import handoff_to_user_message, save_handoff
 from ..node import BaseNode
 from ..schema import CLEAN_FINISH_REASONS, ContextHandoff
@@ -42,6 +44,10 @@ from .context_summarizer import (
 # Default step budget shared by the main agent (CLI), the ``execute`` default,
 # and delegated subagents, so all three run with the same ceiling.
 DEFAULT_MAX_STEPS = 50
+
+# A pipeline_builder override (issue #228): same call signature as
+# build_default_pipeline (spawn_fn=, checkpoint_fn=), returning a Pipeline.
+PipelineBuilder = Callable[..., Pipeline]
 
 
 class AgentNode(BaseNode):
@@ -72,6 +78,7 @@ class AgentNode(BaseNode):
         resume_step: int = 0,
         resume_prompt_tokens: int = 0,
         resume_round_counters: dict[str, int] | None = None,
+        pipeline_builder: PipelineBuilder | None = None,
     ) -> None:
         """Initialize the agent, open a session log, and build the LLM client.
 
@@ -93,6 +100,13 @@ class AgentNode(BaseNode):
         counter so the first LLM call is step N+1, not step 0. Defaults keep a
         fresh run unchanged. Prefer ``AgentNode.from_checkpoint`` over passing
         these directly.
+
+        ``pipeline_builder`` overrides the standard five-node
+        ``build_default_pipeline`` with a caller-supplied one (issue #228) —
+        e.g. a declaratively-configured workflow graph of ``PromptStageNode``s
+        and ``Transition``s (see ``evals.run_config_file``). Called the same
+        way: ``pipeline_builder(spawn_fn=..., checkpoint_fn=...)``. ``None``
+        (the default) keeps every existing run byte-identical.
         """
         self.session_id = uuid.uuid4().hex[:12]
         self.started_at = datetime.now().isoformat(timespec="seconds")
@@ -102,6 +116,7 @@ class AgentNode(BaseNode):
         self._resume_step = resume_step
         self._resume_prompt_tokens = resume_prompt_tokens
         self._resume_round_counters = resume_round_counters or {}
+        self._pipeline_builder = pipeline_builder
         # Set to the classified error when a run ends on an unrecoverable LLM
         # failure (D6), so the CLI can print a one-line resume hint. None → OK.
         self.failure_error: LLMCallError | None = None
@@ -275,9 +290,8 @@ class AgentNode(BaseNode):
         def _spawn_fn() -> list[dict[str, Any]]:
             return self._handle_context_reset(ctx, max_steps, t_start)
 
-        pipeline = build_default_pipeline(
-            spawn_fn=_spawn_fn, checkpoint_fn=self._write_checkpoint
-        )
+        builder = self._pipeline_builder or build_default_pipeline
+        pipeline = builder(spawn_fn=_spawn_fn, checkpoint_fn=self._write_checkpoint)
 
         result: list[dict[str, Any]] = []
         try:

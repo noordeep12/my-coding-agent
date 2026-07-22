@@ -14,6 +14,7 @@ from .nodes import (
     ContextGuardNode,
     FinalizeStepNode,
     LLMCallNode,
+    PromptStageNode,
     ToolDispatchNode,
 )
 from .schema import ContextHandoff, Transition
@@ -29,6 +30,7 @@ __all__ = [
     "LLMCallNode",
     "Node",
     "Pipeline",
+    "PromptStageNode",
     "RunContext",
     "ToolDispatchNode",
     "Transition",
