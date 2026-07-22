@@ -1,0 +1,51 @@
+# Example declarative eval run config: a bounded generator/evaluator loop.
+#
+# Run it with:
+#
+#   my-coding-agent-eval run --config examples/iterative_workflow_generator_evaluator.yaml
+#
+# Exit codes: 2 if the config fails validation (no agent run happens),
+# 0 if every check passes, 1 if any check fails.
+#
+# Demonstrates the iterative-workflow-control capability (issue #228): the
+# optional `pipeline` section replaces the standard single-agent loop with a
+# declared workflow graph of named stages. Here, `evaluator` judges
+# `generator`'s latest draft and jumps back to it for another round until the
+# draft is accepted, or until `max_rounds` is reached. Each stage's LLM call
+# is tagged with its own node name, so the Trace Explorer
+# (`my-coding-agent-webui --dir .my_coding_agent`) labels each one
+# "LLMCallNode (generator)" / "LLMCallNode (evaluator)" — with its own full
+# input/output shown, not just a token count — for every round, plus a
+# `Transition` node per round the evaluator rejected.
+
+llm:
+  api_url: http://127.0.0.1:8321/v1
+  model: Qwen3.6-35B-A3B-6bit
+  api_key_env: OMLX_API_KEY  # pragma: allowlist secret
+  timeout: 30
+
+run:
+  system_prompt: "You are GENERATOR. Write a haiku (5-7-5 syllables) about testing software. Reply with only the haiku, three lines, no commentary."
+  task: "Begin the review loop."
+  max_steps: 20
+
+pipeline:
+  nodes:
+    - name: generator
+      prompt: "Write (or, if rejected below, rewrite) the haiku now."
+    - name: evaluator
+      prompt: >-
+        You are EVALUATOR. Judge the haiku above: does it read as 5-7-5
+        syllables about testing software? Reply with exactly one line:
+        'ACCEPT: <why>' or 'REJECT: <why>'.
+      accept_if_contains: "ACCEPT"
+  transitions:
+    - source: evaluator
+      target: generator
+      max_rounds: 4
+
+evaluation:
+  checks:
+    - name: evaluator-accepted
+      evaluator: exact_match
+      expected: { contains: "ACCEPT" }

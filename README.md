@@ -8,7 +8,7 @@ A self-contained agentic loop — no external agent frameworks. The agent calls 
 
 Key ideas:
 - **Local-first**: targets OpenAI-compatible endpoints (MLX Server, Ollama) running on your machine
-- **Node-based pipeline**: the agentic loop is a workflow graph of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them; a node may declare a conditional transition back to an earlier node, with a hard per-loop round bound, so iterate-until-criteria workflows are a declared graph structure instead of a hidden loop — see [`examples/iterative_workflow_generator_evaluator.py`](examples/iterative_workflow_generator_evaluator.py) for a runnable generator/evaluator loop and its [sample trace](examples/sample_output/iterative_workflow_generator_evaluator.events.jsonl)
+- **Node-based pipeline**: the agentic loop is a workflow graph of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them; a node may declare a conditional transition back to an earlier node, with a hard per-loop round bound, so iterate-until-criteria workflows are a declared graph structure instead of a hidden loop. A declarative run config can replace the default pipeline with its own named stages and transitions — see [`examples/iterative_workflow_generator_evaluator.yaml`](examples/iterative_workflow_generator_evaluator.yaml) for a runnable generator/evaluator loop
 - **Runtime anomaly detection**: while the run is live, a same-class tool-failure streak (e.g. the same tool failing 3+ times in a row with the same error class, regardless of args) is flagged the moment it happens — logged as a warning and recorded in the session's event stream, in main agents and subagents alike
 - **Dangerous-command refusal gate**: every `bash` call is checked against a deterministic, local rule set before it runs (recursive root/home deletes, remote-content-piped-to-shell, raw-device writes, fork bombs, permission blasts, credential exfiltration, destructive git force-pushes); a match never reaches the shell — the model gets back a structured refusal (reason + security-standard reference + safer alternative) so it can steer, and the refusal is logged and recorded for later review. This is a high-signal first layer, not a complete boundary — obfuscated commands can evade textual matching by design, which is why the harness also records each run's protection posture (`screened_only` vs. `sandboxed`, see [`SECURITY.md`](SECURITY.md)) rather than implying completeness. Extensible and can be disabled with `--no-safety-gate` if you really need to
 - **Exfiltration guard**: before an outbound tool call (currently `fetch_web`) sends its payload, it's checked deterministically and locally against well-known secret paths (`.env`, SSH keys, cloud credentials, `.netrc`, `*.pem`/`*.key`) and content signatures (PEM private-key headers, common token formats); a match never reaches the network — the model gets back a structured block naming only the matched category, never the secret value, and the block is logged and recorded for later review. Disabled runs are byte-identical to today; can be disabled with `--no-exfil-guard` if you really need to
@@ -319,7 +319,25 @@ Or reference a rubric JSON file by path — the same shape as the inline mapping
 
 Both forms validate through the same rules and produce the same scoring behavior; a mapping value is the only trigger for the inline form.
 
-A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml), and [`examples/eval_run_cve_subagents.yaml`](examples/eval_run_cve_subagents.yaml) / [`examples/eval_run_cve_subagents_rubric_path.yaml`](examples/eval_run_cve_subagents_rubric_path.yaml) show the inline and path forms of a `judge` check side by side:
+An optional `pipeline` section replaces the standard single-agent loop with a declared workflow graph of named stages (iterative-workflow-control, issue #228) — e.g. a generator/evaluator loop that redrafts until accepted, or until a hard round ceiling is reached:
+
+```yaml
+pipeline:
+  nodes:
+    - name: generator
+      prompt: "Write (or, if rejected below, rewrite) the haiku now."
+    - name: evaluator
+      prompt: "Judge the haiku above. Reply 'ACCEPT: <why>' or 'REJECT: <why>'."
+      accept_if_contains: "ACCEPT"   # omit on a pure generator stage (no decision)
+  transitions:
+    - source: evaluator
+      target: generator
+      max_rounds: 4                  # required on every backward transition
+```
+
+Each stage's own `run.system_prompt`/`run.task` seed the opening conversation as usual, then the declared `nodes` run in order instead of the default pipeline; a node without `accept_if_contains` always continues to the next node. A node with `accept_if_contains` is a decision stage: a case-insensitive match in its reply stops the run, no match jumps back to the transition whose `source` is that node's name (there must be exactly one). Every stage's LLM call is tagged with its own node name, so the Trace Explorer labels and shows the full input/output of each stage distinctly, and each rejected round is recorded as its own `Transition` node. Omit `pipeline` entirely and a config runs exactly as before this section existed.
+
+A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml), and [`examples/eval_run_cve_subagents.yaml`](examples/eval_run_cve_subagents.yaml) / [`examples/eval_run_cve_subagents_rubric_path.yaml`](examples/eval_run_cve_subagents_rubric_path.yaml) show the inline and path forms of a `judge` check side by side; [`examples/iterative_workflow_generator_evaluator.yaml`](examples/iterative_workflow_generator_evaluator.yaml) shows the `pipeline` section in a complete, runnable generator/evaluator loop:
 
 ```bash
 uv run my-coding-agent --config examples/eval_run_config.yaml
