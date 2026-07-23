@@ -1224,20 +1224,43 @@ def _add_anomaly_nodes(
 def _add_transition_nodes(
     events: list[dict[str, Any]], graph: _Graph, session_id: str
 ) -> None:
-    """Add one trace node per recorded ``transition`` row (issue #228).
+    """Attach each recorded ``transition`` row onto the node that caused it.
 
-    Unlike anomaly rows (deduped to the latest per streak), every transition
-    row is its own round and is rendered as its own node, so round counts and
-    outcomes are visible one-for-one with ``events.jsonl``. A trace recorded
-    before this event type existed has none of these rows, so it renders
-    unchanged (design D6).
+    A transition is a decision the *source* stage's own LLM call already
+    made, not a separate pipeline step — so it's stamped as an attribute on
+    that call's own ``llm_call`` node (matched by step + kind == source)
+    rather than rendered as its own row in the tree; the Trace Explorer
+    badges it there. Falls back to a standalone node (the pre-#228-cosmetic-
+    pass behavior) only when no matching call is found, so a transition is
+    never silently dropped. A trace recorded before this event type existed
+    has none of these rows, so it renders unchanged (design D6).
     """
     for i, ev in enumerate(events):
         if ev.get("type") != "transition":
             continue
-        node_id = f"{session_id}::transition::{i}"
         source = ev.get("source", "")
         target = ev.get("target", "")
+        step = ev.get("step")
+        transition_attrs = {
+            "target": target,
+            "round": ev.get("round", 0),
+            "outcome": ev.get("outcome", ""),
+        }
+        source_node = next(
+            (
+                n
+                for n in graph.nodes.values()
+                if n.type == "llm_call"
+                and n.attributes.get("kind") == source
+                and n.attributes.get("step") == step
+            ),
+            None,
+        )
+        if source_node is not None:
+            source_node.attributes["transition"] = transition_attrs
+            continue
+
+        node_id = f"{session_id}::transition::{i}"
         graph.add(
             node_id,
             _make_node(
@@ -1248,13 +1271,11 @@ def _add_transition_nodes(
                 outputs={},
                 attributes={
                     "source": source,
-                    "target": target,
-                    "round": ev.get("round", 0),
-                    "outcome": ev.get("outcome", ""),
                     "started_at": ev.get("started_at", ""),
+                    **transition_attrs,
                 },
             ),
-            step=ev.get("step"),
+            step=step,
         )
 
 

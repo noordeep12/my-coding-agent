@@ -1971,3 +1971,138 @@ class TestFlagAnomaliesUnit:
         _flag_anomalies(nodes, order, events)
         assert not nodes["a"].anomaly_flag
         assert not nodes["b"].anomaly_flag
+
+
+# ── Transition rendering ────────────────────────────────────────────────────
+
+
+def _stage_llm_call(kind: str, step: int, content: str) -> dict:
+    return _ev(
+        "llm_call",
+        call=step,
+        kind=kind,
+        latency_s=1.0,
+        prompt=10,
+        completion=5,
+        total=15,
+        context_window=8192,
+        messages=[{"role": "user", "content": "hi"}],
+        response={"content": content, "reasoning": "", "tool_calls": [], "raw": {}},
+        started_at=f"2026-01-01T10:00:0{step}",
+    )
+
+
+def _transition_row(
+    source: str, target: str, round_num: int, step: int, outcome="jump"
+):
+    return _ev(
+        "transition",
+        source=source,
+        target=target,
+        round=round_num,
+        outcome=outcome,
+        step=step,
+        started_at=f"2026-01-01T10:00:0{step}.5",
+    )
+
+
+def _gen_eval_session_events(sid: str = "aabbccdd1234") -> list:
+    """A two-round custom generator/evaluator pipeline (issue #228)."""
+    return [
+        _ev(
+            "session_start",
+            session_id=sid,
+            label="Test",
+            model="gpt-4o-mini",
+            context_window=8192,
+            started_at="2026-01-01T10:00:00",
+            parent_session_id=None,
+        ),
+        _stage_llm_call("generator", 1, "draft v1"),
+        _stage_llm_call("evaluator", 2, "REJECT: try again"),
+        _transition_row("evaluator", "generator", 1, 2),
+        _stage_llm_call("generator", 3, "draft v2"),
+        _stage_llm_call("evaluator", 4, "ACCEPT: good"),
+        _ev("session_end", stop_reason="stop", steps=4, elapsed_s=1.0, ended_at="x"),
+    ]
+
+
+class TestTransitionRendering:
+    def _load(self, tmp_path, sid, events):
+        sdir = tmp_path / sid
+        sdir.mkdir()
+        ep = sdir / "events.jsonl"
+        _write_events(ep, events)
+        return load_session(ep)
+
+    def test_transition_attaches_to_the_source_llm_call_node_not_a_new_node(
+        self, tmp_path
+    ):
+        sid = "aabbccdd1234"
+        session = self._load(tmp_path, sid, _gen_eval_session_events(sid))
+
+        # No standalone "transition"-typed node — the round is a badge, not a row.
+        assert not any(n.type == "transition" for n in session.nodes.values())
+
+        llm_nodes = [n for n in session.nodes.values() if n.type == "llm_call"]
+        evaluator_nodes = [
+            n for n in llm_nodes if n.attributes.get("kind") == "evaluator"
+        ]
+        assert len(evaluator_nodes) == 2
+
+        rejecting = next(n for n in evaluator_nodes if n.attributes.get("step") == 2)
+        accepting = next(n for n in evaluator_nodes if n.attributes.get("step") == 4)
+        assert rejecting.attributes["transition"] == {
+            "target": "generator",
+            "round": 1,
+            "outcome": "jump",
+        }
+        assert "transition" not in accepting.attributes
+
+    def test_transition_without_a_matching_call_falls_back_to_a_standalone_node(
+        self, tmp_path
+    ):
+        """A transition event whose (step, kind) never matches an llm_call
+        (e.g. a bound-exhaustion row recorded against a source node the
+        engine never actually called this step) still renders — nothing is
+        silently dropped.
+        """
+        sid = "aabbccdd1234"
+        events = [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="Test",
+                model="gpt-4o-mini",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _stage_llm_call("generator", 1, "draft"),
+            _transition_row("evaluator", "generator", 5, 99, outcome="bound_exhausted"),
+            _ev("session_end", stop_reason="loop_bound:evaluator->generator", steps=1),
+        ]
+        session = self._load(tmp_path, sid, events)
+        standalone = [n for n in session.nodes.values() if n.type == "transition"]
+        assert len(standalone) == 1
+        assert standalone[0].attributes["outcome"] == "bound_exhausted"
+        assert standalone[0].attributes["round"] == 5
+
+    def test_session_without_transition_rows_unaffected(self, tmp_path):
+        sid = "aabbccdd1234"
+        events = [
+            _ev(
+                "session_start",
+                session_id=sid,
+                label="Test",
+                model="gpt-4o-mini",
+                context_window=8192,
+                started_at="2026-01-01T10:00:00",
+                parent_session_id=None,
+            ),
+            _stage_llm_call("generator", 1, "draft"),
+            _ev("session_end", stop_reason="stop", steps=1),
+        ]
+        session = self._load(tmp_path, sid, events)
+        assert not any(n.type == "transition" for n in session.nodes.values())
+        assert all("transition" not in n.attributes for n in session.nodes.values())
