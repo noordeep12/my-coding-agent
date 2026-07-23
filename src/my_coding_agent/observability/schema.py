@@ -147,4 +147,17 @@ RESOURCES_GAUGE_AVG = "avg"
 RESOURCES_GAUGE_PEAK = "peak"
 # Counter resources: byte-count delta across the window.
 RESOURCES_NET_BYTES = "net_bytes"
+
+# Keys of a "transition" row (``Recorder.record_transition``, issue #228),
+# kept here so consumers (e.g. the viewer) can reference the contract without
+# importing the recorder module itself.
+TRANSITION_SOURCE = "source"
+TRANSITION_TARGET = "target"
+TRANSITION_ROUND = "round"
+TRANSITION_OUTCOME = "outcome"
+TRANSITION_STEP = "step"
+
+# The two possible values of ``TRANSITION_OUTCOME``.
+TRANSITION_OUTCOME_JUMP = "jump"
+TRANSITION_OUTCOME_BOUND_EXHAUSTED = "bound_exhausted"
 RESOURCES_DISK_BYTES = "disk_bytes"

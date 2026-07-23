@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,11 @@ class Checkpoint:
     step_num: int
     last_prompt_tokens: int
     messages: list[dict[str, Any]]
+    # Per-loop round counters (issue #228 design D5), keyed "<source>-><target>".
+    # Additive field: a checkpoint written before this capability existed omits
+    # it, and ``load_checkpoint`` defaults it to ``{}`` so a resumed looping run
+    # simply starts its rounds from zero rather than failing to load.
+    round_counters: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +55,7 @@ class Checkpoint:
             "step_num": self.step_num,
             "last_prompt_tokens": self.last_prompt_tokens,
             "messages": self.messages,
+            "round_counters": self.round_counters,
         }
 
 
@@ -107,6 +113,7 @@ def load_checkpoint(session_dir: Path) -> Checkpoint:
         step_num=int(data.get("step_num", 0)),
         last_prompt_tokens=int(data.get("last_prompt_tokens", 0)),
         messages=data.get("messages", []),
+        round_counters=dict(data.get("round_counters", {})),
     )
 
 

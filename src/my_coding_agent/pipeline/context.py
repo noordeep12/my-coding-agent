@@ -55,10 +55,29 @@ class RunContext:
     last_response: Any = None
 
     # --- control signals written by nodes, read by the pipeline engine ---
-    signal: str = "CONTINUE"  # CONTINUE | STOP | RESET
+    signal: str = "CONTINUE"  # CONTINUE | STOP | RESET | JUMP
     stop_reason: str = "max_steps"
     continuation_messages: list[dict[str, Any]] = field(default_factory=list)
+    # Set alongside signal="JUMP" to name the node execution should resume at
+    # (design D2). The engine validates the (source, target) pair against the
+    # pipeline's declared transitions before honoring it.
+    jump_target: str = ""
+    # One counter per declared backward transition, keyed "<source>-><target>",
+    # incremented each time that transition is taken (design D4). Persists
+    # through the checkpoint so a resumed looping run cannot exceed its bound.
+    round_counters: dict[str, int] = field(default_factory=dict)
 
     # --- summarizer outputs (ContextSummarizerNode writes, consumers read) ---
     handback_report: str | None = None  # kind "report" → delegate() hand-back
     handoff_content: str | None = None  # kind "handoff" → continuation seed
+
+    # --- per-node isolated conversation state (issue #228 PromptStageNode) ---
+    # Each workflow-graph stage owns its own private message thread — its own
+    # system prompt and own turn history — instead of every stage reading and
+    # appending to the single shared ``messages`` list above. ``node_outputs``
+    # holds each node's latest reply text, the only thing that crosses between
+    # stages, and only when a node explicitly declares it wants another node's
+    # output (``receives_from``) — an evaluator sees the generator's draft, not
+    # the generator's own system prompt or internal reasoning, and vice versa.
+    node_threads: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    node_outputs: dict[str, str] = field(default_factory=dict)

@@ -1,0 +1,63 @@
+# Example declarative eval run config: self-improving study-plan generation.
+#
+# Run it with:
+#
+#   uv run my-coding-agent --config examples/soc_analyst_study_plan_generator_evaluator.yaml
+#
+# Exit codes: 2 if the config fails validation (no agent run happens),
+# 0 if every check passes, 1 if any check fails.
+#
+# A career-development use of the iterative-workflow-control capability
+# (issue #228): instead of asking the model for one study plan, `generator`
+# drafts a SOC-analyst-interview networking study plan and `evaluator` — a
+# senior cybersecurity mentor persona — scores it 1-10 across four criteria
+# (coverage, hands-on labs, difficulty pacing, time budget) and either
+# accepts it or sends it back with concrete feedback. `generator` revises
+# using only that feedback each round; `evaluator` never sees `generator`'s
+# system prompt or reasoning, and `generator` never sees `evaluator`'s own
+# scoring history — each stage is isolated, per the pipeline section's
+# receives_from semantics (see README.md's "Declarative YAML run config").
+
+llm:
+  api_url: http://127.0.0.1:8321/v1
+  model: Qwen3.6-35B-A3B-6bit
+  api_key_env: OMLX_API_KEY  # pragma: allowlist secret
+  timeout: 90
+
+run:
+  task: "Begin the study-plan review loop."
+  max_steps: 20
+
+pipeline:
+  nodes:
+    - name: generator
+      system_prompt: >-
+        You are an expert cybersecurity curriculum designer. Create a 30-day
+        networking study plan for someone preparing for SOC analyst
+        interviews. Organize it by week and day. Reply with only the study
+        plan — no commentary before or after it.
+      prompt: "Create (or, using the feedback above, revise) the study plan now."
+      receives_from: evaluator
+    - name: evaluator
+      system_prompt: >-
+        You are a senior cybersecurity mentor reviewing a junior analyst's
+        study plan. Score it 1-10 in each of these categories: Coverage
+        (does it cover common SOC analyst interview topics?), Hands-on (a
+        practical lab every week?), Difficulty (progressive, realistic
+        pacing?), and Time (stays under 2 hours/day?). Name any missing
+        topics, unrealistic pacing, or weak hands-on practice. End your
+        reply with exactly one final line: 'ACCEPTED' if every score is 8 or
+        higher, otherwise 'REVISE'.
+      prompt: "Evaluate the study plan above against the four criteria."
+      receives_from: generator
+      accept_if_contains: "ACCEPTED"
+  transitions:
+    - source: evaluator
+      target: generator
+      max_rounds: 5
+
+evaluation:
+  checks:
+    - name: evaluator-accepted
+      evaluator: exact_match
+      expected: { contains: "ACCEPTED" }

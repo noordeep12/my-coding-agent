@@ -20,7 +20,10 @@ from typing import Any
 import yaml
 
 from ..engine.llm import LLM
-from ..pipeline.nodes.agent import DEFAULT_MAX_STEPS, AgentNode
+from ..pipeline.graph import Pipeline
+from ..pipeline.nodes.agent import DEFAULT_MAX_STEPS, AgentNode, PipelineBuilder
+from ..pipeline.nodes.prompt_stage import PromptStageNode
+from ..pipeline.schema import Transition
 from ..utils.exceptions import MyCodingAgentError
 from .evaluation import (
     _DEFAULT_SYSTEM_PROMPT,
@@ -35,7 +38,7 @@ from .scoring import RunResult, UnknownScorerError, resolve_scorer
 
 logger = logging.getLogger(__name__)
 
-_TOP_LEVEL_KEYS = {"llm", "run", "evaluation"}
+_TOP_LEVEL_KEYS = {"llm", "run", "evaluation", "pipeline"}
 _LLM_KEYS = {"api_url", "model", "api_key_env", "api_key", "timeout"}
 _RUN_KEYS = {"system_prompt", "task", "max_steps"}
 _EVAL_KEYS = {"checks"}
@@ -49,6 +52,15 @@ _CHECK_KEYS = {
     "evaluator",
     "threshold",
 }
+_PIPELINE_KEYS = {"nodes", "transitions"}
+_PIPELINE_NODE_KEYS = {
+    "name",
+    "prompt",
+    "system_prompt",
+    "receives_from",
+    "accept_if_contains",
+}
+_PIPELINE_TRANSITION_KEYS = {"source", "target", "max_rounds"}
 
 #: Field -> (env var name, documented default). Resolution order is
 #: config value -> env var -> default; reads the environment live, not the
@@ -87,12 +99,19 @@ class LoadedRunConfig:
         checks: Inline checks scored against the config's own single run.
         content_hash: SHA-256 hex digest of the config file's raw bytes.
         llm_section: The parsed `llm` mapping, forwarded to `build_llm_client`.
+        pipeline_nodes: Declared workflow-graph stages (issue #228) from an
+            optional `pipeline` section, or `None` when the config uses the
+            standard single-agent pipeline (the default).
+        pipeline_transitions: Declared conditional transitions between
+            `pipeline_nodes`, or `None` alongside them.
     """
 
     run_config: RunConfig
     checks: tuple[Check, ...]
     content_hash: str
     llm_section: dict[str, Any]
+    pipeline_nodes: tuple[PromptStageNode, ...] | None = None
+    pipeline_transitions: tuple[Transition, ...] | None = None
 
 
 def _resolve_field(config_value: Any, env_var: str, default: str) -> str:
@@ -160,6 +179,176 @@ def _parse_checks(raw_checks: Any, problems: list[str]) -> tuple[Check, ...]:
     return tuple(checks)
 
 
+def _parse_pipeline_node_specs(
+    raw_nodes: list[Any], problems: list[str]
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Parse `pipeline.nodes` into `(node_names, node_specs)`; see `_parse_pipeline`."""
+    node_names: list[str] = []
+    node_specs: list[dict[str, Any]] = []
+    for index, raw_node in enumerate(raw_nodes):
+        if not isinstance(raw_node, dict):
+            problems.append(f"'pipeline.nodes[{index}]' must be a mapping")
+            continue
+        unknown_node = set(raw_node) - _PIPELINE_NODE_KEYS
+        if unknown_node:
+            problems.append(
+                f"unknown key(s) in 'pipeline.nodes[{index}]': "
+                f"{', '.join(sorted(unknown_node))}"
+            )
+        name = raw_node.get("name")
+        prompt = raw_node.get("prompt")
+        if not name:
+            problems.append(f"'pipeline.nodes[{index}].name' is required")
+            continue
+        if not prompt:
+            problems.append(f"'pipeline.nodes[{index}].prompt' is required")
+            continue
+        if name in node_names:
+            problems.append(f"duplicate pipeline node name: {name!r}")
+            continue
+        node_names.append(name)
+        node_specs.append(
+            {
+                "name": name,
+                "prompt": prompt,
+                "system_prompt": raw_node.get("system_prompt"),
+                "receives_from": raw_node.get("receives_from"),
+                "accept_if_contains": raw_node.get("accept_if_contains"),
+            }
+        )
+    return node_names, node_specs
+
+
+def _parse_pipeline_transitions(
+    raw_transitions: Any, node_names: list[str], problems: list[str]
+) -> tuple[list[Transition], dict[str, str]]:
+    """Parse `pipeline.transitions` into `(transitions, jump_target_by_source)`."""
+    if not isinstance(raw_transitions, list):
+        if raw_transitions:
+            problems.append("'pipeline.transitions' must be a list")
+        raw_transitions = []
+
+    transitions: list[Transition] = []
+    jump_target_by_source: dict[str, str] = {}
+    for index, raw_t in enumerate(raw_transitions):
+        if not isinstance(raw_t, dict):
+            problems.append(f"'pipeline.transitions[{index}]' must be a mapping")
+            continue
+        unknown_t = set(raw_t) - _PIPELINE_TRANSITION_KEYS
+        if unknown_t:
+            problems.append(
+                f"unknown key(s) in 'pipeline.transitions[{index}]': "
+                f"{', '.join(sorted(unknown_t))}"
+            )
+        source = raw_t.get("source")
+        target = raw_t.get("target")
+        if not source or not target:
+            problems.append(
+                f"'pipeline.transitions[{index}]' requires 'source' and 'target'"
+            )
+            continue
+        if source not in node_names:
+            problems.append(
+                f"'pipeline.transitions[{index}].source' {source!r} is not a "
+                "declared node"
+            )
+        if target not in node_names:
+            problems.append(
+                f"'pipeline.transitions[{index}].target' {target!r} is not a "
+                "declared node"
+            )
+        transitions.append(
+            Transition(source=source, target=target, max_rounds=raw_t.get("max_rounds"))
+        )
+        jump_target_by_source[source] = target
+    return transitions, jump_target_by_source
+
+
+def _build_pipeline_nodes(
+    node_specs: list[dict[str, Any]],
+    node_names: list[str],
+    jump_target_by_source: dict[str, str],
+    task: str,
+    problems: list[str],
+) -> list[PromptStageNode]:
+    """Build `PromptStageNode`s, wiring each decision node's jump target.
+
+    Each node gets its own private thread (issue #228 D-isolation): only the
+    pipeline's entry stage (`node_specs[0]`) is seeded with `task` (`run.task`)
+    — every other stage receives its input exclusively via `receives_from`,
+    never the run-level task text. A `receives_from` naming an undeclared
+    node is a config error, same collect-every-problem style as elsewhere.
+    """
+    nodes: list[PromptStageNode] = []
+    for index, spec in enumerate(node_specs):
+        accept = spec["accept_if_contains"]
+        jump_target = jump_target_by_source.get(spec["name"]) if accept else None
+        if accept and jump_target is None:
+            problems.append(
+                f"pipeline node {spec['name']!r} declares 'accept_if_contains' "
+                "but has no transition with matching 'source'"
+            )
+        receives_from = spec["receives_from"]
+        if receives_from is not None and receives_from not in node_names:
+            problems.append(
+                f"pipeline node {spec['name']!r} declares receives_from "
+                f"{receives_from!r}, which is not a declared node"
+            )
+        nodes.append(
+            PromptStageNode(
+                name=spec["name"],
+                prompt=spec["prompt"],
+                system_prompt=spec["system_prompt"],
+                seed_task=task if index == 0 else None,
+                receives_from=receives_from,
+                accept_if_contains=accept,
+                jump_target=jump_target,
+            )
+        )
+    return nodes
+
+
+def _parse_pipeline(
+    raw_pipeline: Any, task: str, problems: list[str]
+) -> tuple[tuple[PromptStageNode, ...], tuple[Transition, ...]] | None:
+    """Parse an optional `pipeline` section into workflow-graph stages (issue #228).
+
+    `None` when the section is absent — the caller then runs the standard
+    single-agent pipeline. When present, every node needs a unique `name` and
+    a `prompt`; a node that also declares `accept_if_contains` is a decision
+    stage and must be the `source` of exactly one `transitions` entry — its
+    `target` becomes that node's jump target when the reply doesn't match.
+    `task` (`run.task`) seeds only the pipeline's entry stage — every other
+    stage gets its input exclusively via `receives_from` (issue #228
+    D-isolation: each stage keeps its own private conversation, never one
+    shared by every stage). Appends every problem found to `problems` rather
+    than raising, so the caller can report them all together.
+    """
+    if raw_pipeline in (None, ""):
+        return None
+    if not isinstance(raw_pipeline, dict):
+        problems.append("'pipeline' section must be a mapping")
+        return None
+    unknown = set(raw_pipeline) - _PIPELINE_KEYS
+    if unknown:
+        problems.append(f"unknown 'pipeline' key(s): {', '.join(sorted(unknown))}")
+
+    raw_nodes = raw_pipeline.get("nodes")
+    if not isinstance(raw_nodes, list) or not raw_nodes:
+        problems.append("'pipeline.nodes' must be a non-empty list")
+        return None
+
+    node_names, node_specs = _parse_pipeline_node_specs(raw_nodes, problems)
+    transitions, jump_target_by_source = _parse_pipeline_transitions(
+        raw_pipeline.get("transitions"), node_names, problems
+    )
+    nodes = _build_pipeline_nodes(
+        node_specs, node_names, jump_target_by_source, task, problems
+    )
+
+    return tuple(nodes), tuple(transitions)
+
+
 def _parse_max_steps(run_section: dict[str, Any], problems: list[str]) -> int:
     max_steps_raw = run_section.get("max_steps")
     if not max_steps_raw:
@@ -217,6 +406,7 @@ def load_config_file(path: Path) -> LoadedRunConfig:
     if not checks:
         problems.append("'evaluation.checks' must declare at least one check")
     max_steps = _parse_max_steps(run_section, problems)
+    pipeline_result = _parse_pipeline(data.get("pipeline"), task or "", problems)
 
     if problems:
         raise ConfigValidationError(path, problems)
@@ -231,22 +421,50 @@ def load_config_file(path: Path) -> LoadedRunConfig:
         }
     )
 
+    pipeline_nodes, pipeline_transitions = pipeline_result or (None, None)
     return LoadedRunConfig(
         run_config=run_config,
         checks=checks,
         content_hash=hashlib.sha256(raw_bytes).hexdigest(),
         llm_section=llm_section,
+        pipeline_nodes=pipeline_nodes,
+        pipeline_transitions=pipeline_transitions,
     )
 
 
+def _make_pipeline_builder(
+    nodes: tuple[PromptStageNode, ...], transitions: tuple[Transition, ...]
+) -> PipelineBuilder:
+    """Return an `AgentNode.pipeline_builder` closing over a declared workflow graph.
+
+    Matches `build_default_pipeline`'s call signature (`spawn_fn=`,
+    `checkpoint_fn=`) — a config-declared graph has no context-reset spawning
+    (no `ContextGuardNode`), so `spawn_fn` is accepted and ignored.
+    """
+
+    def _builder(spawn_fn: Any = None, checkpoint_fn: Any = None) -> Pipeline:  # noqa: ARG001
+        return Pipeline(
+            list(nodes), checkpoint_fn=checkpoint_fn, transitions=list(transitions)
+        )
+
+    return _builder
+
+
 def _run_agent(
-    run_config: RunConfig, label: str, llm_client: LLM
+    run_config: RunConfig,
+    label: str,
+    llm_client: LLM,
+    pipeline_builder: PipelineBuilder | None = None,
 ) -> tuple[str, RunResult]:
     """Run the agent once, in the real cwd, using ``llm_client``'s connection.
 
     Mirrors `evaluation._run_agent`, but also forwards `run_config`'s
     `max_steps` (carried in `extra_params`) to `AgentNode.execute`, which the
     reused helper does not need since evaluations don't configure it.
+
+    `pipeline_builder` overrides the standard single-agent pipeline with a
+    config-declared workflow graph (issue #228) — `None` (the default) runs
+    every existing config exactly as before.
     """
     system_prompt = run_config.system_prompt or _DEFAULT_SYSTEM_PROMPT
     task = run_config.user_prompt_template
@@ -261,6 +479,7 @@ def _run_agent(
         ],
         tools=_build_tools(),
         label=label,
+        pipeline_builder=pipeline_builder,
     )
     agent.llm.timeout = llm_client.timeout
     agent.llm.setup_session()
@@ -320,8 +539,16 @@ def execute_from_config(
     loaded = load_config_file(path)
 
     llm_client = build_llm_client(loaded.llm_section)
+    pipeline_builder = (
+        _make_pipeline_builder(loaded.pipeline_nodes, loaded.pipeline_transitions or ())
+        if loaded.pipeline_nodes
+        else None
+    )
     task, run_result = _run_agent(
-        loaded.run_config, f"ConfigRun[{path.name}]", llm_client
+        loaded.run_config,
+        f"ConfigRun[{path.name}]",
+        llm_client,
+        pipeline_builder=pipeline_builder,
     )
     scores = _score_checks(loaded.checks, task, run_result)
 

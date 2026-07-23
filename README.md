@@ -8,7 +8,7 @@ A self-contained agentic loop — no external agent frameworks. The agent calls 
 
 Key ideas:
 - **Local-first**: targets OpenAI-compatible endpoints (MLX Server, Ollama) running on your machine
-- **Node-based pipeline**: the agentic loop is a DAG of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them
+- **Node-based pipeline**: the agentic loop is a workflow graph of named nodes (`ContextGuard → ToolRouting → LLMCall → ToolDispatch → AnomalyDetect → FinalizeStep`) with an explicit data contract (`RunContext`) flowing between them; a node may declare a conditional transition back to an earlier node, with a hard per-loop round bound, so iterate-until-criteria workflows are a declared graph structure instead of a hidden loop. A declarative run config can replace the default pipeline with its own named stages and transitions — see [`examples/iterative_workflow_generator_evaluator.yaml`](examples/iterative_workflow_generator_evaluator.yaml) for a runnable generator/evaluator loop
 - **Runtime anomaly detection**: while the run is live, a same-class tool-failure streak (e.g. the same tool failing 3+ times in a row with the same error class, regardless of args) is flagged the moment it happens — logged as a warning and recorded in the session's event stream, in main agents and subagents alike
 - **Dangerous-command refusal gate**: every `bash` call is checked against a deterministic, local rule set before it runs (recursive root/home deletes, remote-content-piped-to-shell, raw-device writes, fork bombs, permission blasts, credential exfiltration, destructive git force-pushes); a match never reaches the shell — the model gets back a structured refusal (reason + security-standard reference + safer alternative) so it can steer, and the refusal is logged and recorded for later review. This is a high-signal first layer, not a complete boundary — obfuscated commands can evade textual matching by design, which is why the harness also records each run's protection posture (`screened_only` vs. `sandboxed`, see [`SECURITY.md`](SECURITY.md)) rather than implying completeness. Extensible and can be disabled with `--no-safety-gate` if you really need to
 - **Exfiltration guard**: before an outbound tool call (currently `fetch_web`) sends its payload, it's checked deterministically and locally against well-known secret paths (`.env`, SSH keys, cloud credentials, `.netrc`, `*.pem`/`*.key`) and content signatures (PEM private-key headers, common token formats); a match never reaches the network — the model gets back a structured block naming only the matched category, never the secret value, and the block is logged and recorded for later review. Disabled runs are byte-identical to today; can be disabled with `--no-exfil-guard` if you really need to
@@ -225,7 +225,7 @@ Then open `http://localhost:7474`. The in-page session picker still selects a se
 
 #### Trace Explorer
 
-The **Traces** tab visualises sessions with an interactive pipeline DAG. The UI (an Apple-minimalist Preact app, served fully offline) shows:
+The **Traces** tab visualises sessions with an interactive pipeline workflow graph, including any conditional transitions taken — badged directly on the LLM call that triggered them (`round N → <target>`, or `bound exhausted`) rather than as a separate row, since a transition is that call's own decision, not a distinct pipeline step. The UI (an Apple-minimalist Preact app, served fully offline) shows:
 
 - **Left pane** — a nested **Tree** of the run: the Main Agent's pipeline, with each delegated **subagent** nested (collapsible, with a coloured rail and badge) where it was spawned; each node label summarises what it added to the context window (e.g. *+196 assistant*, *+1,501 tool*)
   - Navigate with **↑/↓ (or j/k)** arrow keys; the focused node auto-selects
@@ -319,7 +319,32 @@ Or reference a rubric JSON file by path — the same shape as the inline mapping
 
 Both forms validate through the same rules and produce the same scoring behavior; a mapping value is the only trigger for the inline form.
 
-A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml), and [`examples/eval_run_cve_subagents.yaml`](examples/eval_run_cve_subagents.yaml) / [`examples/eval_run_cve_subagents_rubric_path.yaml`](examples/eval_run_cve_subagents_rubric_path.yaml) show the inline and path forms of a `judge` check side by side:
+An optional `pipeline` section replaces the standard single-agent loop with a declared workflow graph of named stages (iterative-workflow-control, issue #228) — e.g. a generator/evaluator loop that redrafts until accepted, or until a hard round ceiling is reached. Each stage keeps its own **isolated conversation** — its own `system_prompt` and own turn history — never one shared by every stage; `receives_from` is the only channel between two stages, and it carries plain output text only, never the other stage's system prompt, directives, or internal reasoning:
+
+```yaml
+run:
+  task: "Begin the review loop."   # seeds only the pipeline's entry stage (nodes[0])
+
+pipeline:
+  nodes:
+    - name: generator
+      system_prompt: "You are GENERATOR. Write a haiku about testing software."
+      prompt: "Write (or, using the feedback above, revise) the haiku now."
+      receives_from: evaluator       # sees only evaluator's latest verdict text
+    - name: evaluator
+      system_prompt: "You are EVALUATOR. Judge haikus for 5-7-5 form and relevance."
+      prompt: "Judge the haiku above. Reply 'ACCEPT: <why>' or 'REJECT: <why>'."
+      receives_from: generator       # sees only generator's latest draft text
+      accept_if_contains: "ACCEPT"   # omit on a pure generator stage (no decision)
+  transitions:
+    - source: evaluator
+      target: generator
+      max_rounds: 4                  # required on every backward transition
+```
+
+The declared `nodes` run in order instead of the default pipeline. `run.task` seeds only the pipeline's entry stage (`nodes[0]`) — every other stage receives its input exclusively through `receives_from`; `run.system_prompt` is unused when `pipeline` is present (each node declares its own instead). A node without `accept_if_contains` always continues to the next node. A node with `accept_if_contains` is a decision stage: a case-insensitive match in its reply stops the run, no match jumps back to the transition whose `source` is that node's name (there must be exactly one). `receives_from` names another node whose latest reply is injected as a plain user message before this node's own `prompt` — omit it for a stage that only needs its own history. Every stage's LLM call is tagged with its own node name, so the Trace Explorer labels and shows the full, isolated input/output of each stage distinctly, and each rejected round is badged directly on the LLM call that rejected it. Omit `pipeline` entirely and a config runs exactly as before this section existed.
+
+A runnable copy lives at [`examples/eval_run_config.yaml`](examples/eval_run_config.yaml), and [`examples/eval_run_cve_subagents.yaml`](examples/eval_run_cve_subagents.yaml) / [`examples/eval_run_cve_subagents_rubric_path.yaml`](examples/eval_run_cve_subagents_rubric_path.yaml) show the inline and path forms of a `judge` check side by side; [`examples/iterative_workflow_generator_evaluator.yaml`](examples/iterative_workflow_generator_evaluator.yaml) shows the `pipeline` section in a complete, runnable generator/evaluator loop, and [`examples/soc_analyst_study_plan_generator_evaluator.yaml`](examples/soc_analyst_study_plan_generator_evaluator.yaml) applies the same pattern to a career-development use case — a senior-mentor persona scores a study plan across several criteria and sends it back with concrete feedback until every score clears the bar:
 
 ```bash
 uv run my-coding-agent --config examples/eval_run_config.yaml

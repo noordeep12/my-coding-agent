@@ -1,4 +1,4 @@
-"""Pipeline package — node-based DAG execution engine for the agentic loop."""
+"""Pipeline package — node-based workflow graph engine for the agentic loop."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .context import RunContext
-from .dag import Pipeline
+from .graph import Pipeline
 from .handoff import handoff_to_user_message, save_handoff
 from .node import BaseNode, Node
 from .nodes import (
@@ -14,9 +14,10 @@ from .nodes import (
     ContextGuardNode,
     FinalizeStepNode,
     LLMCallNode,
+    PromptStageNode,
     ToolDispatchNode,
 )
-from .schema import ContextHandoff
+from .schema import ContextHandoff, Transition
 
 __all__ = [
     "DEFAULT_MAX_STEPS",
@@ -29,8 +30,10 @@ __all__ = [
     "LLMCallNode",
     "Node",
     "Pipeline",
+    "PromptStageNode",
     "RunContext",
     "ToolDispatchNode",
+    "Transition",
     "build_default_pipeline",
     "handoff_to_user_message",
     "save_handoff",
@@ -50,6 +53,7 @@ def __getattr__(name: str) -> Any:
 def build_default_pipeline(
     spawn_fn: Callable[[], list[dict[str, Any]]] | None = None,
     checkpoint_fn: Callable[[RunContext], None] | None = None,
+    transitions: list[Transition] | None = None,
 ) -> Pipeline:
     """Return a Pipeline with the standard 5-node agentic loop.
 
@@ -61,6 +65,9 @@ def build_default_pipeline(
         checkpoint_fn: Optional callable invoked after each completed step to
             persist the resume checkpoint (run-resilience D3).  ``AgentNode``
             passes its own atomic checkpoint writer here.
+        transitions: Optional declared conditional transitions between the
+            default nodes (issue #228). ``None`` (the default) leaves the
+            five-node loop exactly as it was before this capability existed.
     """
     return Pipeline(
         [
@@ -71,4 +78,5 @@ def build_default_pipeline(
             FinalizeStepNode(),
         ],
         checkpoint_fn=checkpoint_fn,
+        transitions=transitions,
     )

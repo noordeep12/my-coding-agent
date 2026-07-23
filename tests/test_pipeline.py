@@ -8,15 +8,19 @@ engine itself.
 
 from __future__ import annotations
 
+import json
 import unittest.mock as mock
+
+import pytest
 
 from my_coding_agent.engine.llm import LLM
 from my_coding_agent.pipeline.context import RunContext
-from my_coding_agent.pipeline.dag import Pipeline
+from my_coding_agent.pipeline.graph import Pipeline
 from my_coding_agent.pipeline.node import BaseNode
 from my_coding_agent.pipeline.nodes.finalize_step import FinalizeStepNode
 from my_coding_agent.pipeline.nodes.llm_call import LLMCallNode
 from my_coding_agent.pipeline.nodes.tool_dispatch import ToolDispatchNode
+from my_coding_agent.pipeline.schema import Transition
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,6 +44,8 @@ def _make_ctx(**kwargs) -> RunContext:
     ctx.signal = "CONTINUE"
     ctx.stop_reason = "max_steps"
     ctx.continuation_messages = []
+    ctx.jump_target = ""
+    ctx.round_counters = {}
     ctx.tool_records = []
     ctx.tool_artifacts = {}
     ctx.recorder = mock.Mock()
@@ -305,3 +311,231 @@ def test_pipeline_checkpoints_completed_non_reset_step():
     ctx = _make_ctx(max_steps=5)
     Pipeline([_StopNode()], checkpoint_fn=calls.append).execute(ctx)
     assert calls == [ctx]  # the completed step was checkpointed once
+
+
+# ---------------------------------------------------------------------------
+# Conditional transitions (JUMP) — issue #228
+# ---------------------------------------------------------------------------
+
+
+class _JumpNode(BaseNode):
+    """Test node that jumps to a configured target once, then continues."""
+
+    def __init__(self, name: str, target: str, times: int = 1000) -> None:
+        self.name = name
+        self._target = target
+        self._times = times
+        self.calls = 0
+
+    def run(self, ctx: RunContext) -> None:
+        self.calls += 1
+        ctx.step_num += 1
+        if self.calls <= self._times:
+            ctx.signal = "JUMP"
+            ctx.jump_target = self._target
+        else:
+            ctx.signal = "STOP"
+
+
+class _NoOpNode(BaseNode):
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls = 0
+
+    def run(self, ctx: RunContext) -> None:
+        self.calls += 1
+        ctx.signal = "CONTINUE"
+
+
+def test_build_time_rejects_unknown_transition_target():
+    with pytest.raises(ValueError, match="not a node"):
+        Pipeline(
+            [_NoOpNode("a"), _NoOpNode("b")],
+            transitions=[Transition(source="b", target="nope", max_rounds=3)],
+        )
+
+
+def test_build_time_rejects_unbounded_backward_transition():
+    with pytest.raises(ValueError, match="max_rounds"):
+        Pipeline(
+            [_NoOpNode("a"), _NoOpNode("b")],
+            transitions=[Transition(source="b", target="a")],
+        )
+
+
+def test_runtime_rejects_undeclared_jump_pair():
+    node = _JumpNode("b", "a", times=1)
+    ctx = _make_ctx(max_steps=5)
+    pipeline = Pipeline(
+        [_NoOpNode("a"), node],
+        transitions=[Transition(source="b", target="a", max_rounds=3)],
+    )
+    node._target = "elsewhere"
+    with pytest.raises(ValueError, match="Undeclared transition"):
+        pipeline.execute(ctx)
+
+
+def test_jump_resumes_execution_at_target_node():
+    ctx = _make_ctx(max_steps=20)
+    node_a = _NoOpNode("a")
+    node_b = _JumpNode("b", "a", times=2)
+    pipeline = Pipeline(
+        [node_a, node_b],
+        transitions=[Transition(source="b", target="a", max_rounds=5)],
+    )
+    pipeline.execute(ctx)
+    assert ctx.round_counters.get("b->a") == 2
+    assert node_a.calls == 3  # initial pass + 2 jump-backs
+    assert ctx.signal == "STOP"  # node_b's 3rd call sets STOP once times exhausted
+
+
+def test_loop_bound_exhaustion_stops_with_distinct_reason():
+    ctx = _make_ctx(max_steps=50)
+    node_a = _NoOpNode("a")
+    node_b = _JumpNode("b", "a")  # always jumps back
+    pipeline = Pipeline(
+        [node_a, node_b],
+        transitions=[Transition(source="b", target="a", max_rounds=3)],
+    )
+    pipeline.execute(ctx)
+    assert ctx.stop_reason == "loop_bound:b->a"
+    assert ctx.round_counters["b->a"] == 3
+
+
+def test_max_steps_still_cuts_off_a_looping_run():
+    ctx = _make_ctx(max_steps=4)
+    node_a = _NoOpNode("a")
+    node_b = _JumpNode("b", "a")  # always jumps back, bound is huge
+    pipeline = Pipeline(
+        [node_a, node_b],
+        transitions=[Transition(source="b", target="a", max_rounds=1000)],
+    )
+    pipeline.execute(ctx)
+    assert ctx.step_num >= 4
+    assert not ctx.stop_reason.startswith("loop_bound:")
+
+
+# ---------------------------------------------------------------------------
+# Conformance: the default five-node pipeline stays byte-identical (D6/4.4)
+# ---------------------------------------------------------------------------
+
+
+def test_default_pipeline_without_transitions_never_honors_jump():
+    """A pipeline built with no declared transitions rejects any JUMP outright,
+    proving the no-transitions path can never silently behave differently.
+    """
+    node_a = _NoOpNode("a")
+    node_b = _JumpNode("b", "a", times=1)
+    pipeline = Pipeline([node_a, node_b])  # no transitions declared
+    ctx = _make_ctx(max_steps=5)
+    with pytest.raises(ValueError, match="Undeclared transition"):
+        pipeline.execute(ctx)
+
+
+def test_default_pipeline_signature_unchanged_for_loop_free_run(tmp_path):
+    """The default 5-node pipeline's node order, signals, and events.jsonl
+    rows are unaffected by this capability when no transitions are declared
+    (design goal: loop-free runs execute and record byte-identically).
+    """
+    from my_coding_agent.observability.recorder import Recorder
+    from my_coding_agent.pipeline import build_default_pipeline
+
+    recorder = Recorder("sess", tmp_path)
+    llm = LLM()
+    llm.context_window = 1000
+    llm._recorder = recorder
+    llm.chat_completion = mock.Mock(
+        return_value=_Resp(
+            {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "done"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            }
+        )
+    )
+    ctx = _make_ctx(max_steps=5)
+    ctx.llm = llm
+    ctx.recorder = recorder
+    ctx.messages = [{"role": "user", "content": "hi"}]
+    pipeline = build_default_pipeline()
+    pipeline.execute(ctx)
+    assert ctx.stop_reason == "stop"
+    events = (tmp_path / "events.jsonl").read_text().splitlines()
+    types = [json.loads(e)["type"] for e in events]
+    assert "transition" not in types
+
+
+# ---------------------------------------------------------------------------
+# Integration: generator<->evaluator loop, rounds reconstructed from the trace
+# ---------------------------------------------------------------------------
+
+
+def test_generator_evaluator_loop_reconstructible_from_events(tmp_path):
+    """A generator->evaluator workflow jumps back until criteria are met; the
+    round count and each round's verdict must be reconstructible from
+    ``events.jsonl`` alone (issue #228 task 4.2 / spec "Rounds reconstructible").
+    """
+    from my_coding_agent.observability.recorder import Recorder
+
+    recorder = Recorder("sess", tmp_path)
+
+    class _Generator(BaseNode):
+        name = "generator"
+
+        def run(self, ctx: RunContext) -> None:
+            ctx.signal = "CONTINUE"
+
+    class _Evaluator(BaseNode):
+        """Rejects the first two rounds, accepts the third."""
+
+        name = "evaluator"
+
+        def __init__(self) -> None:
+            self.verdicts: list[str] = []
+
+        def run(self, ctx: RunContext) -> None:
+            ctx.step_num += 1
+            accept = ctx.round_counters.get("evaluator->generator", 0) >= 2
+            self.verdicts.append("accept" if accept else "reject")
+            if accept:
+                ctx.stop_reason = "stop"
+                ctx.signal = "STOP"
+            else:
+                ctx.signal = "JUMP"
+                ctx.jump_target = "generator"
+
+    evaluator = _Evaluator()
+    ctx = _make_ctx(max_steps=20)
+    ctx.recorder = recorder
+    pipeline = Pipeline(
+        [_Generator(), evaluator],
+        transitions=[Transition(source="evaluator", target="generator", max_rounds=10)],
+    )
+    pipeline.execute(ctx)
+
+    assert evaluator.verdicts == ["reject", "reject", "accept"]
+    assert ctx.stop_reason == "stop"
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+    ]
+    transition_rows = [e for e in events if e["type"] == "transition"]
+    # Two rounds were jumped back (rejects); the accept round never jumps, so
+    # it produces no transition row — the round count reconstructed from the
+    # trace alone is exactly 2.
+    assert len(transition_rows) == 2
+    assert [r["round"] for r in transition_rows] == [1, 2]
+    assert all(r["outcome"] == "jump" for r in transition_rows)
+    assert all(
+        r["source"] == "evaluator" and r["target"] == "generator"
+        for r in transition_rows
+    )

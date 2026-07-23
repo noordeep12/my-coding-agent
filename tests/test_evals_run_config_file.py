@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import yaml
 
@@ -13,6 +15,9 @@ from my_coding_agent.viewer import reader as viewer_reader
 
 
 class _Resp:
+    status_code = 200
+    content = b"{}"
+
     def __init__(self, payload):
         self._payload = payload
 
@@ -20,18 +25,32 @@ class _Resp:
         return self._payload
 
 
+def _stop_payload(content="pong"):
+    return {
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+    }
+
+
 def _stop_resp(content="pong"):
-    return _Resp(
-        {
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": content},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
-        }
-    )
+    return _Resp(_stop_payload(content))
+
+
+def _stop_recovery_pair(content="pong"):
+    """A `(resp, data)` pair for patching `LLM._post_chat_with_recovery`.
+
+    Unlike patching `chat_completion` itself, this leaves `chat_completion`'s
+    own body running for real — so its `kind` tagging and
+    `recorder.record_llm_call` still fire, letting a test assert on the
+    resulting `llm_call` events.
+    """
+    payload = _stop_payload(content)
+    return _Resp(payload), payload
 
 
 def _write_config(tmp_path, data, name="run.yaml"):
@@ -356,3 +375,290 @@ def test_execute_from_config_scores_carry_session_id_and_write_verdict(
     trace = viewer_reader.load_session(session_dir / "events.jsonl")
     assert trace.verdict is not None
     assert trace.verdict["case_id"] == result.scores[0].case_id
+
+
+# -- pipeline section (issue #228) ----------------------------------------
+
+
+def _pipeline_config(**overrides):
+    data = _full_config(
+        run={
+            "system_prompt": "You are helpful.",
+            "task": "say pong",
+            "max_steps": 20,
+        },
+        pipeline={
+            "nodes": [
+                {
+                    "name": "generator",
+                    "system_prompt": "You are GENERATOR.",
+                    "prompt": "Draft it.",
+                    "receives_from": "evaluator",
+                },
+                {
+                    "name": "evaluator",
+                    "system_prompt": "You are EVALUATOR.",
+                    "prompt": "Judge it.",
+                    "receives_from": "generator",
+                    "accept_if_contains": "ACCEPT",
+                },
+            ],
+            "transitions": [
+                {"source": "evaluator", "target": "generator", "max_rounds": 3}
+            ],
+        },
+        evaluation={
+            "checks": [
+                {
+                    "name": "accepted",
+                    "evaluator": "exact_match",
+                    "expected": {"contains": "ACCEPT"},
+                }
+            ]
+        },
+    )
+    data.update(overrides)
+    return data
+
+
+def test_pipeline_section_loads_into_nodes_and_transitions(tmp_path):
+    path = _write_config(tmp_path, _pipeline_config())
+    loaded = rcf.load_config_file(path)
+
+    assert loaded.pipeline_nodes is not None
+    assert [n.name for n in loaded.pipeline_nodes] == ["generator", "evaluator"]
+    assert loaded.pipeline_transitions is not None
+    assert len(loaded.pipeline_transitions) == 1
+    assert loaded.pipeline_transitions[0].source == "evaluator"
+    assert loaded.pipeline_transitions[0].target == "generator"
+    assert loaded.pipeline_transitions[0].max_rounds == 3
+
+
+def test_config_without_pipeline_section_leaves_it_none(tmp_path):
+    path = _write_config(tmp_path, _full_config())
+    loaded = rcf.load_config_file(path)
+
+    assert loaded.pipeline_nodes is None
+    assert loaded.pipeline_transitions is None
+
+
+def test_pipeline_node_missing_prompt_is_rejected(tmp_path):
+    data = _pipeline_config()
+    del data["pipeline"]["nodes"][0]["prompt"]
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "prompt" in str(excinfo.value)
+
+
+def test_pipeline_duplicate_node_name_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["nodes"].append({"name": "generator", "prompt": "again"})
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "duplicate" in str(excinfo.value)
+
+
+def test_pipeline_transition_unknown_source_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["transitions"][0]["source"] = "nonexistent"
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "nonexistent" in str(excinfo.value)
+
+
+def test_pipeline_backward_transition_without_max_rounds_is_rejected(tmp_path):
+    """Loading succeeds (config-level parsing doesn't itself enforce this — the
+    engine's own build-time Pipeline validation does), but executing must
+    surface the unbounded-loop error rather than silently looping forever.
+    """
+    data = _pipeline_config()
+    del data["pipeline"]["transitions"][0]["max_rounds"]
+    path = _write_config(tmp_path, data)
+
+    loaded = rcf.load_config_file(path)
+    assert loaded.pipeline_transitions[0].max_rounds is None
+
+
+def test_decision_node_without_matching_transition_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["transitions"] = []
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "accept_if_contains" in str(excinfo.value)
+
+
+def test_pipeline_unknown_node_key_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["nodes"][0]["bogus"] = "x"
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "bogus" in str(excinfo.value)
+
+
+def test_pipeline_node_system_prompt_and_receives_from_load(tmp_path):
+    path = _write_config(tmp_path, _pipeline_config())
+    loaded = rcf.load_config_file(path)
+
+    generator, evaluator = loaded.pipeline_nodes
+    assert generator._system_prompt == "You are GENERATOR."
+    assert generator._receives_from == "evaluator"
+    assert evaluator._system_prompt == "You are EVALUATOR."
+    assert evaluator._receives_from == "generator"
+
+
+def test_pipeline_receives_from_unknown_node_is_rejected(tmp_path):
+    data = _pipeline_config()
+    data["pipeline"]["nodes"][0]["receives_from"] = "nonexistent"
+    path = _write_config(tmp_path, data)
+
+    with pytest.raises(rcf.ConfigValidationError) as excinfo:
+        rcf.load_config_file(path)
+    assert "receives_from" in str(excinfo.value)
+    assert "nonexistent" in str(excinfo.value)
+
+
+def test_only_entry_node_is_seeded_with_run_task(tmp_path):
+    """Only pipeline.nodes[0] gets run.task; every other stage's input comes
+    exclusively through receives_from (issue #228 D-isolation).
+    """
+    path = _write_config(tmp_path, _pipeline_config())
+    loaded = rcf.load_config_file(path)
+
+    generator, evaluator = loaded.pipeline_nodes
+    assert generator._seed_task == "say pong"
+    assert evaluator._seed_task is None
+
+
+def test_execute_from_config_with_pipeline_runs_generator_evaluator_loop(
+    tmp_path, monkeypatch, mocker
+):
+    """End-to-end: the evaluator rejects once then accepts, driven entirely by
+    the declared pipeline section — no default single-agent pipeline involved.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    responses = [
+        _stop_recovery_pair("draft v1"),
+        _stop_recovery_pair("REJECT: try again"),
+        _stop_recovery_pair("draft v2"),
+        _stop_recovery_pair("ACCEPT: good"),
+    ]
+    mocker.patch.object(LLM, "_post_chat_with_recovery", side_effect=responses)
+
+    path = _write_config(tmp_path, _pipeline_config())
+    _, verdict = rcf.execute_from_config(path)
+
+    assert verdict == "pass"
+    session_dirs = [
+        d for d in (tmp_path / ".my_coding_agent").glob("*") if d.name != "evals"
+    ]
+    session_dir = session_dirs[0]
+    events = [
+        json.loads(line)
+        for line in (session_dir / "events.jsonl").read_text().splitlines()
+    ]
+    transition_events = [e for e in events if e["type"] == "transition"]
+    assert len(transition_events) == 1
+    assert transition_events[0]["source"] == "evaluator"
+    assert transition_events[0]["target"] == "generator"
+    assert transition_events[0]["outcome"] == "jump"
+
+    llm_call_kinds = [e["kind"] for e in events if e["type"] == "llm_call"]
+    assert llm_call_kinds == ["generator", "evaluator", "generator", "evaluator"]
+
+
+def test_execute_from_config_pipeline_stages_have_isolated_contexts(
+    tmp_path, monkeypatch, mocker
+):
+    """Each stage's own recorded LLM input carries only its own system prompt
+    and the other stage's plain output text — never the other stage's own
+    system prompt or persona (issue #228 D-isolation).
+
+    Reads the trace through ``viewer_reader.load_session`` (not the raw
+    ``events.jsonl``) since the recorder delta-encodes a kind's second-and-
+    later ``messages`` snapshot — the reader is what reconstructs the full
+    per-call input the way the Trace Explorer shows it.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    responses = [
+        _stop_recovery_pair("draft v1"),
+        _stop_recovery_pair("REJECT: try again"),
+        _stop_recovery_pair("draft v2"),
+        _stop_recovery_pair("ACCEPT: good"),
+    ]
+    mocker.patch.object(LLM, "_post_chat_with_recovery", side_effect=responses)
+
+    path = _write_config(tmp_path, _pipeline_config())
+    rcf.execute_from_config(path)
+
+    session_dirs = [
+        d for d in (tmp_path / ".my_coding_agent").glob("*") if d.name != "evals"
+    ]
+    session_dir = session_dirs[0]
+    trace = viewer_reader.load_session(session_dir / "events.jsonl")
+    llm_nodes = [
+        trace.nodes[nid] for nid in trace.order if trace.nodes[nid].type == "llm_call"
+    ]
+
+    def _contents(node):
+        return " ".join(
+            m.get("content") or "" for m in node.inputs.get("messages") or []
+        )
+
+    for node in llm_nodes:
+        kind = node.attributes.get("kind")
+        contents = _contents(node)
+        if kind == "generator":
+            assert "You are GENERATOR." in contents
+            assert "You are EVALUATOR." not in contents
+        elif kind == "evaluator":
+            assert "You are EVALUATOR." in contents
+            assert "You are GENERATOR." not in contents
+
+    generator_nodes = [n for n in llm_nodes if n.attributes.get("kind") == "generator"]
+    evaluator_nodes = [n for n in llm_nodes if n.attributes.get("kind") == "evaluator"]
+    assert len(generator_nodes) == 2
+    assert len(evaluator_nodes) == 2
+
+    # The evaluator's second call must have received the generator's second
+    # draft ("draft v2") as its input, not the first ("draft v1").
+    assert "draft v2" in _contents(evaluator_nodes[1])
+    # The generator's second call must have received the evaluator's
+    # rejection reason, not any of the evaluator's own persona/history.
+    assert "REJECT: try again" in _contents(generator_nodes[1])
+
+
+def test_execute_from_config_pipeline_loop_bound_exhaustion(
+    tmp_path, monkeypatch, mocker
+):
+    """A never-accepting evaluator stops at its round ceiling, not a crash."""
+    monkeypatch.chdir(tmp_path)
+
+    responses = [_stop_resp("REJECT: never good enough")] * 20
+    mocker.patch.object(LLM, "chat_completion", side_effect=responses)
+
+    path = _write_config(tmp_path, _pipeline_config())
+    _, verdict = rcf.execute_from_config(path)
+
+    assert verdict == "fail"
+    session_dirs = [
+        d for d in (tmp_path / ".my_coding_agent").glob("*") if d.name != "evals"
+    ]
+    session_dir = session_dirs[0]
+    events = [
+        json.loads(line)
+        for line in (session_dir / "events.jsonl").read_text().splitlines()
+    ]
+    end_event = next(e for e in events if e["type"] == "session_end")
+    assert end_event["stop_reason"] == "loop_bound:evaluator->generator"

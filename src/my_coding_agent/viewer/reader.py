@@ -188,6 +188,7 @@ def load_session(
     _seed_session_inputs(graph.nodes[root_id], graph.nodes, graph.order, session_id)
     _add_anomaly_nodes(events, graph, session_id)
     _flag_anomalies(graph.nodes, graph.order, events)
+    _add_transition_nodes(events, graph, session_id)
 
     if end_ev:
         end_id = f"{session_id}::session_end"
@@ -237,10 +238,27 @@ def load_session(
 
 # ── Step grouping ─────────────────────────────────────────────────────────────
 
+# Kinds that piggyback onto an already-open step rather than opening their own
+# (ContextSummarizerNode's report/handoff calls, and the legacy tool-routing
+# kinds) — never a workflow-graph stage's own primary call.
+_ANCILLARY_LLM_KINDS = frozenset(
+    {"report", "handoff", "tool_router", "tool_arg_correction", "artifact_query"}
+)
+
 
 def _is_main_llm_call(ev: dict[str, Any]) -> bool:
-    """True if *ev* is the per-step main ``llm_call`` (not a nested/ancillary one)."""
-    return ev.get("type") == "llm_call" and ev.get("kind", "main") == "main"
+    """True if *ev* opens a new step.
+
+    True for the per-step main ``llm_call`` and for a declared workflow-graph
+    stage's own call (issue #228 — any ``kind`` other than the known
+    ancillary ones counts, so a config's ``generator``/``evaluator``-tagged
+    calls each open their own step); false for a nested/ancillary call that
+    piggybacks onto an already-open step.
+    """
+    return (
+        ev.get("type") == "llm_call"
+        and ev.get("kind", "main") not in _ANCILLARY_LLM_KINDS
+    )
 
 
 def _group_into_steps(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -1200,6 +1218,64 @@ def _add_anomaly_nodes(
                 },
             ),
             step=ev.get("step"),
+        )
+
+
+def _add_transition_nodes(
+    events: list[dict[str, Any]], graph: _Graph, session_id: str
+) -> None:
+    """Attach each recorded ``transition`` row onto the node that caused it.
+
+    A transition is a decision the *source* stage's own LLM call already
+    made, not a separate pipeline step — so it's stamped as an attribute on
+    that call's own ``llm_call`` node (matched by step + kind == source)
+    rather than rendered as its own row in the tree; the Trace Explorer
+    badges it there. Falls back to a standalone node (the pre-#228-cosmetic-
+    pass behavior) only when no matching call is found, so a transition is
+    never silently dropped. A trace recorded before this event type existed
+    has none of these rows, so it renders unchanged (design D6).
+    """
+    for i, ev in enumerate(events):
+        if ev.get("type") != "transition":
+            continue
+        source = ev.get("source", "")
+        target = ev.get("target", "")
+        step = ev.get("step")
+        transition_attrs = {
+            "target": target,
+            "round": ev.get("round", 0),
+            "outcome": ev.get("outcome", ""),
+        }
+        source_node = next(
+            (
+                n
+                for n in graph.nodes.values()
+                if n.type == "llm_call"
+                and n.attributes.get("kind") == source
+                and n.attributes.get("step") == step
+            ),
+            None,
+        )
+        if source_node is not None:
+            source_node.attributes["transition"] = transition_attrs
+            continue
+
+        node_id = f"{session_id}::transition::{i}"
+        graph.add(
+            node_id,
+            _make_node(
+                id=node_id,
+                type="transition",
+                label=f"{source} -> {target}",
+                inputs={},
+                outputs={},
+                attributes={
+                    "source": source,
+                    "started_at": ev.get("started_at", ""),
+                    **transition_attrs,
+                },
+            ),
+            step=step,
         )
 
 

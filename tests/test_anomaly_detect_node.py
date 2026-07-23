@@ -385,7 +385,7 @@ class TestAnomalyDetectNodeEndToEnd:
 
         # Run again with AnomalyDetectNode removed from the pipeline.
         def _build_without_anomaly(spawn_fn=None, checkpoint_fn=None):
-            from my_coding_agent.pipeline.dag import Pipeline
+            from my_coding_agent.pipeline.graph import Pipeline
             from my_coding_agent.pipeline.nodes import (
                 ContextGuardNode,
                 FinalizeStepNode,
